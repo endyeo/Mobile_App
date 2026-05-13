@@ -1,0 +1,64 @@
+﻿plugins {
+	id 'java'
+	id 'org.springframework.boot' version '3.4.1'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.flower'
+version = '0.0.1-SNAPSHOT'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencyManagement {
+	imports {
+		mavenBom "org.springframework.ai:spring-ai-bom:1.0.5"
+	}
+}
+
+dependencies {
+	// Spring AI (OpenAI)
+	implementation 'org.springframework.ai:spring-ai-starter-model-openai'
+
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.hibernate.orm:hibernate-spatial'
+	implementation 'org.springframework.boot:spring-boot-starter-security'
+	implementation 'org.springframework.boot:spring-boot-starter-validation'
+	implementation 'org.springframework.boot:spring-boot-starter-web'
+	compileOnly 'org.projectlombok:lombok'
+	runtimeOnly 'org.postgresql:postgresql'
+	runtimeOnly 'com.h2database:h2'  // 로컬 테스트용 (서버 배포 시 제거)
+	annotationProcessor 'org.projectlombok:lombok'
+
+	// 이미지 리사이즈
+	implementation 'net.coobird:thumbnailator:0.4.20'
+
+	// Oracle Cloud Object Storage (Instance Principal 인증)
+	implementation 'com.oracle.oci.sdk:oci-java-sdk-objectstorage:3.46.0'
+	implementation 'com.oracle.oci.sdk:oci-java-sdk-common-httpclient-jersey3:3.46.0'
+
+	// JWT
+	implementation 'io.jsonwebtoken:jjwt-api:0.11.5'
+	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.11.5'
+	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.11.5'
+	// 테스트 핵심 라이브러리 (JUnit5, MockMvc, Mockito, Jackson 포함)
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	// Spring Security 테스트 지원 (WithMockUser, csrf() 등)
+	testImplementation 'org.springframework.security:spring-security-test'
+	testCompileOnly 'org.projectlombok:lombok'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+	// H2 인메모리 DB (테스트 전용, 실제 PostgreSQL 없이도 통합 테스트 가능)
+	testRuntimeOnly 'com.h2database:h2'
+	testAnnotationProcessor 'org.projectlombok:lombok'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}

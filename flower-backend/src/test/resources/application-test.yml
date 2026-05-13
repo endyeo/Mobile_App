@@ -1,0 +1,19 @@
+# 테스트 전용 설정 (H2 인메모리 DB 사용 → 실 DB에 영향 없음)
+spring:
+  datasource:
+    url: jdbc:h2:mem:testdb;MODE=PostgreSQL;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop  # 테스트 시작 시 테이블 생성, 종료 시 삭제
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.H2Dialect
+    show-sql: true
+
+jwt:
+  secret: test-secret-key-must-be-at-least-32-characters-long
+  access-token-validity-seconds: 3600
+  refresh-token-validity-seconds: 2592000

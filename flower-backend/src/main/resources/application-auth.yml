@@ -1,0 +1,9 @@
+oauth:
+  kakao:
+    client-id: ${KAKAO_CLIENT_ID}
+    client-secret: ${KAKAO_CLIENT_SECRET}
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-validity-seconds: ${JWT_ACCESS_SECONDS:86400}
+  refresh-token-validity-seconds: ${JWT_REFRESH_SECONDS:604800}

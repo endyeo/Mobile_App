@@ -1,0 +1,128 @@
+package com.flower.backend.chatbot.tool.CommunityAgent;
+
+import com.flower.backend.chatbot.dto.ChatAction;
+import com.flower.backend.chatbot.dto.ToolResult;
+import com.flower.backend.chatbot.tool.ChatbotActionContext;
+import com.flower.backend.community.entity.Post;
+import com.flower.backend.community.repository.PostRepository;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.stereotype.Component;
+
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class CommunityTools {
+
+    private final PostRepository postRepository;
+    private final ChatbotActionContext actionContext;
+
+    @Tool(description = "Search FLOWER community posts by keyword.")
+    public ToolResult searchPosts(@ToolParam(description = "Search keyword for community posts.") String query) {
+        actionContext.markSearchInvoked();
+        actionContext.incrementToolCount("community.searchPosts");
+
+        String sanitized = sanitizeKeyword(query, 100);
+
+        try {
+            List<Post> results = sanitized.isBlank()
+                    ? postRepository.findAll().stream().limit(5).toList()
+                    : postRepository.searchByKeyword(sanitized).stream().limit(5).toList();
+
+            return ToolResult.builder()
+                    .tool("community.searchPosts")
+                    .status("SUCCESS")
+                    .summary("'" + displayKeyword(sanitized) + "' community search returned "
+                            + results.size() + " result(s).")
+                    .data(Map.of("items", toItems(results)))
+                    .build();
+        } catch (Exception e) {
+            log.error("[Tool:searchPosts] search failed", e);
+            return ToolResult.builder()
+                    .tool("community.searchPosts")
+                    .status("ERROR")
+                    .summary("Community post search failed.")
+                    .error("게시글 검색 중 오류가 발생했습니다.")
+                    .build();
+        }
+    }
+
+    @Tool(description = "Prepare an internal client follow-up that opens the community screen.")
+    public ChatAction openCommunity(@ToolParam(description = "Optional keyword for the community screen.") String keyword) {
+        actionContext.incrementToolCount("community.openCommunity");
+
+        String sanitized = sanitizeKeyword(keyword, 80);
+        Map<String, Object> params = new LinkedHashMap<>();
+        if (!sanitized.isBlank()) {
+            params.put("query", sanitized);
+        }
+
+        ChatAction action = ChatAction.builder()
+                .type("NAVIGATE")
+                .target("COMMUNITY")
+                .params(params.isEmpty() ? null : params)
+                .build();
+        actionContext.addAction(action);
+
+        return action;
+    }
+
+    @Tool(description = "Prepare a draft-only community post action without saving a post.")
+    public ChatAction prepareDraft(@ToolParam(description = "Optional topic for the community draft.") String topic) {
+        actionContext.incrementToolCount("community.prepareDraft");
+
+        String sanitized = sanitizeKeyword(topic, 80);
+        Map<String, Object> params = new LinkedHashMap<>();
+        params.put("mode", "DRAFT_ONLY");
+        if (!sanitized.isBlank()) {
+            params.put("topic", sanitized);
+        }
+
+        ChatAction action = ChatAction.builder()
+                .type("PREPARE_DRAFT")
+                .target("COMMUNITY")
+                .params(params)
+                .build();
+        actionContext.addAction(action);
+
+        return action;
+    }
+
+    private List<Map<String, Object>> toItems(List<Post> posts) {
+        return posts.stream()
+                .map(post -> {
+                    Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("nickname", nullToDash(post.getNickname()));
+                    item.put("content", nullToDash(post.getContent()));
+                    item.put("species", nullToDash(post.getSpecies()));
+                    item.put("likes", post.getLikesCount());
+                    return item;
+                })
+                .toList();
+    }
+
+    private String sanitizeKeyword(String keyword, int maxLength) {
+        if (keyword == null || keyword.isBlank()) {
+            return "";
+        }
+        String sanitized = keyword.trim();
+        if (sanitized.length() > maxLength) {
+            sanitized = sanitized.substring(0, maxLength);
+            log.warn("[Tool:community] keyword truncated to {} characters", maxLength);
+        }
+        return sanitized;
+    }
+
+    private String displayKeyword(String keyword) {
+        return keyword == null || keyword.isBlank() ? "all" : keyword;
+    }
+
+    private String nullToDash(String value) {
+        return value == null || value.isBlank() ? "-" : value;
+    }
+}

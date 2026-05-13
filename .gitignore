@@ -1,0 +1,75 @@
+# Build outputs
+build/
+dist/
+out/
+target/
+bin/
+obj/
+
+# Flutter / Dart
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock.backup
+flower_app/build/
+flower_app/.dart_tool/
+flower_app/android/.gradle/
+
+# Gradle / Spring Boot
+.gradle/
+flower-backend/.gradle/
+flower-backend/build/
+
+# Cache / temporary files
+.cache/
+tmp/
+temp/
+*.tmp
+*.temp
+*.bak
+*.swp
+*.swo
+
+# Secrets / local environment
+.env
+.env.*
+!.env.example
+env
+**/env
+**/local.properties
+**/google-services.json
+flower-backend/src/main/resources/application.yml
+flower-backend/src/main/resources/application-local.yml
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+*.crt
+*.cer
+*.secret
+secrets/
+
+# Logs
+*.log
+logs/
+**/logs/
+
+# IDE / editor
+.vscode/
+.idea/
+*.iml
+.project
+.classpath
+.settings/
+.DS_Store
+Thumbs.db
+
+# Reports
+REPORT/*
+REPORTS/*
+reports/*
+**/REPORT/*
+**/REPORTS/*
+**/reports/*

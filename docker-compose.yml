@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgis/postgis:16-3.4 # Use 16-3.4 as a stable version compatible with most systems
+    container_name: flower-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-flower}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD before starting Postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-flower_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - flower_db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  flower_db_data:
