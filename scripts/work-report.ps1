@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)]
     [ValidateSet("start", "append", "status", "validate-commit", "finalize")]
     [string]$Action,

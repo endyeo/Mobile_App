@@ -1,6 +1,5 @@
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Message,
+    [string]$Message = "동기화: 팀원 최신 코드 반영",
 
     [switch]$AddAll
 )

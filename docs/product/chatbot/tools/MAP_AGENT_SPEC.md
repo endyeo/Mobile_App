@@ -14,9 +14,13 @@ MapAgent는 챗봇이 지도 화면을 열거나 지도 화면에 검색/꽃 위
 
 MapAgent의 각 도구는 하나의 지도 관련 기능만 수행한다. 지도 화면 열기, 검색어 적용, 꽃 위치 강조, 꽃 미리보기 열기는 서로 합치지 않고 별도 도구와 별도 액션으로 유지한다.
 
+도구 식별자와 `@Tool(description)`은 AI가 직접 읽는 값이므로 영어만 사용한다. 개발자가 읽는 한국어 설명은 코드 주석의 `KO:` 라인과 이 명세 문서에 남긴다.
+
 ### `openMapScreen()`
 
 - 목적: 지도 화면 열기
+- AI 설명: `Prepare an internal client follow-up that opens the map screen.`
+- 한국어 설명: 지도 화면을 여는 앱 내부 액션을 준비한다.
 - 입력: 없음
 - 출력 액션:
 
@@ -31,7 +35,10 @@ MapAgent의 각 도구는 하나의 지도 관련 기능만 수행한다. 지도
 ### `setMapSearchQuery(query)`
 
 - 목적: 지도 화면 검색어 적용
+- AI 설명: `Prepare an internal client follow-up that applies a search query to the map screen.`
+- 한국어 설명: 지도 화면 검색창에 검색어를 적용하는 앱 내부 액션을 준비한다.
 - 입력: `query`
+- 입력 한국어 설명: 지도 검색창에 넣을 검색어
 - 정규화: null/blank이면 빈 문자열, 최대 80자
 - 출력 액션:
 
@@ -48,7 +55,10 @@ MapAgent의 각 도구는 하나의 지도 관련 기능만 수행한다. 지도
 ### `showFlowerOnMap(flowerId)`
 
 - 목적: 특정 꽃 위치를 지도에서 강조
+- AI 설명: `Prepare an internal client follow-up that highlights a flower location on the map.`
+- 한국어 설명: 지도에서 특정 꽃 위치를 강조하는 앱 내부 액션을 준비한다.
 - 입력: `flowerId`
+- 입력 한국어 설명: 지도에서 강조할 꽃 ID
 - 출력 액션:
 
 ```json
@@ -64,7 +74,10 @@ MapAgent의 각 도구는 하나의 지도 관련 기능만 수행한다. 지도
 ### `openFlowerMapPreview(flowerId)`
 
 - 목적: 지도 화면에서 특정 꽃 미리보기 열기
+- AI 설명: `Prepare an internal client follow-up that opens a flower preview in the map screen.`
+- 한국어 설명: 지도 화면에서 특정 꽃 미리보기를 여는 앱 내부 액션을 준비한다.
 - 입력: `flowerId`
+- 입력 한국어 설명: 지도 화면에서 미리보기로 열 꽃 ID
 - 출력 액션:
 
 ```json
