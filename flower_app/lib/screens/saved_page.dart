@@ -92,13 +92,18 @@ class _SavedPageState extends State<SavedPage> with SingleTickerProviderStateMix
             child: Icon(Icons.delete_outline, color: Colors.red[400]),
           ),
           onDismissed: (_) async {
-            final prefs = await SharedPreferences.getInstance();
-            final token = prefs.getString('accessToken') ?? '';
-            await SavedApiService.unsavePost(token, post.id);
+            final removed = _savedPosts[i];
             setState(() => _savedPosts.removeAt(i));
-            if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('저장 목록에서 삭제되었습니다'), duration: Duration(seconds: 1)),
-            );
+            try {
+              final prefs = await SharedPreferences.getInstance();
+              final token = prefs.getString('accessToken') ?? '';
+              await SavedApiService.unsavePost(token, post.id);
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('저장 목록에서 삭제되었습니다'), duration: Duration(seconds: 1)),
+              );
+            } catch (_) {
+              if (mounted) setState(() => _savedPosts.insert(i, removed));
+            }
           },
           child: Container(
             margin: const EdgeInsets.only(bottom: 12),

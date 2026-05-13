@@ -44,12 +44,13 @@ html, body, #map-shell {
   font-weight: 700;
 }
 
-/* ── 길찾기 패널 ─────────────────────────────────────── */
+/* ── 마커 정보 / 길찾기 패널 ─────────────────────────── */
+/* 상단: Flutter 검색바 ~72px, 하단: Flutter 탭바 ~65px */
 .route-panel {
   position: absolute;
   left: 14px;
   right: 14px;
-  top: max(14px, env(safe-area-inset-top));
+  bottom: 80px; /* 하단 탭바 위 */
   border-radius: 18px;
   background: var(--surface);
   box-shadow: var(--shadow);
@@ -59,7 +60,7 @@ html, body, #map-shell {
 }
 
 @keyframes routeSlideIn {
-  from { opacity: 0; transform: translateY(-12px); }
+  from { opacity: 0; transform: translateY(12px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
@@ -110,11 +111,12 @@ html, body, #map-shell {
 .route-error .route-info span { color: #c0392b; }
 
 .route-steps {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #eee;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #eee;
   max-height: 200px;
   overflow-y: auto;
+  order: -1; /* 패널 내에서 위쪽에 표시 */
 }
 
 .route-step {

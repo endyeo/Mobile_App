@@ -41,7 +41,15 @@
       },
       zoomIn: function () { zoomMap(-1); },
       zoomOut: function () { zoomMap(1); },
-      moveToCurrentLocation: function () { initGeolocation(); }
+      moveToCurrentLocation: function () { initGeolocation(); },
+      // Flutter에서 위치를 직접 주입
+      setCurrentPosition: function (lat, lng) {
+        state.currentPosition = { lat: Number(lat), lng: Number(lng) };
+        if (state.map && state.kakaoReady) {
+          state.map.setCenter(new kakao.maps.LatLng(lat, lng));
+        }
+        loadFlowers();
+      }
     };
   }
 
@@ -58,11 +66,11 @@
     });
   }
 
-  // 테스트용 임시 마커 (실제 데이터 들어오면 제거)
+  // 테스트용 임시 마커 (실제 데이터 들어오면 제거) - 반경 필터 제외
   const TEST_MARKERS = [
-    { flower_id: 't1', name: '여의도 벚꽃', species: '벚나무', address: '서울 영등포구 여의도동', location: { lat: 37.5219, lng: 126.9245 } },
-    { flower_id: 't2', name: '남산 개나리', species: '개나리', address: '서울 용산구 남산공원', location: { lat: 37.5512, lng: 126.9882 } },
-    { flower_id: 't3', name: '석촌호수 벚꽃', species: '벚나무', address: '서울 송파구 석촌호수', location: { lat: 37.5085, lng: 127.1020 } },
+    { flower_id: 't1', name: '여의도 벚꽃', species: '벚나무', address: '서울 영등포구 여의도동', location: { lat: 37.5219, lng: 126.9245 }, _test: true },
+    { flower_id: 't2', name: '남산 개나리', species: '개나리', address: '서울 용산구 남산공원', location: { lat: 37.5512, lng: 126.9882 }, _test: true },
+    { flower_id: 't3', name: '석촌호수 벚꽃', species: '벚나무', address: '서울 송파구 석촌호수', location: { lat: 37.5085, lng: 127.1020 }, _test: true },
   ];
 
   async function loadFlowers() {
@@ -114,11 +122,14 @@
     if (!tourKey) return;
     try {
       const now = new Date();
-      const eventStartDate = now.getFullYear() +
-        String(now.getMonth() + 1).padStart(2, '0') +
-        String(now.getDate()).padStart(2, '0');
+      // 3개월 전부터 검색 (지나간 축제 포함, 계절 축제 반영)
+      const past = new Date(now);
+      past.setMonth(past.getMonth() - 3);
+      const eventStartDate = past.getFullYear() +
+        String(past.getMonth() + 1).padStart(2, '0') +
+        String(past.getDate()).padStart(2, '0');
       const params = new URLSearchParams({
-        numOfRows: '50', pageNo: '1', MobileOS: 'ETC', MobileApp: 'FlowerApp',
+        numOfRows: '100', pageNo: '1', MobileOS: 'ETC', MobileApp: 'FlowerApp',
         _type: 'json', eventStartDate: eventStartDate,
       });
       const url = 'https://apis.data.go.kr/B551011/KorService2/searchFestival2?serviceKey=' + tourKey + '&' + params.toString();
@@ -154,7 +165,7 @@
     const center = state.currentPosition;
     state.filtered = state.flowers.filter(function (flower) {
       if (query && !`${flower.name} ${flower.species} ${flower.address}`.toLowerCase().includes(query)) return false;
-      if (center) {
+      if (center && !flower._test) {
         flower.distance_m = Math.round(distanceMeters(center.lat, center.lng, flower.location.lat, flower.location.lng));
         if (flower.distance_m > state.radius) return false;
       }
@@ -206,7 +217,8 @@
       const marker = new kakao.maps.Marker({ position: position });
       marker.setMap(state.map);
       kakao.maps.event.addListener(marker, 'click', function () {
-        navigateInApp(flower.location.lat, flower.location.lng, flower.name || flower.species || '꽃');
+        showMarkerInfo(flower.name || flower.species || '꽃', flower.address || '',
+          flower.location.lat, flower.location.lng);
       });
       state.markers.push(marker);
     });
@@ -216,7 +228,7 @@
       const marker = new kakao.maps.Marker({ position: position });
       marker.setMap(state.map);
       kakao.maps.event.addListener(marker, 'click', function () {
-        navigateInApp(festival.mapY, festival.mapX, festival.title || '축제');
+        showMarkerInfo(festival.title || '축제', '', festival.mapY, festival.mapX);
       });
       state.festivalMarkers.push(marker);
     });
@@ -246,6 +258,34 @@
       state.currentPosition = null;
       applyFilters();
     }, { enableHighAccuracy: true, timeout: 8000 });
+  }
+
+  // ── 마커 정보 패널 ───────────────────────────────────────────────
+
+  function showMarkerInfo(name, address, lat, lng) {
+    var old = document.getElementById('marker-info');
+    if (old) old.remove();
+    var panel = document.createElement('div');
+    panel.id = 'marker-info';
+    panel.className = 'route-panel';
+    panel.innerHTML =
+      '<div class="route-panel-row">'
+      + '<span class="route-icon">🌸</span>'
+      + '<div class="route-info">'
+      + '  <strong>' + escapeHtml(name) + '</strong>'
+      + (address ? '<span>' + escapeHtml(address) + '</span>' : '')
+      + '</div>'
+      + '<button id="btn-navigate" class="route-toggle" style="width:auto;padding:0 10px;border-radius:12px;font-size:12px;">길찾기</button>'
+      + '<button id="btn-close-info" class="route-close">✕</button>'
+      + '</div>';
+    document.getElementById('map-shell').appendChild(panel);
+    document.getElementById('btn-close-info').addEventListener('click', function () {
+      panel.remove();
+    });
+    document.getElementById('btn-navigate').addEventListener('click', function () {
+      panel.remove();
+      navigateInApp(lat, lng, name);
+    });
   }
 
   // ── 길찾기 (OSRM) ─────────────────────────────────────────────

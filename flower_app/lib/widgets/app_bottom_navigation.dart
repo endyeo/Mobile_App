@@ -55,10 +55,13 @@ class AppBottomNavigation extends StatelessWidget {
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: selected ? null : () {
-        // 스택 바닥(첫 화면)까지 pop 후 새 탭 push → 뒤로가기 시 검정 화면 방지
-        Navigator.of(context).popUntil((route) => route.isFirst);
-        if (tab != AppNavTab.home) {
-          Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+        try {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+          if (tab != AppNavTab.home) {
+            Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+          }
+        } catch (e) {
+          debugPrint('[Nav] 탭 이동 실패: $e');
         }
       },
       child: Column(

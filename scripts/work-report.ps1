@@ -18,6 +18,31 @@ $ActiveDir = Join-Path $ReportRoot "active"
 $PlansDir = Join-Path $ReportRoot "plans"
 $RecordsDir = Join-Path $ReportRoot "records"
 $StatePath = Join-Path $ActiveDir "current-task.json"
+$Utf8BomEncoding = [System.Text.UTF8Encoding]::new($true)
+
+function Write-TextFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    [System.IO.File]::WriteAllText($Path, $Value, $Utf8BomEncoding)
+}
+
+function Add-TextFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path,
+
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    [System.IO.File]::AppendAllText($Path, $Value, $Utf8BomEncoding)
+}
 
 function Ensure-ReportDirs {
     foreach ($Path in @($ActiveDir, $PlansDir, $RecordsDir)) {
@@ -143,7 +168,7 @@ switch ($Action) {
         $PlanPath = ConvertTo-AbsolutePath $PlanRelative
         $RecordPath = ConvertTo-AbsolutePath $RecordRelative
 
-        @"
+        $PlanContent = @"
 # 작업 계획 보고서
 
 ## 날짜
@@ -174,9 +199,10 @@ $Branch
 ## 완료 조건
 
 - [ ] 작업 기록 보고서에 변경 이유와 검증 결과를 남긴다.
-"@ | Set-Content -LiteralPath $PlanPath -Encoding UTF8
+"@
+        Write-TextFile -Path $PlanPath -Value $PlanContent
 
-        @"
+        $RecordContent = @"
 # 작업 기록 보고서
 
 ## 날짜
@@ -193,7 +219,8 @@ $Branch
 
 ## 작업 기록
 
-"@ | Set-Content -LiteralPath $RecordPath -Encoding UTF8
+"@
+        Write-TextFile -Path $RecordPath -Value $RecordContent
 
         $State = [ordered]@{
             name = $Name
@@ -233,7 +260,7 @@ $Verification
 $Remaining
 
 "@
-        Add-Content -LiteralPath $RecordPath -Value $Entry -Encoding UTF8
+        Add-TextFile -Path $RecordPath -Value $Entry
         Write-Output "Appended to record: $($State.recordPath)"
     }
 

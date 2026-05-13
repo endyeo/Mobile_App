@@ -38,38 +38,45 @@ class _PedometerScreenState extends State<PedometerScreen> with SingleTickerProv
   }
 
   Future<void> _loadData() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('accessToken') ?? '';
-
-    final weekly = await WalkApiService.getWeeklyRecords(token);
-    final points = await WalkApiService.getPointBalance(token);
-
-    if (mounted) {
-      final todaySteps = weekly.isNotEmpty ? weekly.last.stepCount : 0;
-      setState(() {
-        _weeklyData = weekly;
-        _pointBalance = points;
-        _steps = todaySteps;
-        _pointHistory = [];
-        _isLoading = false;
-        _progressAnim = Tween<double>(begin: 0, end: _steps / _goalSteps)
-            .animate(CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
-        _animController.forward();
-      });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('accessToken') ?? '';
+      final weekly = await WalkApiService.getWeeklyRecords(token);
+      final points = await WalkApiService.getPointBalance(token);
+      if (mounted) {
+        final todaySteps = weekly.isNotEmpty ? weekly.last.stepCount : 0;
+        setState(() {
+          _weeklyData = weekly;
+          _pointBalance = points;
+          _steps = todaySteps;
+          _pointHistory = [];
+          _isLoading = false;
+          _progressAnim = Tween<double>(begin: 0, end: _steps / _goalSteps)
+              .animate(CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
+          _animController.forward();
+        });
+      }
+    } catch (e) {
+      debugPrint('[Walk] 데이터 로드 실패: $e');
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _simulateWalk() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('accessToken') ?? '';
-    setState(() {
-      _steps += 150;
-      _pointBalance += 1;
-      _progressAnim = Tween<double>(begin: _progressAnim.value, end: _steps / _goalSteps)
-          .animate(CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
-      _animController..reset()..forward();
-    });
-    await WalkApiService.syncSteps(token, _steps);
+  Future<void> _simulateWalk() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final token = prefs.getString('accessToken') ?? '';
+      setState(() {
+        _steps += 150;
+        _pointBalance += 1;
+        _progressAnim = Tween<double>(begin: _progressAnim.value, end: _steps / _goalSteps)
+            .animate(CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic));
+        _animController..reset()..forward();
+      });
+      await WalkApiService.syncSteps(token, _steps);
+    } catch (e) {
+      debugPrint('[Walk] 동기화 실패: $e');
+    }
   }
 
   @override

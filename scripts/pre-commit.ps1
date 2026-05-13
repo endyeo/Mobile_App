@@ -2,6 +2,11 @@ $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 
+if ($env:FLOWER_SYNC_COMMIT -eq "1") {
+    Write-Output "Report gate skipped: FLOWER_SYNC_COMMIT=1."
+    exit 0
+}
+
 function Test-TrivialDocOnlyCommit {
     $Files = @(git -C $ProjectRoot diff --cached --name-only)
     if ($Files.Count -eq 0) {

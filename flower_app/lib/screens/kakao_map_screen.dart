@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
+import 'package:geolocator/geolocator.dart';
+
 import '../api_config.dart';
 import '../models/chat_action.dart';
 import '../theme/season_theme.dart';
@@ -90,21 +92,35 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
   Future<void> setSearchQuery(String query) async {
     final escaped = query.replaceAll("'", "\\'");
     await _controller?.runJavaScript(
-      "var el = document.getElementById('search-input');"
-      "if(el){ el.value='$escaped'; el.dispatchEvent(new Event('input',{bubbles:true})); }",
+      "if(window.FlowerMap) window.FlowerMap.setSearchQuery('$escaped');",
     );
   }
 
   Future<void> zoomIn() async {
-    await _controller?.runJavaScript("document.getElementById('btn-zoom-in')?.click();");
+    await _controller?.runJavaScript("if(window.FlowerMap) window.FlowerMap.zoomIn();");
   }
 
   Future<void> zoomOut() async {
-    await _controller?.runJavaScript("document.getElementById('btn-zoom-out')?.click();");
+    await _controller?.runJavaScript("if(window.FlowerMap) window.FlowerMap.zoomOut();");
   }
 
   Future<void> moveToCurrentLocation() async {
-    await _controller?.runJavaScript("document.getElementById('btn-gps')?.click();");
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.deniedForever) return;
+
+      final position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      );
+      await _controller?.runJavaScript(
+        "if(window.FlowerMap) window.FlowerMap.setCurrentPosition(${position.latitude}, ${position.longitude});",
+      );
+    } catch (e) {
+      debugPrint('[GPS] 위치 가져오기 실패: $e');
+    }
   }
 
   Future<void> _loadMapHtml() async {
@@ -130,6 +146,7 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
         'embedded': widget.isEmbedded ? '1' : '0',
         'tourApiKey': ApiConfig.tourApiKey,
       }).query;
+      if (_controller == null) return;
       await _controller!.loadRequest(
         Uri.parse('https://ourt.kro.kr/map/index.html#$mapConfig'),
       );

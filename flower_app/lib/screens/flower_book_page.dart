@@ -46,7 +46,7 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
       final results = await FlowerBookApiService.search(keyword.trim());
       if (mounted) setState(() { _flowers = results; _isLoading = false; });
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString(); _isLoading = false; });
+      if (mounted) setState(() { _error = e.toString(); _isLoading = false; _isSearching = false; });
     }
   }
 
