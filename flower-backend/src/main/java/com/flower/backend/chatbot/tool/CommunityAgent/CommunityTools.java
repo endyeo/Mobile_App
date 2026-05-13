@@ -22,8 +22,12 @@ public class CommunityTools {
     private final PostRepository postRepository;
     private final ChatbotActionContext actionContext;
 
+    // KO: 커뮤니티 게시글을 검색어 기준으로 조회합니다.
     @Tool(description = "Search FLOWER community posts by keyword.")
-    public ToolResult searchPosts(@ToolParam(description = "Search keyword for community posts.") String query) {
+    public ToolResult searchPosts(
+            // KO: 커뮤니티 게시글 검색어입니다.
+            @ToolParam(description = "Search keyword for community posts.") String query
+    ) {
         actionContext.markSearchInvoked();
         actionContext.incrementToolCount("community.searchPosts");
 
@@ -52,8 +56,12 @@ public class CommunityTools {
         }
     }
 
+    // KO: 커뮤니티 화면을 여는 앱 내부 액션을 준비합니다.
     @Tool(description = "Prepare an internal client follow-up that opens the community screen.")
-    public ChatAction openCommunity(@ToolParam(description = "Optional keyword for the community screen.") String keyword) {
+    public ChatAction openCommunity(
+            // KO: 커뮤니티 화면에 전달할 선택 검색어입니다.
+            @ToolParam(description = "Optional keyword for the community screen.") String keyword
+    ) {
         actionContext.incrementToolCount("community.openCommunity");
 
         String sanitized = sanitizeKeyword(keyword, 80);
@@ -72,8 +80,12 @@ public class CommunityTools {
         return action;
     }
 
+    // KO: 게시글을 저장하지 않고 커뮤니티 글 작성 초안 액션만 준비합니다.
     @Tool(description = "Prepare a draft-only community post action without saving a post.")
-    public ChatAction prepareDraft(@ToolParam(description = "Optional topic for the community draft.") String topic) {
+    public ChatAction prepareDraft(
+            // KO: 커뮤니티 글 초안에 사용할 선택 주제입니다.
+            @ToolParam(description = "Optional topic for the community draft.") String topic
+    ) {
         actionContext.incrementToolCount("community.prepareDraft");
 
         String sanitized = sanitizeKeyword(topic, 80);

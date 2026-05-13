@@ -14,11 +14,16 @@ FlowerAgent는 승인된 꽃 위치/꽃 도감 데이터를 검색하고, 필요
 
 FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다. 꽃 데이터 검색, 도감 화면 열기, 특정 꽃 상세 전달은 서로 합치지 않고 별도 도구와 별도 액션으로 유지한다.
 
+도구 식별자와 `@Tool(description)`은 AI가 직접 읽는 값이므로 영어만 사용한다. 개발자가 읽는 한국어 설명은 코드 주석의 `KO:` 라인과 이 명세 문서에 남긴다.
+
 ### `searchFlowerSpots(query)`
 
 - 목적: 승인된 꽃 위치 데이터 검색
+- AI 설명: `Search FLOWER's approved flower spot database by flower name, species, address, or description.`
+- 한국어 설명: 승인된 꽃 명소 데이터를 꽃 이름, 품종, 주소, 설명 기준으로 검색한다.
 - 검색 대상: 꽃 이름, 품종, 주소, 설명
 - 입력: `query`, blank이면 대표 승인 꽃 위치 조회
+- 입력 한국어 설명: 꽃 명소 검색어. 비어 있으면 대표 승인 꽃 명소를 반환한다.
 - 정규화: trim, 최대 100자
 - 결과 제한: 최대 5개
 - 출력: Spring AI 답변용 문자열 또는 `ToolResult`
@@ -39,6 +44,8 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 ### `openFlowerBook()`
 
 - 목적: 꽃 도감 화면 열기
+- AI 설명: `Prepare an internal client follow-up that opens FLOWER's flower book screen.`
+- 한국어 설명: 꽃 도감 화면을 여는 앱 내부 액션을 준비한다.
 - 입력: 없음
 - 출력 액션:
 
@@ -53,7 +60,10 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 ### `openFlowerDetail(flowerId)`
 
 - 목적: 꽃 도감 화면에 특정 꽃 id 전달
+- AI 설명: `Prepare an internal client follow-up that opens FLOWER's flower book with a selected flower id.`
+- 한국어 설명: 특정 꽃 ID를 전달해 꽃 도감 화면을 여는 앱 내부 액션을 준비한다.
 - 입력: `flowerId`
+- 입력 한국어 설명: 꽃 도감 화면에 전달할 꽃 ID
 - 출력 액션:
 
 ```json
