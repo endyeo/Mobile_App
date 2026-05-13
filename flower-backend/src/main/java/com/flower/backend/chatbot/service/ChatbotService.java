@@ -261,9 +261,9 @@ public class ChatbotService {
                   "intents": ["GENERAL" | "MAP" | "FLOWER" | "COMMUNITY" | "WALK" | "QUEST" | "SHOP"],
                   "searchKeyword": "optional keyword, empty string if the user only wants screen navigation",
                   "actions": [
-                    {"type":"NAVIGATE","target":"MAP|COMMUNITY|WALK|FLOWER_BOOK|SAVED|QUEST|SHOP","params":{}},
+                    {"type":"NAVIGATE","target":"MAP|COMMUNITY|COMMUNITY_COMPOSE|WALK|FLOWER_BOOK|SAVED|QUEST|SHOP","params":{}},
                     {"type":"MAP_SET_SEARCH_QUERY","target":"MAP","params":{"query":"flower name only"}},
-                    {"type":"PREPARE_DRAFT","target":"COMMUNITY","params":{"topic":"optional"}}
+                    {"type":"NAVIGATE","target":"COMMUNITY_COMPOSE","params":{}}
                   ]
                 }
                 Rules:
@@ -273,6 +273,8 @@ public class ChatbotService {
                 - Do not create NAVIGATE MAP unless the user explicitly asks for a map, location, nearby places, route, directions, or path.
                 - If the user only asks to open or view the map, use NAVIGATE MAP only and searchKeyword must be "".
                 - Use MAP_SET_SEARCH_QUERY only when the user names a flower or flower place to find on the map.
+                - If the user wants to write or create a community post, use NAVIGATE COMMUNITY_COMPOSE only.
+                - Do not generate community post content or drafts.
                 - For Korean flower names, preserve the full name such as "벚꽃"; remove particles such as "에서".
                 - Do not invent actions outside the schema.
                 """;
@@ -342,7 +344,7 @@ public class ChatbotService {
         }
         if (intents.contains(RouteIntent.COMMUNITY)) {
             actions.add(wantsWriting(message)
-                    ? communityTools.prepareDraft(keyword)
+                    ? communityTools.openPostComposer(keyword)
                     : communityTools.openCommunity(keyword));
         }
         if (intents.contains(RouteIntent.WALK)) {
@@ -463,7 +465,7 @@ public class ChatbotService {
                 Use only the provided tool results as factual ground truth.
                 Do not invent exact bloom dates, locations, post content, purchases, or completed writes.
                 Flower tools provide flower spot data and flower book navigation only; map actions are handled by map tools.
-                If a write-like task is draft-only, clearly say it is prepared as a draft.
+                If a write-like task opens the community composer, clearly say the post editor is being opened without generated content or an automatic save.
                 Internal client follow-ups may be shown as Korean read-only test information. Never tell the user that a shortcut button or navigation button was prepared.
                 """ + "\n" + actionInstruction;
     }
@@ -472,8 +474,8 @@ public class ChatbotService {
         StringBuilder reply = new StringBuilder();
         reply.append("OpenAI API key is not configured, so I used local tool results.\n\n");
         reply.append(localContext);
-        if (action != null && "PREPARE_DRAFT".equals(action.getType())) {
-            reply.append("\n\nPrepared a draft only. No write action was executed.");
+        if (action != null && "NAVIGATE".equals(action.getType()) && "COMMUNITY_COMPOSE".equals(action.getTarget())) {
+            reply.append("\n\n게시글 작성 화면을 열도록 준비했습니다. 글 내용은 생성하거나 저장하지 않았습니다.");
         } else if (message != null && !message.isBlank()) {
             reply.append("\n\nSet OPENAI_API_KEY to enable a natural Spring AI answer.");
         }
@@ -667,7 +669,7 @@ public class ChatbotService {
                 case "MAP_SET_SEARCH_QUERY" -> "지도 검색어 적용";
                 case "MAP_SHOW_FLOWER" -> "지도에서 꽃 위치 표시";
                 case "MAP_OPEN_FLOWER_PREVIEW" -> "지도에서 꽃 미리보기 열기";
-                case "PREPARE_DRAFT" -> "커뮤니티 초안 준비";
+                case "PREPARE_DRAFT" -> "커뮤니티 글 작성 화면 열기";
                 default -> type + " / " + target;
             };
             return params.isEmpty() ? base : base + " " + params;
@@ -677,6 +679,7 @@ public class ChatbotService {
             return switch (target) {
                 case "MAP" -> "지도";
                 case "COMMUNITY" -> "커뮤니티";
+                case "COMMUNITY_COMPOSE" -> "커뮤니티 글 작성";
                 case "WALK" -> "산책";
                 case "FLOWER_BOOK", "FLOWER" -> "꽃 도감";
                 case "SAVED" -> "저장됨";

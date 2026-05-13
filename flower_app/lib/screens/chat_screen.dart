@@ -356,7 +356,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case 'MAP_SET_SEARCH_QUERY': return '지도 검색어 적용';
       case 'MAP_SHOW_FLOWER': return '지도 꽃 위치 표시';
       case 'MAP_OPEN_FLOWER_PREVIEW': return '지도 꽃 미리보기';
-      case 'PREPARE_DRAFT': return '커뮤니티 초안 준비';
+      case 'PREPARE_DRAFT': return '커뮤니티 글 작성 화면 열기';
       case 'buildDefaultContext': return '기본 정보 확인';
       default: return tool;
     }
@@ -376,6 +376,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case 'MAP': return '지도';
       case 'FLOWER': case 'FLOWER_BOOK': return '꽃';
       case 'COMMUNITY': return '커뮤니티';
+      case 'COMMUNITY_COMPOSE': return '커뮤니티 글 작성';
       case 'WALK': return '산책';
       case 'QUEST': return '퀘스트';
       case 'SHOP': return '상점';
