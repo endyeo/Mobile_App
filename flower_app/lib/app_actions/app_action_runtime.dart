@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/chat_action.dart';
 import '../screens/community_feed_screen.dart';
+import '../screens/create_post_screen.dart';
 import '../screens/flower_book_page.dart';
 import '../screens/kakao_map_screen.dart';
 import '../screens/pedometer_screen.dart';
@@ -77,9 +78,15 @@ class AppActionRuntime {
   }
 
   static Widget? _screenFor(ChatAction action) {
+    if (action.type == 'PREPARE_DRAFT' && (action.target ?? '').toUpperCase() == 'COMMUNITY') {
+      return const CreatePostScreen();
+    }
+
     switch ((action.target ?? '').toUpperCase()) {
       case 'COMMUNITY':
         return const CommunityFeedScreen();
+      case 'COMMUNITY_COMPOSE':
+        return const CreatePostScreen();
       case 'WALK':
       case 'PEDOMETER':
         return const PedometerScreen();

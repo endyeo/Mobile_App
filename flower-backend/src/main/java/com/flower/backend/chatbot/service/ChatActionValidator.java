@@ -52,7 +52,13 @@ class ChatActionValidator {
         String target = action.getTarget() == null ? "" : action.getTarget().toUpperCase(Locale.ROOT);
         Map<String, Object> params = action.getParams() == null ? Map.of() : action.getParams();
 
+        if ("PREPARE_DRAFT".equals(type) && "COMMUNITY".equals(target)) {
+            return ChatAction.builder().type("NAVIGATE").target("COMMUNITY_COMPOSE").params(null).build();
+        }
         if ("NAVIGATE".equals(type) && isAllowedNavigationTarget(target)) {
+            if ("COMMUNITY_COMPOSE".equals(target)) {
+                return ChatAction.builder().type(type).target(target).params(null).build();
+            }
             return ChatAction.builder().type(type).target(target).params(params).build();
         }
         if ("MAP_SET_SEARCH_QUERY".equals(type) && "MAP".equals(target)) {
@@ -72,14 +78,12 @@ class ChatActionValidator {
                 return ChatAction.builder().type(type).target(target).params(Map.of("flowerId", flowerId)).build();
             }
         }
-        if ("PREPARE_DRAFT".equals(type) && "COMMUNITY".equals(target)) {
-            return ChatAction.builder().type(type).target(target).params(params).build();
-        }
         return null;
     }
 
     private boolean isAllowedNavigationTarget(String target) {
-        return List.of("MAP", "COMMUNITY", "WALK", "FLOWER_BOOK", "SAVED", "QUEST", "SHOP").contains(target);
+        return List.of("MAP", "COMMUNITY", "COMMUNITY_COMPOSE", "WALK", "FLOWER_BOOK", "SAVED", "QUEST", "SHOP")
+                .contains(target);
     }
 
     private boolean needsMapSearch(List<RouteIntent> intents, String keyword) {

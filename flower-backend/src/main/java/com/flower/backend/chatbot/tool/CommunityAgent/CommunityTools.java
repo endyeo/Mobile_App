@@ -80,25 +80,18 @@ public class CommunityTools {
         return action;
     }
 
-    // KO: 게시글을 저장하지 않고 커뮤니티 글 작성 초안 액션만 준비합니다.
-    @Tool(description = "Prepare a draft-only community post action without saving a post.")
-    public ChatAction prepareDraft(
-            // KO: 커뮤니티 글 초안에 사용할 선택 주제입니다.
-            @ToolParam(description = "Optional topic for the community draft.") String topic
+    // KO: 게시글을 생성하지 않고 커뮤니티 글 작성 화면을 여는 앱 내부 액션만 준비합니다.
+    @Tool(description = "Prepare an internal client follow-up that opens the community post composer.")
+    public ChatAction openPostComposer(
+            // KO: 현재 v1에서는 작성 화면에 자동 입력하지 않는 선택 주제입니다.
+            @ToolParam(description = "Optional topic; v1 opens the composer without generating content.") String topic
     ) {
-        actionContext.incrementToolCount("community.prepareDraft");
-
-        String sanitized = sanitizeKeyword(topic, 80);
-        Map<String, Object> params = new LinkedHashMap<>();
-        params.put("mode", "DRAFT_ONLY");
-        if (!sanitized.isBlank()) {
-            params.put("topic", sanitized);
-        }
+        actionContext.incrementToolCount("community.openPostComposer");
 
         ChatAction action = ChatAction.builder()
-                .type("PREPARE_DRAFT")
-                .target("COMMUNITY")
-                .params(params)
+                .type("NAVIGATE")
+                .target("COMMUNITY_COMPOSE")
+                .params(null)
                 .build();
         actionContext.addAction(action);
 
