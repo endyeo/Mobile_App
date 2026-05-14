@@ -581,24 +581,6 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  Widget _festivalPlaceholder(SeasonColors colors) {
-    return Container(
-      width: 104,
-      height: 104,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: <Color>[
-            colors.primary.withValues(alpha: 0.18),
-            Colors.orange.shade100,
-          ],
-        ),
-      ),
-      child: Icon(Icons.local_florist_rounded, color: colors.primary, size: 34),
-    );
-  }
-
   Widget _sectionTitle(String text, SeasonColors colors) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
