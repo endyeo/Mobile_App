@@ -14,11 +14,6 @@ class ChatActionValidator {
             String keyword
     ) {
         List<ChatAction> actions = new ArrayList<>();
-        boolean needsMapNavigation = intents.contains(RouteIntent.MAP);
-
-        if (needsMapNavigation) {
-            actions.add(ChatAction.builder().type("NAVIGATE").target("MAP").params(Map.of()).build());
-        }
 
         for (ChatAction action : plannedActions == null ? List.<ChatAction>of() : plannedActions) {
             ChatAction normalized = normalize(action, intents, keyword);
@@ -29,15 +24,6 @@ class ChatActionValidator {
                 continue;
             }
             actions.add(normalized);
-        }
-
-        if (needsMapSearch(intents, keyword)
-                && actions.stream().noneMatch(action -> "MAP_SET_SEARCH_QUERY".equals(action.getType()))) {
-            actions.add(ChatAction.builder()
-                    .type("MAP_SET_SEARCH_QUERY")
-                    .target("MAP")
-                    .params(Map.of("query", sanitize(keyword)))
-                    .build());
         }
 
         return new ValidationResult(actions);
