@@ -71,9 +71,12 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     if (_isSending || _isListening) return;
 
     FocusScope.of(context).unfocus();
-    setState(() => _isListening = true);
 
     try {
+      final hasPermission = await _ensureMicrophonePermission();
+      if (!mounted || !hasPermission) return;
+
+      setState(() => _isListening = true);
       final spokenText =
           (await _speechChannel.invokeMethod<String>('listen'))?.trim() ?? '';
       if (!mounted) return;
@@ -97,6 +100,25 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     }
   }
 
+  Future<bool> _ensureMicrophonePermission() async {
+    final hasPermission =
+        await _speechChannel.invokeMethod<bool>('hasRecordAudioPermission') ??
+        false;
+    if (hasPermission) return true;
+
+    final granted =
+        await _speechChannel.invokeMethod<bool>(
+          'requestRecordAudioPermission',
+        ) ??
+        false;
+    if (granted) return true;
+
+    if (mounted) {
+      _showSnackBar('마이크 권한을 허용해야 음성 입력을 사용할 수 있습니다.');
+    }
+    return false;
+  }
+
   void _showSnackBar(String message) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -106,7 +128,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
   String _speechErrorMessage(PlatformException error) {
     switch (error.code) {
       case 'permission_denied':
-        return '마이크 권한이 필요합니다.';
+        return '마이크 권한을 허용해야 음성 입력을 사용할 수 있습니다.';
       case 'unavailable':
       case 'MissingPluginException':
         return '이 기기에서는 음성 입력을 사용할 수 없습니다.';
@@ -119,43 +141,59 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     }
   }
 
+  void _closeChatOverlay() {
+    FocusScope.of(context).unfocus();
+    setState(() {
+      _showHistory = false;
+      _showComposer = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = SeasonTheme.getColors();
     final size = MediaQuery.sizeOf(context);
     final dockWidth = (size.width - 24).clamp(296.0, 420.0);
 
-    if (!_showComposer) {
-      return FloatingActionButton(
-        heroTag: 'global-chat-floating-button',
-        tooltip: '챗봇',
-        backgroundColor: colors.primary,
-        foregroundColor: Colors.white,
-        elevation: 8,
-        shape: const CircleBorder(),
-        onPressed: () {
-          setState(() {
-            _showComposer = true;
-            _showHistory = _messages.isNotEmpty;
-          });
-        },
-        child: const Icon(Icons.chat_bubble_outline, size: 26),
-      );
-    }
+    final child = !_showComposer
+        ? FloatingActionButton(
+            heroTag: 'global-chat-floating-button',
+            tooltip: '챗봇',
+            backgroundColor: colors.primary,
+            foregroundColor: Colors.white,
+            elevation: 8,
+            shape: const CircleBorder(),
+            onPressed: () {
+              setState(() {
+                _showComposer = true;
+                _showHistory = _messages.isNotEmpty;
+              });
+            },
+            child: const Icon(Icons.chat_bubble_outline, size: 26),
+          )
+        : SizedBox(
+            width: dockWidth,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                if (_showHistory) ...[
+                  _buildHistoryPanel(colors),
+                  const SizedBox(height: 8),
+                ],
+                _buildInputDock(colors),
+              ],
+            ),
+          );
 
-    return SizedBox(
-      width: dockWidth,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          if (_showHistory) ...[
-            _buildHistoryPanel(colors),
-            const SizedBox(height: 8),
-          ],
-          _buildInputDock(colors),
-        ],
-      ),
+    return PopScope(
+      canPop: !_showComposer,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop && _showComposer) {
+          _closeChatOverlay();
+        }
+      },
+      child: child,
     );
   }
 
@@ -194,12 +232,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
               IconButton(
                 visualDensity: VisualDensity.compact,
                 icon: const Icon(Icons.close, size: 18),
-                onPressed: () {
-                  setState(() {
-                    _showHistory = false;
-                    _showComposer = false;
-                  });
-                },
+                onPressed: _closeChatOverlay,
               ),
             ],
           ),

@@ -17,6 +17,7 @@ class MainActivity : FlutterActivity() {
     private val speechChannel = "flower_app/speech"
     private val recordAudioRequestCode = 3201
     private var pendingSpeechResult: MethodChannel.Result? = null
+    private var pendingPermissionResult: MethodChannel.Result? = null
     private var speechRecognizer: SpeechRecognizer? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -24,10 +25,28 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, speechChannel)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "hasRecordAudioPermission" -> result.success(hasRecordAudioPermission())
+                    "requestRecordAudioPermission" -> requestRecordAudioPermission(result)
                     "listen" -> startSpeechRecognition(result)
                     else -> result.notImplemented()
                 }
             }
+    }
+
+    private fun hasRecordAudioPermission(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun requestRecordAudioPermission(result: MethodChannel.Result) {
+        if (hasRecordAudioPermission()) {
+            result.success(true)
+            return
+        }
+
+        pendingPermissionResult?.success(false)
+        pendingPermissionResult = result
+        requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), recordAudioRequestCode)
     }
 
     private fun startSpeechRecognition(result: MethodChannel.Result) {
@@ -36,12 +55,8 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
-        ) {
-            pendingSpeechResult?.error("cancelled", "Previous speech request was cancelled.", null)
-            pendingSpeechResult = result
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), recordAudioRequestCode)
+        if (!hasRecordAudioPermission()) {
+            result.error("permission_denied", "Microphone permission is required.", null)
             return
         }
 
@@ -55,6 +70,10 @@ class MainActivity : FlutterActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != recordAudioRequestCode) return
+
+        val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+        pendingPermissionResult?.success(granted)
+        pendingPermissionResult = null
 
         val result = pendingSpeechResult ?: return
         pendingSpeechResult = null
