@@ -1,4 +1,8 @@
 # AI 챗봇 공통 명세
+<!-- 2026-05-14 daily-bug-scan: COMMUNITY_COMPOSE 액션 전환과 초안 생성 제거 상태를 반영함. -->
+
+- 문서 버전: v1.2.0
+- 최종 반영일: 2026-05-14
 
 ## 1. 목적
 
@@ -14,7 +18,7 @@ AI 챗봇은 사용자의 자연어 요청을 분석해 꽃 데이터, 커뮤니
 
 챗봇 도구는 하나의 도구가 하나의 기능만 수행하는 것을 원칙으로 한다.
 
-- 도구 하나는 검색, 화면 이동, 검색어 적용, 미리보기 열기, 초안 준비처럼 명확히 분리된 단일 기능만 담당한다.
+- 도구 하나는 검색, 화면 이동, 검색어 적용, 미리보기 열기, 작성 화면 열기처럼 명확히 분리된 단일 기능만 담당한다.
 - 여러 기능이 필요한 사용자 요청은 개별 도구를 합치지 않고 Router/Service 계층에서 여러 도구 호출 또는 여러 `ChatAction`으로 조합한다.
 - 도구 내부에서 다른 도메인의 부수 효과를 함께 수행하지 않는다. 예를 들어 꽃 검색 도구는 지도 이동을 직접 수행하지 않고, 지도 이동은 MapAgent 액션으로 분리한다.
 - 실제 저장, 게시, 구매, 포인트 지급처럼 사용자 데이터나 외부 상태를 바꾸는 작업은 별도 승인된 기능/API가 없는 한 챗봇 도구에서 실행하지 않는다.
@@ -95,17 +99,17 @@ Flutter 구성:
 
 허용 액션:
 
-- `NAVIGATE`: `MAP`, `COMMUNITY`, `WALK`, `FLOWER_BOOK`, `SAVED`, `QUEST`, `SHOP`
+- `NAVIGATE`: `MAP`, `COMMUNITY`, `COMMUNITY_COMPOSE`, `WALK`, `FLOWER_BOOK`, `SAVED`, `QUEST`, `SHOP`
 - `MAP_SET_SEARCH_QUERY`: `target=MAP`, `params.query`
 - `MAP_SHOW_FLOWER`: `target=MAP`, `params.flowerId`
 - `MAP_OPEN_FLOWER_PREVIEW`: `target=MAP`, `params.flowerId`
-- `PREPARE_DRAFT`: `target=COMMUNITY`
 
 Flutter 실행 규칙:
 
 - 지도 액션이 하나라도 있으면 `KakaoMapScreen(initialActions: mapActions)`로 이동한다.
 - 지도 액션이 없으면 첫 번째 화면 액션만 실행한다.
 - `COMMUNITY`는 `CommunityFeedScreen`으로 이동한다.
+- `COMMUNITY_COMPOSE`는 `CreatePostScreen`으로 이동한다.
 - `WALK`/`PEDOMETER`는 `PedometerScreen`으로 이동한다.
 - `FLOWER`, `FLOWER_BOOK`, `BOOK`은 `FlowerBookPage`로 이동한다.
 - `SAVED`, `BOOKMARK`, `BOOKMARKS`는 `SavedPage`로 이동한다.
@@ -115,7 +119,7 @@ Flutter 실행 규칙:
 
 Spring AI 응답은 도구 결과만 사실 근거로 사용해야 한다. 정확한 개화일, 위치, 게시글 내용, 구매/글 작성 완료 여부를 임의로 만들어내지 않는다.
 
-커뮤니티 글 작성 요청은 `PREPARE_DRAFT`까지만 가능하며 실제 게시글 저장은 하지 않는다. 응답에서는 초안 준비 상태임을 명확히 해야 한다.
+커뮤니티 글 작성 요청은 `NAVIGATE COMMUNITY_COMPOSE`로 작성 화면 이동까지만 가능하며 실제 게시글 저장이나 초안 생성은 하지 않는다.
 
 OpenAI API key가 없거나 Spring AI 호출이 실패하면 로컬 도구 결과 기반 fallback 응답을 반환한다.
 

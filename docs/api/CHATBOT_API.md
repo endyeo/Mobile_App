@@ -1,4 +1,8 @@
 # 챗봇 API 명세
+<!-- 2026-05-14 daily-bug-scan: COMMUNITY_COMPOSE 액션과 초안 생성 제거 상태를 반영함. -->
+
+- 문서 버전: v1.2.0
+- 최종 반영일: 2026-05-14
 
 ## 1. 공통
 
@@ -155,6 +159,7 @@ Path variable:
 | --- | --- | --- | --- |
 | `NAVIGATE` | `MAP` | `{}` | 지도 화면 이동 |
 | `NAVIGATE` | `COMMUNITY` | optional `{ "query": "..." }` | 커뮤니티 화면 이동 |
+| `NAVIGATE` | `COMMUNITY_COMPOSE` | `null` | 커뮤니티 글 작성 화면 이동 |
 | `NAVIGATE` | `WALK` | `{}` | 산책/만보기 화면 이동 |
 | `NAVIGATE` | `FLOWER_BOOK` | optional `{ "flowerId": 1 }` | 도감 화면 이동 |
 | `NAVIGATE` | `SAVED` | `{}` | 저장 화면 이동 |
@@ -163,7 +168,6 @@ Path variable:
 | `MAP_SET_SEARCH_QUERY` | `MAP` | `{ "query": "벚꽃" }` | 지도 검색어 적용 |
 | `MAP_SHOW_FLOWER` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 위치 강조 |
 | `MAP_OPEN_FLOWER_PREVIEW` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 미리보기 열기 |
-| `PREPARE_DRAFT` | `COMMUNITY` | `{ "mode": "DRAFT_ONLY", "topic": "..." }` | 커뮤니티 초안 준비 |
 
 ## 5. AgentRunTrace
 

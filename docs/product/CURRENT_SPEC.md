@@ -1,4 +1,8 @@
 # HAR_FLOWER 현재 프로젝트 명세
+<!-- 2026-05-14 daily-bug-scan: 챗봇 커뮤니티 작성 화면 이동 액션과 명세 반영 상태를 갱신함. -->
+
+- 문서 버전: v1.1.0
+- 최종 반영일: 2026-05-14
 
 ## 1. 프로젝트 개요
 
@@ -73,7 +77,7 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 
 ### 커뮤니티
 
-백엔드 `CommunityController`는 피드 조회, 게시글 작성, 좋아요, 저장 토글을 제공한다. Flutter의 `CommunityApiService`가 access token을 포함해 호출한다. 챗봇 커뮤니티 도구는 커뮤니티 글 검색과 화면 이동/초안 준비 액션만 담당하며 실제 글 저장은 수행하지 않는다.
+백엔드 `CommunityController`는 피드 조회, 게시글 작성, 좋아요, 저장 토글을 제공한다. Flutter의 `CommunityApiService`가 access token을 포함해 호출한다. 챗봇 커뮤니티 도구는 커뮤니티 글 검색과 화면 이동/작성 화면 이동 액션만 담당하며 실제 글 저장이나 초안 생성은 수행하지 않는다. 현재 글 작성 요청은 `NAVIGATE COMMUNITY_COMPOSE`로 `CreatePostScreen` 연결까지만 수행한다.
 
 # 커뮤니티 아이디어 - 하단 네비게이션으로 커뮤니티 들어오면 게시글 | 인기글 | 댓글 내역 으로 네비게이션 변경
 
