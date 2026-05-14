@@ -29,12 +29,13 @@ REPORT/           사용자 확인용 로컬 작업 보고서
 
 ```text
 REPORT/active/             커밋 전 활성 계획/기록
-REPORT/plans/yyyyMMdd/     커밋 완료 후 작업 계획 보고서
-REPORT/records/yyyyMMdd/   커밋 완료 후 작업 기록 보고서
+REPORT/plans/yyyyMMdd/     커밋 완료 후 작업 계획 보고서, 파일명은 HHmm-작업명-plan.md
+REPORT/records/yyyyMMdd/   커밋 완료 후 작업 기록 보고서, 파일명은 HHmm-작업명-record.md
 ```
 
 - 커밋 전 계획의 체크박스가 모두 완료되어 있어야 한다.
 - 커밋이 완료되면 활성 계획은 `REPORT/plans/yyyyMMdd/`, 기록은 `REPORT/records/yyyyMMdd/`로 이동된다.
+- 보고서 파일명은 시간을 맨 앞에 둔다. 예: `1554-보고서-파일명-시간-표시-record.md`
 - 보고 훅 설치는 `scripts/install-hooks.ps1`로 한다.
 - AI는 사용자가 이전 작업 맥락 확인을 요청하거나, 이어서 작업해야 하는 경우에만 `REPORT/`를 읽는다.
 
@@ -49,7 +50,7 @@ REPORT/records/yyyyMMdd/   커밋 완료 후 작업 기록 보고서
 ## 중요 사항
 - 한글이 깨져 보인다는 이유만으로 주석이나 문서를 삭제하지 않는다.
 - 먼저 `Get-Content -Raw -Encoding UTF8 <파일>`로 확인한다.
-- 실제 파일 안에 ``, `Ã`, `ì...` 같은 깨짐 문자열이 저장된 경우에만 수정한다.
+- 실제 파일 안에 UTF-8 replacement 문자나 CP949 오해 흔적이 저장된 경우에만 수정한다.
 - 터미널 출력만 깨진 경우 파일을 수정하지 않는다.
 
 ## 테스트 명령

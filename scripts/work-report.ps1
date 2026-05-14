@@ -52,6 +52,14 @@ function Ensure-ReportDirs {
     }
 }
 
+function Ensure-Dir {
+    param([string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        New-Item -ItemType Directory -Path $Path | Out-Null
+    }
+}
+
 function Get-GitBranch {
     $Branch = (git -C $ProjectRoot branch --show-current).Trim()
     if ([string]::IsNullOrWhiteSpace($Branch)) {
@@ -135,6 +143,8 @@ function Move-ReportFile {
         throw "Report file is missing: $FromRelative"
     }
 
+    Ensure-Dir -Path $ToDir
+
     $To = Join-Path $ToDir (Split-Path -Leaf $From)
     $Index = 2
     while (Test-Path -LiteralPath $To) {
@@ -161,10 +171,10 @@ switch ($Action) {
 
         $Branch = Assert-WorkBranch
         $Now = Get-Date
-        $Date = $Now.ToString("yyyyMMdd")
+        $Time = $Now.ToString("HHmm")
         $Slug = ConvertTo-Slug $Name
-        $PlanRelative = "REPORT\active\$Date-$Slug-plan.md"
-        $RecordRelative = "REPORT\active\$Date-$Slug-record.md"
+        $PlanRelative = "REPORT\active\$Time-$Slug-plan.md"
+        $RecordRelative = "REPORT\active\$Time-$Slug-record.md"
         $PlanPath = ConvertTo-AbsolutePath $PlanRelative
         $RecordPath = ConvertTo-AbsolutePath $RecordRelative
 
@@ -296,8 +306,12 @@ $Remaining
     "finalize" {
         $State = Read-State
         Assert-ActiveTaskForCommit
-        $MovedPlan = Move-ReportFile -FromRelative $State.planPath -ToDir $PlansDir
-        $MovedRecord = Move-ReportFile -FromRelative $State.recordPath -ToDir $RecordsDir
+        $CreatedAt = [datetime]::Parse($State.createdAt)
+        $DateDir = $CreatedAt.ToString("yyyyMMdd")
+        $PlanArchiveDir = Join-Path $PlansDir $DateDir
+        $RecordArchiveDir = Join-Path $RecordsDir $DateDir
+        $MovedPlan = Move-ReportFile -FromRelative $State.planPath -ToDir $PlanArchiveDir
+        $MovedRecord = Move-ReportFile -FromRelative $State.recordPath -ToDir $RecordArchiveDir
         Remove-Item -LiteralPath $StatePath -Force
         Write-Output "Finalized report task: $($State.name)"
         Write-Output "Plan moved to: $MovedPlan"
