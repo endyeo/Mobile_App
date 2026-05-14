@@ -31,11 +31,24 @@ class _MainScreenState extends State<MainScreen> {
   bool _isChatRunning = false;
   int _festivalIndex = 0;
   String? _chatStatus;
+  String _nickname = '사용자';
+  String? _profileImageUrl;
 
   @override
   void initState() {
     super.initState();
     _loadPosts();
+    _loadUserInfo();
+  }
+
+  Future<void> _loadUserInfo() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _nickname = prefs.getString('nickname') ?? '사용자';
+        _profileImageUrl = prefs.getString('profileImageUrl');
+      });
+    }
   }
 
   @override
@@ -100,14 +113,17 @@ class _MainScreenState extends State<MainScreen> {
           CircleAvatar(
             radius: 18,
             backgroundColor: colors.primary.withValues(alpha: 0.15),
-            child: Icon(Icons.person, color: colors.primary, size: 20),
+            backgroundImage: _profileImageUrl != null ? NetworkImage(_profileImageUrl!) : null,
+            child: _profileImageUrl == null
+                ? Icon(Icons.person, color: colors.primary, size: 20)
+                : null,
           ),
           const SizedBox(width: 10),
           Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Text('산책중인 사용자', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(_nickname, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               Text('${colors.name} 탐험가', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
             ],
           ),

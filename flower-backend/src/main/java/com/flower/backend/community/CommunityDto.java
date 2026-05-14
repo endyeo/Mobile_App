@@ -24,6 +24,9 @@ public class CommunityDto {
         private boolean liked;
         private boolean saved;
         private String createdAt;
+        private String postType;
+        private String plantName;
+        private Float plantConfidence;
     }
 
     @Getter

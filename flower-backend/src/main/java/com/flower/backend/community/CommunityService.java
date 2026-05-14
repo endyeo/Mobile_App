@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -102,6 +103,47 @@ public class CommunityService {
         return Map.of("saved", saved);
     }
 
+    @Transactional
+    public PostResponse createFlowerSpot(Long userId, MultipartFile image, String content,
+                                          String plantName, float plantConfidence,
+                                          Double latitude, Double longitude, String address,
+                                          boolean notifyOthers) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+
+        String imageUrl = null;
+        if (image != null && !image.isEmpty()) {
+            imageUrl = storageService.upload(image);
+        }
+
+        CommunityPost post = CommunityPost.builder()
+                .user(user).content(content).imageUrl(imageUrl)
+                .latitude(latitude).longitude(longitude).address(address)
+                .postType("FLOWER_SPOT").plantName(plantName)
+                .plantConfidence(plantConfidence).notifyOthers(notifyOthers)
+                .build();
+
+        return toResponse(postRepository.save(post), Set.of(), Set.of());
+    }
+
+    @Transactional(readOnly = true)
+    public FeedResponse getFlowerSpots(Double lat, Double lng, double radius, int days, Long cursor) {
+        LocalDateTime since = LocalDateTime.now().minusDays(days);
+        var pageable = PageRequest.of(0, 21);
+
+        List<CommunityPost> posts = cursor == null
+                ? postRepository.findFlowerSpots(since, pageable)
+                : postRepository.findFlowerSpotsByCursor(cursor, since, pageable);
+
+        boolean hasNext = posts.size() > 20;
+        if (hasNext) posts = posts.subList(0, 20);
+        Long nextCursor = hasNext ? posts.get(posts.size() - 1).getId() : null;
+
+        return FeedResponse.builder()
+                .posts(posts.stream().map(p -> toResponse(p, Set.of(), Set.of())).collect(Collectors.toList()))
+                .nextCursor(nextCursor).hasNext(hasNext).build();
+    }
+
     private PostResponse toResponse(CommunityPost post, Set<Long> likedIds, Set<Long> savedIds) {
         return PostResponse.builder()
                 .id(post.getId())
@@ -118,6 +160,9 @@ public class CommunityService {
                 .liked(likedIds.contains(post.getId()))
                 .saved(savedIds.contains(post.getId()))
                 .createdAt(post.getCreatedAt() != null ? post.getCreatedAt().toString() : "")
+                .postType(post.getPostType())
+                .plantName(post.getPlantName())
+                .plantConfidence(post.getPlantConfidence())
                 .build();
     }
 }

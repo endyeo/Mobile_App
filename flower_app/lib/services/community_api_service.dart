@@ -15,7 +15,7 @@ class CommunityPost {
   final String? address;
   final double? latitude;
   final double? longitude;
-  final int likeCount;
+  int likeCount;
   bool liked;
   bool saved;
   final String time;

@@ -4,7 +4,7 @@ import '../theme/season_theme.dart';
 import '../services/community_api_service.dart';
 import '../widgets/app_bottom_navigation.dart';
 import '../widgets/chat_floating_button.dart';
-import 'create_post_screen.dart';
+import 'create_flower_spot_screen.dart';
 
 class CommunityFeedScreen extends StatefulWidget {
   const CommunityFeedScreen({super.key});
@@ -38,21 +38,28 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   }
 
   Future<void> _openCreatePost() async {
-    final newPost = await Navigator.push<CommunityPost>(
+    final result = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(builder: (_) => const CreatePostScreen()),
+      MaterialPageRoute(builder: (_) => const CreateFlowerSpotScreen()),
     );
-    if (newPost != null) setState(() => _posts.insert(0, newPost));
+    if (result == true) _loadPosts(); // 게시 후 피드 새로고침
   }
 
   Future<void> _toggleLike(int index) async {
     final post = _posts[index];
-    final original = post.liked;
-    setState(() => post.liked = !post.liked);
+    final originalLiked = post.liked;
+    final originalCount = post.likeCount;
+    setState(() {
+      post.liked = !post.liked;
+      post.likeCount += post.liked ? 1 : -1;
+    });
     try {
       await CommunityApiService.toggleLike(_accessToken, post.id);
     } catch (_) {
-      if (mounted) setState(() => post.liked = original);
+      if (mounted) setState(() {
+        post.liked = originalLiked;
+        post.likeCount = originalCount;
+      });
     }
   }
 

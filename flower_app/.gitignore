@@ -1,6 +1,9 @@
 # 환경변수 파일
 .env
 
+# Firebase 설정 (API 키 포함)
+android/app/google-services.json
+
 # Miscellaneous
 *.class
 *.log
