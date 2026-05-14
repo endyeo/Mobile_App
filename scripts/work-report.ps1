@@ -217,7 +217,23 @@ $Name
 
 $Branch
 
-## 작업 기록
+## 주 변경 사항
+
+- 작업 완료 시 핵심 변경을 적는다.
+
+## 추가 변경 사항
+
+- 작업 중 함께 반영한 작은 변경을 적는다.
+
+## 검증
+
+- 실행한 검증과 결과를 적는다.
+
+## 남은 문제
+
+- 남은 문제나 다음 작업이 있으면 적는다.
+
+## 작업 로그
 
 "@
         Write-TextFile -Path $RecordPath -Value $RecordContent
@@ -247,16 +263,20 @@ $Branch
         $Entry = @"
 ### $($Now.ToString("yyyy-MM-dd HH:mm"))
 
-요약:
+#### 주 변경 사항
+
 $Summary
 
-변경한 파일:
+#### 추가 변경 사항
+
 $ChangedFiles
 
-검증:
+#### 검증
+
 $Verification
 
-남은 문제:
+#### 남은 문제
+
 $Remaining
 
 "@
