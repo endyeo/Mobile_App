@@ -40,6 +40,11 @@ public class ChatbotService {
     private final String openAiApiKey;
     private final Map<String, SessionData> sessions = new ConcurrentHashMap<>();
 
+    @FunctionalInterface
+    public interface StreamSender {
+        void send(String eventName, Object data) throws Exception;
+    }
+
     private static class SessionData {
         final List<ChatTurn> history = new ArrayList<>();
         volatile long lastAccessTime = System.currentTimeMillis();
@@ -68,7 +73,7 @@ public class ChatbotService {
         }
 
         String message = request.getMessage() == null ? "" : request.getMessage().trim();
-        AgentExecution execution = routeAndExecute(message, request.getContext());
+        AgentExecution execution = routeAndExecute(message, request.getContext(), null);
         ChatAction primaryAction = execution.primaryAction();
         String localContext = execution.toPromptContext();
         String reply = callSpringAi(message, sessionId, localContext, primaryAction);
@@ -86,11 +91,49 @@ public class ChatbotService {
                 .build();
     }
 
+    public void chatStream(ChatMessageRequest request, StreamSender sender) throws Exception {
+        String sessionId = request.getSessionId();
+        if (sessionId == null || sessionId.isBlank()) {
+            sessionId = UUID.randomUUID().toString();
+        }
+
+        String message = request.getMessage() == null ? "" : request.getMessage().trim();
+        sendStreamEvent(sender, "CONNECTED", Map.of("sessionId", sessionId));
+        sendStatus(sender, "CONNECTED", "SSE 연결이 확인되었습니다.");
+
+        AgentExecution execution = routeAndExecute(message, request.getContext(), sender);
+        ChatAction primaryAction = execution.primaryAction();
+        String localContext = execution.toPromptContext();
+
+        sendStatus(sender, "ANSWER", "답변을 종합하고 있어요.");
+        String reply = callSpringAi(message, sessionId, localContext, primaryAction);
+
+        remember(sessionId, "user", message);
+        remember(sessionId, "assistant", reply);
+
+        ChatMessageResponse response = ChatMessageResponse.builder()
+                .reply(reply)
+                .action(primaryAction)
+                .actions(execution.actions())
+                .agentRun(execution.trace())
+                .toolResults(execution.toolResults())
+                .sessionId(sessionId)
+                .build();
+
+        sendStreamEvent(sender, "FINAL_ANSWER", response);
+        sendStreamEvent(sender, "DONE", Map.of("reason", "completed"));
+    }
+
     public void clearSession(String sessionId) {
         if (sessionId != null && !sessionId.isBlank()) sessions.remove(sessionId);
     }
 
-    private AgentExecution routeAndExecute(String message, ChatMessageRequest.LocationContext location) {
+    private AgentExecution routeAndExecute(
+            String message,
+            ChatMessageRequest.LocationContext location,
+            StreamSender streamSender
+    ) {
+        sendStatus(streamSender, "CONTEXT", "AI가 맥락을 파악하고 있어요.");
         AgentPlan plan = createAgentPlan(message);
         List<RouteIntent> intents = plan.intents() == null ? List.of() : plan.intents();
         boolean flowerBookRequested = actionsContainTarget(plan.actions(), "FLOWER_BOOK");
@@ -107,13 +150,25 @@ public class ChatbotService {
 
         steps.add(stepTrace(step++, "RouterAgent", "routeAndPlan", "SUCCESS",
                 plan.source() + " selected the required search tools and internal client follow-ups."));
+        sendStreamEvent(streamSender, "CONTEXT_PLANNED", Map.of(
+                "route", route,
+                "message", "요청 맥락과 필요한 작업 계획을 확인했습니다."
+        ));
 
+        sendStatus(streamSender, "PLAN", "필요한 앱 도구를 고르고 있어요.");
         ChatActionValidator.ValidationResult validationResult =
                 chatActionValidator.validateAndComplete(plan.actions(), intents, keyword);
         actions.addAll(validationResult.actions());
         for (ChatAction action : actions) {
             steps.add(stepTrace(step++, agentFor(action), toolFor(action), "READY",
                     "Planned client-side follow-up from " + plan.source() + "."));
+        }
+        if (!actions.isEmpty()) {
+            sendStatus(streamSender, "ACTION", actionStatusMessage(actions));
+            sendStreamEvent(streamSender, "ACTION", Map.of(
+                    "action", actions.get(0),
+                    "actions", actions
+            ));
         }
 
         boolean flowerBookInfoRequested = intents.contains(RouteIntent.FLOWER)
@@ -124,32 +179,41 @@ public class ChatbotService {
                     && !wantsMap(message)
                     && !wantsFlowerSpotOrEvent(message);
             if (wantsFlowerGrowTips(message)) {
+                sendStatus(streamSender, "SEARCH", "꽃 재배 정보를 검색하고 있어요.");
                 ToolResult growTipsResult = flowerToolService.lookupFlowerGrowTipsSourceResult(
                         keyword,
                         allowCandidateExpansion
                 );
                 toolResults.add(growTipsResult);
+                sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", growTipsResult));
                 steps.add(stepTrace(step++, "FlowerAgent", "lookupFlowerGrowTipsSource", "SUCCESS",
                         growTipsResult.getSummary()));
             } else {
+                sendStatus(streamSender, "SEARCH", "꽃 정보를 검색하고 있어요.");
                 ToolResult descriptionResult = flowerToolService.lookupFlowerDescriptionSourceResult(
                         keyword,
                         allowCandidateExpansion
                 );
                 toolResults.add(descriptionResult);
+                sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", descriptionResult));
                 steps.add(stepTrace(step++, "FlowerAgent", "lookupFlowerDescriptionSource", "SUCCESS",
                         descriptionResult.getSummary()));
             }
         } else if (intents.contains(RouteIntent.FLOWER) && !flowerBookRequested) {
+            sendStatus(streamSender, "SEARCH", "꽃 정보를 검색하고 있어요.");
             flowerResults = searchFlowers(keyword);
-            toolResults.add(flowerToolResult(keyword, flowerResults));
+            ToolResult flowerResult = flowerToolResult(keyword, flowerResults);
+            toolResults.add(flowerResult);
+            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", flowerResult));
             steps.add(stepTrace(step++, "FlowerAgent", "searchFlowerSpots", "SUCCESS",
                     "Checked " + flowerResults.size() + " approved flower spot candidates."));
         }
 
         if (intents.contains(RouteIntent.COMMUNITY)) {
+            sendStatus(streamSender, "SEARCH", "커뮤니티 글을 검색하고 있어요.");
             ToolResult communityResult = communityTools.searchPosts(keyword);
             toolResults.add(communityResult);
+            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", communityResult));
             steps.add(stepTrace(step++, "RouterAgent", "searchCommunityPosts", "SUCCESS",
                     communityResult.getSummary()));
         }
@@ -460,6 +524,40 @@ public class ChatbotService {
 
     private String displayKeyword(String keyword) {
         return keyword == null || keyword.isBlank() ? "all" : keyword;
+    }
+
+    private void sendStatus(StreamSender streamSender, String stage, String message) {
+        sendStreamEvent(streamSender, "STATUS", Map.of(
+                "stage", stage,
+                "message", message
+        ));
+    }
+
+    private void sendStreamEvent(StreamSender streamSender, String eventName, Object data) {
+        if (streamSender == null) {
+            return;
+        }
+        try {
+            streamSender.send(eventName, data);
+        } catch (Exception e) {
+            throw new IllegalStateException("Failed to send chatbot stream event: " + eventName, e);
+        }
+    }
+
+    private String actionStatusMessage(List<ChatAction> actions) {
+        if (actions == null || actions.isEmpty()) {
+            return "앱 액션을 준비하고 있어요.";
+        }
+        boolean mapAction = actions.stream().anyMatch(action -> "MAP".equals(action.getTarget()));
+        if (mapAction) {
+            return "지도 화면 이동을 준비하고 있어요.";
+        }
+        boolean communityAction = actions.stream().anyMatch(action ->
+                action.getTarget() != null && action.getTarget().startsWith("COMMUNITY"));
+        if (communityAction) {
+            return "커뮤니티 화면 이동을 준비하고 있어요.";
+        }
+        return "앱 화면 이동을 준비하고 있어요.";
     }
 
     private AgentStepTrace stepTrace(int step, String agent, String tool, String status, String message) {

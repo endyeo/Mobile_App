@@ -1,8 +1,12 @@
+import 'dart:async';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:uuid/uuid.dart';
 
 import '../app_actions/app_action_runtime.dart';
+import '../models/chat_action.dart';
 import '../services/chatbot_service.dart';
 import '../theme/season_theme.dart';
 
@@ -26,45 +30,194 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
   bool _showHistory = false;
   bool _isSending = false;
   bool _isListening = false;
+  StreamSubscription<ChatbotStreamEvent>? _streamSubscription;
+  CancelToken? _cancelToken;
+  bool _cancelledByUser = false;
+  bool _finalAnswerReceived = false;
+  bool _doneReceived = false;
+  final Set<String> _dispatchedActionKeys = <String>{};
 
   @override
   void dispose() {
+    _cancelToken?.cancel('disposed');
+    unawaited(_streamSubscription?.cancel());
     _controller.dispose();
     super.dispose();
   }
 
   Future<void> _sendMessage(String rawText) async {
     final text = rawText.trim();
-    if (text.isEmpty || _isSending) return;
+    if (text.isEmpty || _isSending || _isListening) return;
 
     _controller.clear();
     FocusScope.of(context).unfocus();
+
+    _cancelledByUser = false;
+    _finalAnswerReceived = false;
+    _doneReceived = false;
+    _dispatchedActionKeys.clear();
+    _cancelToken = CancelToken();
+
     setState(() {
       _messages.add(_FloatingChatMessage.user(text));
+      _messages.add(_FloatingChatMessage.bot('AI가 요청을 확인하고 있어요.'));
       _isSending = true;
       _showHistory = true;
     });
 
-    try {
-      final response = await _chatbotService.sendMessage(
-        message: text,
-        sessionId: _sessionId,
-        lat: 37.5665,
-        lng: 126.9780,
-      );
-      if (!mounted) return;
-      setState(() {
-        _messages.add(_FloatingChatMessage.bot(response.reply));
-        _isSending = false;
-      });
-      await AppActionRuntime.execute(context, response.actions);
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _messages.add(_FloatingChatMessage.bot('응답을 가져오지 못했습니다.'));
-        _isSending = false;
-      });
+    _streamSubscription = _chatbotService
+        .streamMessage(
+          message: text,
+          sessionId: _sessionId,
+          lat: 37.5665,
+          lng: 126.9780,
+          cancelToken: _cancelToken,
+        )
+        .listen(
+          _handleStreamEvent,
+          onError: _handleStreamError,
+          onDone: _handleStreamDone,
+          cancelOnError: false,
+        );
+  }
+
+  void _handleStreamEvent(ChatbotStreamEvent event) {
+    if (!mounted || _cancelledByUser) return;
+
+    switch (event.type) {
+      case 'CONNECTED':
+        break;
+      case 'STATUS':
+      case 'CONTEXT_PLANNED':
+        _upsertBotMessage(event.message);
+        break;
+      case 'FINAL_ANSWER':
+        _finalAnswerReceived = true;
+        _replaceLastBotMessage(event.response?.reply ?? event.message);
+        break;
+      case 'ACTION':
+        final actions = event.actions.isNotEmpty
+            ? event.actions
+            : _singleAction(event.action);
+        _upsertBotMessage(_actionProgressMessage(actions));
+        final actionKey = actions.map(_actionKey).join('|');
+        if (actions.isNotEmpty && _dispatchedActionKeys.add(actionKey)) {
+          unawaited(AppActionRuntime.execute(context, actions));
+        }
+        break;
+      case 'TOOL_RESULT':
+        final result = event.toolResult;
+        if (result != null) {
+          _upsertBotMessage(_toolResultMessage(result));
+        }
+        break;
+      case 'DONE':
+        _doneReceived = true;
+        _finishStream();
+        break;
+      case 'ERROR':
+        _handleStreamError(
+          event.message.isEmpty ? '챗봇 처리 중 오류가 발생했습니다.' : event.message,
+        );
+        break;
+      default:
+        if (event.message.isNotEmpty) {
+          _upsertBotMessage(event.message);
+        }
     }
+  }
+
+  void _handleStreamError(Object error) {
+    if (!mounted || _cancelledByUser) return;
+    _replaceLastBotMessage('응답을 가져오지 못했습니다.');
+    _finishStream();
+  }
+
+  void _handleStreamDone() {
+    if (!mounted || _cancelledByUser) return;
+    if (!_isSending || _doneReceived) return;
+    if (!_finalAnswerReceived) {
+      _replaceLastBotMessage('응답을 마무리하지 못했습니다. 다시 시도해 주세요.');
+    }
+    _finishStream();
+  }
+
+  void _finishStream() {
+    if (!mounted) return;
+    _cancelToken = null;
+    _streamSubscription = null;
+    setState(() => _isSending = false);
+  }
+
+  Future<void> _stopStream() async {
+    _cancelledByUser = true;
+    _cancelToken?.cancel('stopped by user');
+    await _streamSubscription?.cancel();
+    if (!mounted) return;
+    _cancelToken = null;
+    _streamSubscription = null;
+    setState(() {
+      _isSending = false;
+      if (_messages.isNotEmpty && !_messages.last.isUser) {
+        _messages.removeLast();
+      }
+    });
+  }
+
+  void _upsertBotMessage(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty || !mounted) return;
+
+    setState(() {
+      if (_messages.isNotEmpty && !_messages.last.isUser) {
+        _messages[_messages.length - 1] = _FloatingChatMessage.bot(trimmed);
+      } else {
+        _messages.add(_FloatingChatMessage.bot(trimmed));
+      }
+      _showHistory = true;
+    });
+  }
+
+  String _actionKey(ChatAction action) {
+    return '${action.type}:${action.target}:${action.params}';
+  }
+
+  List<ChatAction> _singleAction(ChatAction? action) {
+    return action == null ? <ChatAction>[] : <ChatAction>[action];
+  }
+
+  void _replaceLastBotMessage(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty || !mounted) return;
+
+    setState(() {
+      if (_messages.isNotEmpty && !_messages.last.isUser) {
+        _messages[_messages.length - 1] = _FloatingChatMessage.bot(trimmed);
+      } else {
+        _messages.add(_FloatingChatMessage.bot(trimmed));
+      }
+      _showHistory = true;
+    });
+  }
+
+  String _actionProgressMessage(List<ChatAction> actions) {
+    if (actions.any((action) => action.target == 'MAP')) {
+      return '지도 화면 이동을 준비하고 있어요.';
+    }
+    if (actions.any((action) => action.target?.startsWith('COMMUNITY') ?? false)) {
+      return '커뮤니티 화면 이동을 준비하고 있어요.';
+    }
+    return '앱 화면 이동을 준비하고 있어요.';
+  }
+
+  String _toolResultMessage(ToolResult result) {
+    if (result.tool.startsWith('flower.')) {
+      return '꽃 정보를 확인했어요.';
+    }
+    if (result.tool.startsWith('community.')) {
+      return '커뮤니티 정보를 확인했어요.';
+    }
+    return '필요한 정보를 확인했어요.';
   }
 
   Future<void> _listenAndSend() async {
@@ -299,7 +452,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
                 hintText: _isListening
                     ? '말씀해주세요'
                     : _isSending
-                    ? '챗봇 응답 중입니다'
+                    ? '응답을 기다리고 있어요'
                     : '챗봇에게 메시지 보내기',
                 border: InputBorder.none,
                 isDense: true,
@@ -315,12 +468,25 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
             ),
             onPressed: _isSending || _isListening ? null : _listenAndSend,
           ),
-          IconButton(
-            tooltip: '전송',
-            icon: Icon(Icons.send_rounded, color: colors.primary),
-            onPressed: _isSending || _isListening
-                ? null
-                : () => _sendMessage(_controller.text),
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: _isSending ? colors.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(_isSending ? 10 : 20),
+            ),
+            child: IconButton(
+              tooltip: _isSending ? '중지' : '전송',
+              icon: Icon(
+                _isSending ? Icons.stop_rounded : Icons.send_rounded,
+                color: _isSending ? Colors.white : colors.primary,
+              ),
+              onPressed: _isListening
+                  ? null
+                  : _isSending
+                  ? _stopStream
+                  : () => _sendMessage(_controller.text),
+            ),
           ),
         ],
       ),
