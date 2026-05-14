@@ -16,6 +16,7 @@ class CreateFlowerSpotScreen extends StatefulWidget {
 
 class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
   File? _image;
+  bool _imageFromGallery = false;
   bool _shareLocation = false;
   bool _notifyOthers = false;
   bool _isIdentifying = false;
@@ -43,6 +44,7 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
     final file = File(picked.path);
     setState(() {
       _image = file;
+      _imageFromGallery = false;
       _plantName = null;
       _plantConfidence = null;
     });
@@ -62,6 +64,7 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
     final file = File(picked.path);
     setState(() {
       _image = file;
+      _imageFromGallery = true;
       _plantName = null;
       _plantConfidence = null;
     });
@@ -99,7 +102,22 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
         final pos = await Geolocator.getCurrentPosition(
           locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
         );
-        setState(() { _shareLocation = true; _currentPosition = pos; });
+        final hadGalleryImage = _imageFromGallery;
+        setState(() {
+          _shareLocation = true;
+          _currentPosition = pos;
+          if (_imageFromGallery) {
+            _image = null;
+            _imageFromGallery = false;
+            _plantName = null;
+            _plantConfidence = null;
+          }
+        });
+        if (hadGalleryImage && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('위치 공유 시 카메라로 촬영해주세요.')),
+          );
+        }
       } catch (e) {
         if (mounted) _showLocationDeniedDialog();
       }
