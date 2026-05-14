@@ -14,11 +14,11 @@ public class ChatMessageRequest {
     @NotBlank(message = "메시지를 입력해주세요.")
     private String message;
 
-    /** 세션 ID. 없으면 서버에서 생성. */
+    /** 세션 ID. 없으면 서버에서 생성한다. */
     @JsonProperty("session_id")
     private String sessionId;
 
-    /** 사용자 현재 위치 (선택) */
+    /** 사용자 현재 위치. */
     private LocationContext context;
 
     @Getter
