@@ -1,13 +1,13 @@
-(function () {
+﻿(function () {
   'use strict';
 
   const config = window.MAP_CONFIG || {};
+  const DEFAULT_FALLBACK_POSITION = { lat: 37.5665, lng: 126.9780 };
   const state = {
     map: null,
     flowers: [],
-    filtered: [],
+    filteredFlowers: [],
     festivals: [],
-    posts: [],
     currentPosition: null,
     radius: config.DEFAULT_RADIUS || 5000,
     search: '',
@@ -15,13 +15,31 @@
     mapError: null,
     markers: [],
     festivalMarkers: [],
-    postMarkers: [],
-    // 길찾기 상태
     routePolyline: null,
     routeStartMarker: null,
     routeEndMarker: null,
     routeSteps: [],
+    showFlowers: true,
+    showFestivals: true,
+    mapInteractionBound: false,
   };
+
+  const FLOWER_KEYWORDS = [
+    '\uAF43',
+    '\uBC9A\uAF43',
+    '\uC9C4\uB2EC\uB798',
+    '\uB9E4\uD654',
+    '\uC218\uAD6D',
+    '\uC7A5\uBBF8',
+    '\uAC1C\uB098\uB9AC',
+    '\uCCA0\uCB49',
+    '\uAD6D\uD654',
+    '\uD574\uBC14\uB77C\uAE30',
+    '\uCF54\uC2A4\uBAA8\uC2A4',
+    '\uB3D9\uBC31',
+    '\uC720\uCC44',
+    'flower',
+  ];
 
   const $ = (selector) => document.querySelector(selector);
 
@@ -35,21 +53,54 @@
 
   function exposeFlutterBridge() {
     window.FlowerMap = {
-      setSearchQuery: function (query) {
+      setSearchQuery(query) {
         state.search = String(query || '').trim();
         applyFilters();
       },
-      zoomIn: function () { zoomMap(-1); },
-      zoomOut: function () { zoomMap(1); },
-      moveToCurrentLocation: function () { initGeolocation(); },
-      // Flutter에서 위치를 직접 주입
-      setCurrentPosition: function (lat, lng) {
+      zoomIn() {
+        zoomMap(-1);
+      },
+      zoomOut() {
+        zoomMap(1);
+      },
+      moveToCurrentLocation() {
+        initGeolocation();
+      },
+      setCurrentPosition(lat, lng) {
         state.currentPosition = { lat: Number(lat), lng: Number(lng) };
         if (state.map && state.kakaoReady) {
           state.map.setCenter(new kakao.maps.LatLng(lat, lng));
         }
-        loadFlowers();
-      }
+        applyFilters();
+      },
+      setVisibleCategories(flowers, festivals) {
+        state.showFlowers = !!flowers;
+        state.showFestivals = !!festivals;
+        renderMapMarkers();
+      },
+      setFestivals(festivals) {
+        try {
+          const parsed = typeof festivals === 'string'
+            ? JSON.parse(festivals)
+            : festivals;
+          state.festivals = normalizeFestivalList(parsed);
+          renderMapMarkers();
+        } catch (error) {
+          console.warn('Failed to set festivals from Flutter.', error);
+        }
+      },
+      focusFestival(festival) {
+        try {
+          const parsed = typeof festival === 'string'
+            ? JSON.parse(festival)
+            : festival;
+          if (parsed) {
+            focusFestival(normalizeFestival(parsed));
+          }
+        } catch (error) {
+          console.warn('Failed to focus festival.', error);
+        }
+      },
     };
   }
 
@@ -59,35 +110,33 @@
       state.mapError = null;
       renderMap();
     });
+
     document.addEventListener('kakao-map-error', function () {
       state.kakaoReady = false;
-      state.mapError = 'Kakao Maps SDK could not be loaded.';
+      state.mapError = '카카오 지도 SDK를 불러오지 못했습니다.';
       renderMap();
     });
   }
 
-  // 테스트용 임시 마커 (실제 데이터 들어오면 제거) - 반경 필터 제외
-  const TEST_MARKERS = [
-    { flower_id: 't1', name: '여의도 벚꽃', species: '벚나무', address: '서울 영등포구 여의도동', location: { lat: 37.5219, lng: 126.9245 }, _test: true },
-    { flower_id: 't2', name: '남산 개나리', species: '개나리', address: '서울 용산구 남산공원', location: { lat: 37.5512, lng: 126.9882 }, _test: true },
-    { flower_id: 't3', name: '석촌호수 벚꽃', species: '벚나무', address: '서울 송파구 석촌호수', location: { lat: 37.5085, lng: 127.1020 }, _test: true },
-  ];
-
   async function loadFlowers() {
-    const apiFlowers = await fetchFlowersFromApi() || [];
-    // API 데이터 없으면 테스트 마커 표시
-    state.flowers = apiFlowers.length > 0 ? apiFlowers : TEST_MARKERS;
+    const apiFlowers = await fetchFlowersFromApi();
+    state.flowers = apiFlowers;
     applyFilters();
   }
 
   async function fetchFlowersFromApi() {
     const baseUrl = config.API_BASE_URL;
     if (!baseUrl) return [];
+
     try {
-      const center = state.currentPosition || config.DEFAULT_CENTER || { lat: 37.5665, lng: 126.9780 };
+      const center = state.currentPosition ||
+        config.DEFAULT_CENTER ||
+        { lat: 37.5665, lng: 126.9780 };
       const params = new URLSearchParams({
-        lat: center.lat, lng: center.lng,
-        radius: state.radius, limit: config.DEFAULT_LIMIT || 50
+        lat: center.lat,
+        lng: center.lng,
+        radius: state.radius,
+        limit: config.DEFAULT_LIMIT || 50,
       });
       const response = await fetch(`${baseUrl}/flowers?${params.toString()}`);
       if (!response.ok) return [];
@@ -101,94 +150,168 @@
   }
 
   function normalizeFlowers(flowers) {
-    return flowers.map(function (flower) {
-      const lat = flower.location?.lat ?? flower.lat ?? flower.mapY;
-      const lng = flower.location?.lng ?? flower.lng ?? flower.mapX;
-      return {
-        flower_id: flower.flower_id ?? flower.flowerId ?? flower.id,
-        name: flower.name || '',
-        species: flower.species || '',
-        address: flower.address || '',
-        location: { lat: Number(lat), lng: Number(lng) },
-        distance_m: flower.distance_m ?? flower.distanceM
-      };
-    }).filter(function (flower) {
-      return Number.isFinite(flower.location.lat) && Number.isFinite(flower.location.lng);
-    });
+    return flowers
+      .map(function (flower) {
+        const lat = flower.location?.lat ?? flower.lat ?? flower.mapY;
+        const lng = flower.location?.lng ?? flower.lng ?? flower.mapX;
+        return {
+          flower_id: flower.flower_id ?? flower.flowerId ?? flower.id,
+          name: flower.name || '',
+          species: flower.species || '',
+          address: flower.address || '',
+          location: { lat: Number(lat), lng: Number(lng) },
+          distance_m: flower.distance_m ?? flower.distanceM,
+        };
+      })
+      .filter(function (flower) {
+        return Number.isFinite(flower.location.lat) &&
+          Number.isFinite(flower.location.lng);
+      });
   }
 
   async function loadFestivals() {
     const tourKey = config.TOUR_API_KEY;
     if (!tourKey) return;
+
     try {
       const now = new Date();
-      // 3개월 전부터 검색 (지나간 축제 포함, 계절 축제 반영)
       const past = new Date(now);
       past.setMonth(past.getMonth() - 3);
       const eventStartDate = past.getFullYear() +
         String(past.getMonth() + 1).padStart(2, '0') +
         String(past.getDate()).padStart(2, '0');
+
       const params = new URLSearchParams({
-        numOfRows: '100', pageNo: '1', MobileOS: 'ETC', MobileApp: 'FlowerApp',
-        _type: 'json', eventStartDate: eventStartDate,
+        serviceKey: tourKey,
+        numOfRows: '80',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'FlowerApp',
+        _type: 'json',
+        eventStartDate: eventStartDate,
+        contentTypeId: '15',
       });
-      const url = 'https://apis.data.go.kr/B551011/KorService2/searchFestival2?serviceKey=' + tourKey + '&' + params.toString();
-      const response = await fetch(url);
+
+      const response = await fetch(
+        `https://apis.data.go.kr/B551011/KorService2/searchFestival2?${params.toString()}`,
+      );
       if (!response.ok) return;
-      const text = await response.text();
-      if (text.trim().startsWith('<')) return;
-      const data = JSON.parse(text);
+      const data = await response.json();
       const items = data?.response?.body?.items?.item;
       const itemList = Array.isArray(items) ? items : items ? [items] : [];
-      const flowerKeywords = /꽃|벚|진달래|튤립|장미|수국|국화|매화|개나리|철쭉|목련|코스모스|해바라기|라벤더|동백/;
-      state.festivals = itemList
-        .filter(function (item) {
-          return Number(item.mapx || 0) !== 0 && Number(item.mapy || 0) !== 0
-            && flowerKeywords.test(item.title || '');
-        })
-        .map(function (item) {
-          return {
-            title: item.title || '',
-            mapX: Number(item.mapx),
-            mapY: Number(item.mapy),
-            imageUrl: item.firstimage || item.firstimage2 || '',
-          };
-        });
+      state.festivals = normalizeFestivalList(itemList);
       renderMapMarkers();
     } catch (error) {
       console.warn('Festival API is unavailable.', error);
     }
   }
 
+  function normalizeFestivalList(list) {
+    return (Array.isArray(list) ? list : [])
+      .map(normalizeFestival)
+      .filter(Boolean);
+  }
+
+  function normalizeFestival(item) {
+    if (!item) return null;
+
+    const festival = {
+      contentId: item.contentId || item.contentid || '',
+      title: item.title || '',
+      address: item.address || [item.addr1 || '', item.addr2 || ''].join(' ').trim(),
+      imageUrl: item.imageUrl || item.firstimage || item.firstimage2 || '',
+      period: item.period || formatPeriod(
+        item.eventStartDate || item.eventstartdate || '',
+        item.eventEndDate || item.eventenddate || '',
+      ),
+      mapX: Number(item.mapX ?? item.mapx ?? item.lng ?? item.longitude ?? 0),
+      mapY: Number(item.mapY ?? item.mapy ?? item.lat ?? item.latitude ?? 0),
+    };
+
+    if (!festival.title) return null;
+    if (!Number.isFinite(festival.mapX) ||
+        !Number.isFinite(festival.mapY) ||
+        festival.mapX === 0 ||
+        festival.mapY === 0) {
+      return null;
+    }
+
+    if (!isFlowerFestival(festival.title)) return null;
+    return festival;
+  }
+
+  function isFlowerFestival(title) {
+    const text = String(title || '').toLowerCase();
+    return FLOWER_KEYWORDS.some(function (keyword) {
+      return text.includes(String(keyword).toLowerCase());
+    });
+  }
+
+  function formatPeriod(start, end) {
+    if (!start) return '';
+    const normalizedStart = formatCompactDate(start);
+    const normalizedEnd = formatCompactDate(end);
+    return normalizedEnd ? `${normalizedStart} - ${normalizedEnd}` : normalizedStart;
+  }
+
+  function formatCompactDate(value) {
+    const text = String(value || '');
+    if (text.length !== 8) return text;
+    return `${text.substring(0, 4)}.${text.substring(4, 6)}.${text.substring(6, 8)}`;
+  }
+
   function applyFilters() {
     const query = state.search.toLowerCase();
     const center = state.currentPosition;
-    state.filtered = state.flowers.filter(function (flower) {
-      if (query && !`${flower.name} ${flower.species} ${flower.address}`.toLowerCase().includes(query)) return false;
+
+    state.filteredFlowers = state.flowers.filter(function (flower) {
+      if (query &&
+          !`${flower.name} ${flower.species} ${flower.address}`
+            .toLowerCase()
+            .includes(query)) {
+        return false;
+      }
+
       if (center && !flower._test) {
-        flower.distance_m = Math.round(distanceMeters(center.lat, center.lng, flower.location.lat, flower.location.lng));
+        flower.distance_m = Math.round(
+          distanceMeters(
+            center.lat,
+            center.lng,
+            flower.location.lat,
+            flower.location.lng,
+          ),
+        );
         if (flower.distance_m > state.radius) return false;
       }
+
       return true;
     });
+
     renderMap();
   }
 
   function renderMap() {
-    if (state.mapError) { showMapError(state.mapError); return; }
-    if (!config.KAKAO_APP_KEY || config.KAKAO_APP_KEY === 'YOUR_KAKAO_JS_KEY_HERE') {
-      showMapError('Kakao Maps JavaScript key is not configured.');
+    if (state.mapError) {
+      showMapError(state.mapError);
       return;
     }
+
+    if (!config.KAKAO_APP_KEY ||
+        config.KAKAO_APP_KEY === 'YOUR_KAKAO_JS_KEY_HERE') {
+      showMapError('카카오 지도 JavaScript 키가 설정되지 않았습니다.');
+      return;
+    }
+
     if (state.kakaoReady && window.kakao?.maps) {
       if (renderKakaoMap()) return;
       state.kakaoReady = false;
       state.map = null;
       clearKakaoMarkers();
-      showMapError('Kakao map could not be rendered.');
+      showMapError('카카오 지도를 표시하지 못했습니다.');
       return;
     }
-    showMapStatus('Loading Kakao map...');
+
+    showMapStatus('지도를 불러오는 중입니다...');
   }
 
   function renderKakaoMap() {
@@ -197,9 +320,10 @@
         const center = config.DEFAULT_CENTER || { lat: 37.5665, lng: 126.9780 };
         state.map = new kakao.maps.Map($('#map'), {
           center: new kakao.maps.LatLng(center.lat, center.lng),
-          level: config.DEFAULT_ZOOM_LEVEL || 5
+          level: config.DEFAULT_ZOOM_LEVEL || 5,
         });
       }
+      bindMapInteractions();
       renderMapMarkers();
       return true;
     } catch (error) {
@@ -212,35 +336,78 @@
     if (!state.map || !window.kakao?.maps) return;
     clearKakaoMarkers();
 
-    state.filtered.forEach(function (flower) {
-      const position = new kakao.maps.LatLng(flower.location.lat, flower.location.lng);
-      const marker = new kakao.maps.Marker({ position: position });
-      marker.setMap(state.map);
-      kakao.maps.event.addListener(marker, 'click', function () {
-        showMarkerInfo(flower.name || flower.species || '꽃', flower.address || '',
-          flower.location.lat, flower.location.lng);
+    if (state.showFlowers) {
+      state.filteredFlowers.forEach(function (flower) {
+        const position = new kakao.maps.LatLng(
+          flower.location.lat,
+          flower.location.lng,
+        );
+        const marker = new kakao.maps.Marker({ position: position });
+        marker.setMap(state.map);
+        kakao.maps.event.addListener(marker, 'click', function () {
+          showMarkerInfo({
+            name: flower.name || flower.species || '꽃 명소',
+            address: flower.address || '',
+            lat: flower.location.lat,
+            lng: flower.location.lng,
+            isFestival: false,
+          });
+        });
+        state.markers.push(marker);
       });
-      state.markers.push(marker);
-    });
+    }
 
-    state.festivals.forEach(function (festival) {
-      const position = new kakao.maps.LatLng(festival.mapY, festival.mapX);
-      const marker = new kakao.maps.Marker({ position: position });
-      marker.setMap(state.map);
-      kakao.maps.event.addListener(marker, 'click', function () {
-        showMarkerInfo(festival.title || '축제', '', festival.mapY, festival.mapX);
+    if (state.showFestivals) {
+      state.festivals.forEach(function (festival) {
+        const position = new kakao.maps.LatLng(festival.mapY, festival.mapX);
+        const marker = new kakao.maps.Marker({
+          position: position,
+          image: buildFestivalMarkerImage(),
+        });
+        marker.setMap(state.map);
+        kakao.maps.event.addListener(marker, 'click', function () {
+          showMarkerInfo({
+            name: festival.title || '축제',
+            address: festival.address || '',
+            lat: festival.mapY,
+            lng: festival.mapX,
+            isFestival: true,
+            imageUrl: festival.imageUrl || '',
+            period: festival.period || '',
+            festival: festival,
+          });
+        });
+        state.festivalMarkers.push(marker);
       });
-      state.festivalMarkers.push(marker);
-    });
+    }
+  }
+
+  function buildFestivalMarkerImage() {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="42" viewBox="0 0 34 42">',
+      '<path d="M17 0C7.61 0 0 7.61 0 17c0 11.8 17 25 17 25s17-13.2 17-25C34 7.61 26.39 0 17 0z" fill="#ff4fa3"/>',
+      '<circle cx="17" cy="16" r="7" fill="white"/>',
+      '<path d="M17 11l1.8 3.8 4.2.5-3.1 2.9.8 4.2-3.7-2-3.7 2 .8-4.2-3.1-2.9 4.2-.5z" fill="#ff4fa3"/>',
+      '</svg>',
+    ].join('');
+
+    return new kakao.maps.MarkerImage(
+      `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+      new kakao.maps.Size(34, 42),
+      { offset: new kakao.maps.Point(17, 42) },
+    );
   }
 
   function clearKakaoMarkers() {
-    state.markers.forEach(function (m) { m.setMap(null); });
+    state.markers.forEach(function (marker) {
+      marker.setMap(null);
+    });
     state.markers = [];
-    state.festivalMarkers.forEach(function (m) { m.setMap(null); });
+
+    state.festivalMarkers.forEach(function (marker) {
+      marker.setMap(null);
+    });
     state.festivalMarkers = [];
-    state.postMarkers.forEach(function (m) { m.setMap(null); });
-    state.postMarkers = [];
   }
 
   function zoomMap(delta) {
@@ -251,240 +418,522 @@
 
   function initGeolocation() {
     if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(function (position) {
-      state.currentPosition = { lat: position.coords.latitude, lng: position.coords.longitude };
-      loadFlowers();
-    }, function () {
-      state.currentPosition = null;
-      applyFilters();
-    }, { enableHighAccuracy: true, timeout: 8000 });
+
+    navigator.geolocation.getCurrentPosition(
+      function (position) {
+        state.currentPosition = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        };
+        if (state.map) {
+          state.map.setCenter(
+            new kakao.maps.LatLng(
+              state.currentPosition.lat,
+              state.currentPosition.lng,
+            ),
+          );
+        }
+        applyFilters();
+      },
+      function () {
+        applyFilters();
+      },
+      { enableHighAccuracy: true, timeout: 8000 },
+    );
   }
 
-  // ── 마커 정보 패널 ───────────────────────────────────────────────
+  function focusFestival(festival) {
+    if (!festival || !state.map || !window.kakao?.maps) return;
+    const position = new kakao.maps.LatLng(festival.mapY, festival.mapX);
+    state.map.setLevel(Math.min(state.map.getLevel(), 5));
+    panToMarkerWithOffset(position, 170);
 
-  function showMarkerInfo(name, address, lat, lng) {
-    var old = document.getElementById('marker-info');
-    if (old) old.remove();
-    var panel = document.createElement('div');
+    showMarkerInfo({
+      name: festival.title || '축제',
+      address: festival.address || '',
+      lat: festival.mapY,
+      lng: festival.mapX,
+      isFestival: true,
+      imageUrl: festival.imageUrl || '',
+      period: festival.period || '',
+      festival: festival,
+    });
+  }
+
+  function bindMapInteractions() {
+    if (!state.map || !window.kakao?.maps || state.mapInteractionBound) return;
+    kakao.maps.event.addListener(state.map, 'click', function () {
+      dismissTransientUi();
+    });
+    state.mapInteractionBound = true;
+  }
+
+  function panToMarkerWithOffset(position, offsetY) {
+    if (!state.map || !window.kakao?.maps) return;
+
+    try {
+      const projection = state.map.getProjection();
+      const point = projection.containerPointFromCoords(position);
+      const nextPoint = new kakao.maps.Point(point.x, point.y + offsetY);
+      const nextCenter = projection.coordsFromContainerPoint(nextPoint);
+      state.map.panTo(nextCenter);
+    } catch (_) {
+      state.map.panTo(position);
+    }
+  }
+
+  function showMarkerInfo(item) {
+    dismissTransientUi();
+
+    const panel = document.createElement('div');
     panel.id = 'marker-info';
-    panel.className = 'route-panel';
-    panel.innerHTML =
-      '<div class="route-panel-row">'
-      + '<span class="route-icon">🌸</span>'
-      + '<div class="route-info">'
-      + '  <strong>' + escapeHtml(name) + '</strong>'
-      + (address ? '<span>' + escapeHtml(address) + '</span>' : '')
-      + '</div>'
-      + '<button id="btn-navigate" class="route-toggle" style="width:auto;padding:0 10px;border-radius:12px;font-size:12px;">길찾기</button>'
-      + '<button id="btn-close-info" class="route-close">✕</button>'
-      + '</div>';
-    document.getElementById('map-shell').appendChild(panel);
-    document.getElementById('btn-close-info').addEventListener('click', function () {
+    panel.className = 'map-panel marker-panel';
+
+    const meta = [item.period, item.address].filter(Boolean).join(' · ');
+    panel.innerHTML = [
+      '<div class="panel-row">',
+      '<div class="panel-info">',
+      `<strong>${escapeHtml(item.name || '')}</strong>`,
+      meta ? `<span>${escapeHtml(meta)}</span>` : '',
+      '</div>',
+      '<button class="panel-action" data-role="navigate">길찾기</button>',
+      item.isFestival
+        ? '<button class="panel-action ghost" data-role="detail">정보</button>'
+        : '',
+      '</div>',
+    ].join('');
+
+    $('#map-shell').appendChild(panel);
+
+    panel.querySelector('[data-role="navigate"]').addEventListener('click', function () {
       panel.remove();
+      navigateInApp(item.lat, item.lng, item.name || '축제');
     });
-    document.getElementById('btn-navigate').addEventListener('click', function () {
+
+    const detailButton = panel.querySelector('[data-role="detail"]');
+    if (detailButton) {
+      detailButton.addEventListener('click', function () {
+        showFestivalDetail(item.festival || item);
+      });
+    }
+  }
+
+  async function showFestivalDetail(festival) {
+    dismissTransientUi();
+
+    const enrichedFestival = await enrichFestivalDetail(festival);
+
+    const panel = document.createElement('section');
+    panel.id = 'festival-detail';
+    panel.className = 'map-panel detail-panel';
+
+    const imageMarkup = enrichedFestival.imageUrl
+      ? `<img src="${escapeAttribute(enrichedFestival.imageUrl)}" alt="${escapeAttribute(enrichedFestival.title || '축제 이미지')}">`
+      : '<div class="detail-placeholder">꽃</div>';
+
+    panel.innerHTML = [
+      '<div class="detail-hero">', imageMarkup, '</div>',
+      '<div class="detail-content">',
+      '<div class="detail-header">',
+      `<strong>${escapeHtml(enrichedFestival.title || '축제')}</strong>`,
+      '</div>',
+      enrichedFestival.period ? `<p class="detail-meta">기간: ${escapeHtml(enrichedFestival.period)}</p>` : '',
+      enrichedFestival.eventPlace ? `<p class="detail-body">장소: ${escapeHtml(enrichedFestival.eventPlace)}</p>` : '',
+      enrichedFestival.address ? `<p class="detail-body">주소: ${escapeHtml(enrichedFestival.address)}</p>` : '',
+      enrichedFestival.useTimeFestival ? `<p class="detail-body">이용안내: ${escapeHtml(enrichedFestival.useTimeFestival)}</p>` : '',
+      enrichedFestival.playTime ? `<p class="detail-body">운영시간: ${escapeHtml(enrichedFestival.playTime)}</p>` : '',
+      enrichedFestival.homepage ? `<p class="detail-body">홈페이지: ${escapeHtml(stripHtml(enrichedFestival.homepage))}</p>` : '',
+      enrichedFestival.tel ? `<p class="detail-body">문의: ${escapeHtml(enrichedFestival.tel)}</p>` : '',
+      enrichedFestival.overview ? `<p class="detail-body">${escapeHtml(stripHtml(enrichedFestival.overview))}</p>` : '',
+      !enrichedFestival.period &&
+        !enrichedFestival.eventPlace &&
+        !enrichedFestival.address &&
+        !enrichedFestival.useTimeFestival &&
+        !enrichedFestival.playTime &&
+        !enrichedFestival.homepage &&
+        !enrichedFestival.tel &&
+        !enrichedFestival.overview
+        ? '<p class="detail-body">추가로 표시할 상세 정보가 없습니다.</p>'
+        : '',
+      '<div class="detail-actions">',
+      '<button class="detail-button primary" data-role="navigate">길찾기</button>',
+      '</div>',
+      '</div>',
+    ].join('');
+
+    $('#map-shell').appendChild(panel);
+
+    panel.querySelector('[data-role="navigate"]').addEventListener('click', function () {
       panel.remove();
-      navigateInApp(lat, lng, name);
+      navigateInApp(
+        enrichedFestival.mapY,
+        enrichedFestival.mapX,
+        enrichedFestival.title || '축제',
+      );
     });
   }
 
-  // ── 길찾기 (OSRM) ─────────────────────────────────────────────
+  async function enrichFestivalDetail(festival) {
+    if (!festival?.contentId || !config.TOUR_API_KEY) {
+      return festival;
+    }
+
+    try {
+      const [common, intro] = await Promise.all([
+        fetchFestivalCommonDetail(festival.contentId),
+        fetchFestivalIntroDetail(festival.contentId),
+      ]);
+
+      return {
+        ...festival,
+        imageUrl: common.imageUrl || festival.imageUrl || '',
+        address: common.address || festival.address || '',
+        tel: common.tel || intro.sponsorTel || festival.tel || '',
+        homepage: common.homepage || '',
+        overview: common.overview || '',
+        eventPlace: intro.eventPlace || '',
+        playTime: intro.playTime || '',
+        useTimeFestival: intro.useTimeFestival || '',
+      };
+    } catch (error) {
+      console.warn('축제 상세 정보를 가져오지 못했습니다.', error);
+      return festival;
+    }
+  }
+
+  async function fetchFestivalCommonDetail(contentId) {
+    const params = new URLSearchParams({
+      serviceKey: config.TOUR_API_KEY,
+      MobileOS: 'ETC',
+      MobileApp: 'FlowerApp',
+      _type: 'json',
+      contentId: String(contentId),
+      defaultYN: 'Y',
+      firstImageYN: 'Y',
+      addrinfoYN: 'Y',
+      mapinfoYN: 'Y',
+      overviewYN: 'Y',
+    });
+
+    const response = await fetch(
+      `https://apis.data.go.kr/B551011/KorService2/detailCommon2?${params.toString()}`,
+    );
+    if (!response.ok) throw new Error(`detailCommon2 ${response.status}`);
+    const data = await response.json();
+    const item = normalizeDetailItem(data);
+
+    return {
+      imageUrl: item.firstimage || item.firstimage2 || '',
+      address: [item.addr1 || '', item.addr2 || ''].join(' ').trim(),
+      tel: item.tel || '',
+      homepage: item.homepage || '',
+      overview: item.overview || '',
+    };
+  }
+
+  async function fetchFestivalIntroDetail(contentId) {
+    const params = new URLSearchParams({
+      serviceKey: config.TOUR_API_KEY,
+      MobileOS: 'ETC',
+      MobileApp: 'FlowerApp',
+      _type: 'json',
+      contentId: String(contentId),
+      contentTypeId: '15',
+    });
+
+    const response = await fetch(
+      `https://apis.data.go.kr/B551011/KorService2/detailIntro2?${params.toString()}`,
+    );
+    if (!response.ok) throw new Error(`detailIntro2 ${response.status}`);
+    const data = await response.json();
+    const item = normalizeDetailItem(data);
+
+    return {
+      eventPlace: item.eventplace || '',
+      playTime: item.playtime || '',
+      useTimeFestival: item.usetimefestival || '',
+      sponsorTel: item.sponsor1tel || item.sponsor2tel || '',
+    };
+  }
+
+  function normalizeDetailItem(data) {
+    const item = data?.response?.body?.items?.item;
+    if (Array.isArray(item)) return item[0] || {};
+    return item || {};
+  }
 
   async function navigateInApp(destLat, destLng, destName) {
     if (!state.currentPosition) {
       try {
         await new Promise(function (resolve, reject) {
-          if (!navigator.geolocation) return reject(new Error('GPS 미지원'));
+          if (!navigator.geolocation) {
+            state.currentPosition = DEFAULT_FALLBACK_POSITION;
+            resolve();
+            return;
+          }
+
           navigator.geolocation.getCurrentPosition(
-            function (pos) {
-              state.currentPosition = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            function (position) {
+              state.currentPosition = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude,
+              };
               resolve();
             },
-            function () { reject(new Error('위치 권한 거부')); },
-            { enableHighAccuracy: true, timeout: 8000 }
+            function () {
+              state.currentPosition = DEFAULT_FALLBACK_POSITION;
+              resolve();
+            },
+            { enableHighAccuracy: true, timeout: 8000 },
           );
         });
-      } catch (e) {
-        showRouteError('현재 위치를 확인할 수 없습니다. GPS를 켜주세요.');
-        return;
+      } catch (_) {
+        state.currentPosition = DEFAULT_FALLBACK_POSITION;
       }
     }
+
     showRouteLoading(destName);
+
     try {
-      var route = await fetchWalkingRoute(
-        state.currentPosition.lat, state.currentPosition.lng, destLat, destLng
+      const route = await fetchWalkingRoute(
+        state.currentPosition.lat,
+        state.currentPosition.lng,
+        destLat,
+        destLng,
       );
-      drawRouteOnMap(route.coordinates, state.currentPosition, { lat: destLat, lng: destLng });
+      drawRouteOnMap(route.coordinates, state.currentPosition, {
+        lat: destLat,
+        lng: destLng,
+      });
       state.routeSteps = route.steps || [];
       showRoutePanel(route.distance, route.duration, destName, route.steps || []);
-    } catch (e) {
-      showRouteError('경로를 찾을 수 없습니다.');
+    } catch (_) {
+      showRouteError('경로를 찾지 못했습니다.');
     }
   }
 
   async function fetchWalkingRoute(startLat, startLng, endLat, endLng) {
-    var url = 'https://router.project-osrm.org/route/v1/foot/'
-      + startLng + ',' + startLat + ';' + endLng + ',' + endLat
+    const url = 'https://router.project-osrm.org/route/v1/foot/'
+      + `${startLng},${startLat};${endLng},${endLat}`
       + '?overview=full&geometries=geojson&steps=true';
-    var res = await fetch(url);
-    if (!res.ok) throw new Error('API ' + res.status);
-    var data = await res.json();
-    if (!data.routes || !data.routes.length) throw new Error('경로 없음');
-    var route = data.routes[0];
-    var steps = [];
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`Route API ${response.status}`);
+    const data = await response.json();
+    if (!data.routes || !data.routes.length) throw new Error('No route');
+
+    const route = data.routes[0];
+    const steps = [];
     if (route.legs) {
       route.legs.forEach(function (leg) {
-        if (leg.steps) {
-          leg.steps.forEach(function (step) {
-            if (step.maneuver && step.distance > 0) {
-              steps.push({
-                instruction: translateManeuver(step.maneuver.type, step.maneuver.modifier, step.name),
-                distance: step.distance,
-                duration: step.duration,
-              });
-            }
+        if (!leg.steps) return;
+        leg.steps.forEach(function (step) {
+          if (!step.maneuver || step.distance <= 0) return;
+          steps.push({
+            instruction: translateManeuver(
+              step.maneuver.type,
+              step.maneuver.modifier,
+              step.name,
+            ),
+            distance: step.distance,
+            duration: step.duration,
           });
-        }
+        });
       });
     }
-    return { coordinates: route.geometry.coordinates, distance: route.distance, duration: route.duration, steps: steps };
+
+    return {
+      coordinates: route.geometry.coordinates,
+      distance: route.distance,
+      duration: route.duration,
+      steps: steps,
+    };
   }
 
   function translateManeuver(type, modifier, name) {
-    var road = name ? ' (' + name + ')' : '';
-    var map = {
-      'depart': '출발', 'arrive': '도착',
-      'turn-left': '좌회전', 'turn-right': '우회전',
-      'turn-slight left': '살짝 좌회전', 'turn-slight right': '살짝 우회전',
-      'turn-sharp left': '크게 좌회전', 'turn-sharp right': '크게 우회전',
-      'continue-straight': '직진', 'continue-': '직진',
-      'fork-left': '왼쪽 갈림길', 'fork-right': '오른쪽 갈림길',
-      'roundabout-': '로타리 진입', 'new name-': '길을 따라 이동'
+    const road = name ? ` (${name})` : '';
+    const labels = {
+      depart: '출발',
+      arrive: '도착',
+      'turn-left': '좌회전',
+      'turn-right': '우회전',
+      'turn-slight left': '왼쪽 방향 유지',
+      'turn-slight right': '오른쪽 방향 유지',
+      'turn-sharp left': '급좌회전',
+      'turn-sharp right': '급우회전',
+      'continue-straight': '직진',
+      'continue-': '직진',
+      'fork-left': '갈림길에서 왼쪽',
+      'fork-right': '갈림길에서 오른쪽',
+      'roundabout-': '로터리 진입',
+      'new name-': '도로를 따라 이동',
     };
-    var key = type + '-' + (modifier || '');
-    var label = map[key] || map[type + '-'] || type + (modifier ? ' ' + modifier : '');
+
+    const key = `${type}-${modifier || ''}`;
+    const label = labels[key] || labels[`${type}-`] || `${type}${modifier ? ` ${modifier}` : ''}`;
     return label + road;
   }
 
   function drawRouteOnMap(geojsonCoords, startPos, endPos) {
     clearRoute();
-    if (!state.map || !state.kakaoReady) return;
-    var path = geojsonCoords.map(function (c) { return new kakao.maps.LatLng(c[1], c[0]); });
+    if (!state.map || !state.kakaoReady || !window.kakao?.maps) return;
+
+    const path = geojsonCoords.map(function (coord) {
+      return new kakao.maps.LatLng(coord[1], coord[0]);
+    });
+
     state.routePolyline = new kakao.maps.Polyline({
-      path: path, strokeWeight: 7, strokeColor: '#4285F4', strokeOpacity: 0.9, strokeStyle: 'solid'
+      path: path,
+      strokeWeight: 7,
+      strokeColor: '#4285F4',
+      strokeOpacity: 0.9,
+      strokeStyle: 'solid',
     });
     state.routePolyline.setMap(state.map);
+
     try {
-      var startSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">'
-        + '<circle cx="16" cy="16" r="13" fill="#4285F4" stroke="white" stroke-width="3"/>'
-        + '<circle cx="16" cy="16" r="5" fill="white"/></svg>';
-      state.routeStartMarker = new kakao.maps.Marker({
-        position: new kakao.maps.LatLng(startPos.lat, startPos.lng),
-        image: new kakao.maps.MarkerImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(startSvg),
-          new kakao.maps.Size(32, 32), { offset: new kakao.maps.Point(16, 16) })
-      });
-      state.routeStartMarker.setMap(state.map);
-      var endSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="44" viewBox="0 0 36 44">'
+      const endSvg =
+        '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="44" viewBox="0 0 36 44">'
         + '<path d="M18 0C8.06 0 0 8.06 0 18c0 12.6 18 26 18 26s18-13.4 18-26C36 8.06 27.94 0 18 0z" fill="#EA4335"/>'
         + '<circle cx="18" cy="16" r="7" fill="white"/></svg>';
       state.routeEndMarker = new kakao.maps.Marker({
         position: new kakao.maps.LatLng(endPos.lat, endPos.lng),
-        image: new kakao.maps.MarkerImage('data:image/svg+xml;charset=utf-8,' + encodeURIComponent(endSvg),
-          new kakao.maps.Size(36, 44), { offset: new kakao.maps.Point(18, 44) })
+        image: new kakao.maps.MarkerImage(
+          `data:image/svg+xml;charset=utf-8,${encodeURIComponent(endSvg)}`,
+          new kakao.maps.Size(36, 44),
+          { offset: new kakao.maps.Point(18, 44) },
+        ),
       });
       state.routeEndMarker.setMap(state.map);
-    } catch (e) { /* ignore */ }
-    var bounds = new kakao.maps.LatLngBounds();
-    path.forEach(function (p) { bounds.extend(p); });
+    } catch (error) {
+      console.warn('Failed to draw route markers.', error);
+    }
+
+    const bounds = new kakao.maps.LatLngBounds();
+    path.forEach(function (point) {
+      bounds.extend(point);
+    });
     state.map.setBounds(bounds);
   }
 
   function clearRoute() {
-    if (state.routePolyline) { state.routePolyline.setMap(null); state.routePolyline = null; }
-    if (state.routeStartMarker) { state.routeStartMarker.setMap(null); state.routeStartMarker = null; }
-    if (state.routeEndMarker) { state.routeEndMarker.setMap(null); state.routeEndMarker = null; }
+    if (state.routePolyline) {
+      state.routePolyline.setMap(null);
+      state.routePolyline = null;
+    }
+    if (state.routeStartMarker) {
+      state.routeStartMarker.setMap(null);
+      state.routeStartMarker = null;
+    }
+    if (state.routeEndMarker) {
+      state.routeEndMarker.setMap(null);
+      state.routeEndMarker = null;
+    }
     state.routeSteps = [];
-    var panel = document.getElementById('route-panel');
-    if (panel) panel.remove();
+    removePanel('route-panel');
   }
 
   function showRoutePanel(distM, durS, destName, steps) {
-    var old = document.getElementById('route-panel');
-    if (old) old.remove();
-    var dist = distM >= 1000 ? (distM / 1000).toFixed(1) + ' km' : Math.round(distM) + ' m';
-    var mins = Math.ceil(durS / 60);
-    var time = mins >= 60 ? Math.floor(mins / 60) + '시간 ' + (mins % 60) + '분' : mins + '분';
-    var panel = document.createElement('div');
+    removePanel('route-panel');
+
+    const dist = distM >= 1000 ? `${(distM / 1000).toFixed(1)} km` : `${Math.round(distM)} m`;
+    const mins = Math.ceil(durS / 60);
+    const time = mins >= 60
+      ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+      : `${mins}m`;
+
+    const panel = document.createElement('div');
     panel.id = 'route-panel';
-    panel.className = 'route-panel';
-    var html = '<div class="route-panel-row">'
-      + '<span class="route-icon">🚶</span>'
-      + '<div class="route-info"><strong>' + escapeHtml(destName) + '</strong>'
-      + '<span>📏 ' + dist + ' &nbsp; ⏱ 도보 ' + time + '</span></div>'
-      + (steps && steps.length ? '<button id="btn-toggle-steps" class="route-toggle">▼</button>' : '')
-      + '<button id="btn-close-route" class="route-close">✕</button></div>';
+    panel.className = 'map-panel route-panel';
+
+    let html = [
+      '<div class="panel-row">',
+      '<span class="panel-icon">도보</span>',
+      '<div class="panel-info">',
+      `<strong>${escapeHtml(destName || '')}</strong>`,
+      `<span>거리 ${escapeHtml(dist)} · 도보 ${escapeHtml(time)}</span>`,
+      '</div>',
+      steps && steps.length
+        ? '<button class="panel-close" data-role="toggle">경로</button>'
+        : '',
+      '</div>',
+    ].join('');
+
     if (steps && steps.length) {
       html += '<div id="route-steps" class="route-steps" style="display:none;">';
-      steps.forEach(function (s) {
-        var sDist = s.distance >= 1000 ? (s.distance / 1000).toFixed(1) + 'km' : Math.round(s.distance) + 'm';
-        html += '<div class="route-step"><span class="step-num">' + getStepIcon(s.instruction) + '</span>'
-          + '<span class="step-text">' + escapeHtml(s.instruction) + '</span>'
-          + '<span class="step-dist">' + sDist + '</span></div>';
+      steps.forEach(function (step) {
+        const stepDistance = step.distance >= 1000
+          ? `${(step.distance / 1000).toFixed(1)}km`
+          : `${Math.round(step.distance)}m`;
+        html += [
+          '<div class="route-step">',
+          `<span class="step-num">${escapeHtml(getStepIcon(step.instruction))}</span>`,
+          `<span class="step-text">${escapeHtml(step.instruction)}</span>`,
+          `<span class="step-dist">${escapeHtml(stepDistance)}</span>`,
+          '</div>',
+        ].join('');
       });
       html += '</div>';
     }
+
     panel.innerHTML = html;
-    document.getElementById('map-shell').appendChild(panel);
-    document.getElementById('btn-close-route').addEventListener('click', clearRoute);
-    var toggleBtn = document.getElementById('btn-toggle-steps');
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', function () {
-        var el = document.getElementById('route-steps');
-        if (!el) return;
-        var hidden = el.style.display === 'none';
-        el.style.display = hidden ? 'block' : 'none';
-        toggleBtn.textContent = hidden ? '▲' : '▼';
+    $('#map-shell').appendChild(panel);
+
+    const toggleButton = panel.querySelector('[data-role="toggle"]');
+    if (toggleButton) {
+      toggleButton.addEventListener('click', function () {
+        const stepElement = $('#route-steps');
+        if (!stepElement) return;
+        const hidden = stepElement.style.display === 'none';
+        stepElement.style.display = hidden ? 'block' : 'none';
+        toggleButton.textContent = hidden ? '접기' : '경로';
       });
     }
   }
 
   function getStepIcon(instruction) {
-    if (instruction.indexOf('좌회전') >= 0) return '↰';
-    if (instruction.indexOf('우회전') >= 0) return '↱';
-    if (instruction.indexOf('직진') >= 0) return '↑';
-    if (instruction.indexOf('출발') >= 0) return '🏁';
-    if (instruction.indexOf('도착') >= 0) return '📍';
-    if (instruction.indexOf('갈림길') >= 0) return '⑂';
-    if (instruction.indexOf('로타리') >= 0) return '↻';
-    return '→';
+    if (instruction.includes('left') || instruction.includes('좌')) return '좌';
+    if (instruction.includes('right') || instruction.includes('우')) return '우';
+    if (instruction.includes('straight') || instruction.includes('직진')) return '직';
+    if (instruction.includes('Depart') || instruction.includes('출발')) return '출발';
+    if (instruction.includes('Arrive') || instruction.includes('도착')) return '도착';
+    if (instruction.includes('fork') || instruction.includes('갈림길')) return '갈림';
+    if (instruction.includes('roundabout') || instruction.includes('로터리')) return '회전';
+    return '이동';
   }
 
   function showRouteLoading(destName) {
-    var old = document.getElementById('route-panel');
-    if (old) old.remove();
-    var panel = document.createElement('div');
+    removePanel('route-panel');
+
+    const panel = document.createElement('div');
     panel.id = 'route-panel';
-    panel.className = 'route-panel';
-    panel.innerHTML = '<div class="route-panel-row"><span class="route-icon">⏳</span>'
-      + '<div class="route-info"><strong>' + escapeHtml(destName) + '</strong>'
-      + '<span>경로 검색 중...</span></div></div>';
-    document.getElementById('map-shell').appendChild(panel);
+    panel.className = 'map-panel route-panel';
+    panel.innerHTML = [
+      '<div class="panel-row">',
+      '<span class="panel-icon">...</span>',
+      '<div class="panel-info">',
+      `<strong>${escapeHtml(destName || '')}</strong>`,
+      '<span>경로를 찾는 중입니다.</span>',
+      '</div>',
+      '</div>',
+    ].join('');
+    $('#map-shell').appendChild(panel);
   }
 
-  function showRouteError(msg) {
-    var old = document.getElementById('route-panel');
-    if (old) old.remove();
-    var panel = document.createElement('div');
-    panel.id = 'route-panel';
-    panel.className = 'route-panel route-error';
-    panel.innerHTML = '<div class="route-panel-row"><span class="route-icon">⚠️</span>'
-      + '<div class="route-info"><span>' + escapeHtml(msg) + '</span></div>'
-      + '<button id="btn-close-route" class="route-close">✕</button></div>';
-    document.getElementById('map-shell').appendChild(panel);
-    document.getElementById('btn-close-route').addEventListener('click', clearRoute);
-  }
+  function showRouteError(message) {
+    removePanel('route-panel');
 
-  // ── 유틸 ──────────────────────────────────────────────────────
+    const panel = document.createElement('div');
+    panel.id = 'route-panel';
+    panel.className = 'map-panel route-panel route-error';
+    panel.innerHTML = [
+      '<div class="panel-row">',
+      '<span class="panel-icon">...</span>',
+      `<div class="panel-info"><span>${escapeHtml(message)}</span></div>`,
+      '</div>',
+    ].join('');
+
+    $('#map-shell').appendChild(panel);
+  }
 
   function showMapStatus(message) {
     $('#map').innerHTML = `<div class="map-message">${escapeHtml(message)}</div>`;
@@ -494,21 +943,57 @@
     $('#map').innerHTML = `<div class="map-message error">${escapeHtml(message)}</div>`;
   }
 
-  function distanceMeters(lat1, lng1, lat2, lng2) {
-    const R = 6371000;
-    const dLat = toRadians(lat2 - lat1);
-    const dLng = toRadians(lng2 - lng1);
-    const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRadians(lat1)) * Math.cos(toRadians(lat2)) * Math.sin(dLng / 2) ** 2;
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  function removePanel(id) {
+    const target = document.getElementById(id);
+    if (target) target.remove();
   }
 
-  function toRadians(v) { return v * Math.PI / 180; }
+  function dismissTransientUi() {
+    removePanel('marker-info');
+    removePanel('festival-detail');
+    clearRoute();
+  }
+
+  function distanceMeters(lat1, lng1, lat2, lng2) {
+    const earthRadius = 6371000;
+    const dLat = toRadians(lat2 - lat1);
+    const dLng = toRadians(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRadians(lat1)) *
+      Math.cos(toRadians(lat2)) *
+      Math.sin(dLng / 2) ** 2;
+    return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function toRadians(value) {
+    return value * Math.PI / 180;
+  }
 
   function escapeHtml(value) {
-    return String(value ?? '').replace(/[&<>"']/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[c];
+    return String(value ?? '').replace(/[&<>"']/g, function (char) {
+      return {
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        '\'': '&#039;',
+      }[char];
     });
+  }
+
+  function escapeAttribute(value) {
+    return escapeHtml(value).replace(/`/g, '&#096;');
+  }
+
+  function stripHtml(value) {
+    return String(value || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   document.addEventListener('DOMContentLoaded', init);
 })();
+
+

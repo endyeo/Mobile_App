@@ -4,19 +4,33 @@
   --muted: #66736d;
   --primary: #ff6f91;
   --primary-dark: #d94d73;
-  --surface: rgba(255, 255, 255, 0.92);
-  --shadow: 0 10px 30px rgba(30, 58, 45, 0.14);
+  --surface: rgba(255, 255, 255, 0.96);
+  --surface-strong: #ffffff;
+  --shadow: 0 16px 32px rgba(30, 58, 45, 0.16);
+  --border: rgba(255, 111, 145, 0.18);
 }
 
-* { box-sizing: border-box; }
+* {
+  box-sizing: border-box;
+}
 
-html, body, #map-shell {
+html,
+body,
+#map-shell {
   width: 100%;
   height: 100%;
   margin: 0;
   overflow: hidden;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   color: var(--ink);
+}
+
+body {
+  background: #eef5ef;
+}
+
+#map-shell {
+  position: relative;
 }
 
 #map {
@@ -44,110 +58,259 @@ html, body, #map-shell {
   font-weight: 700;
 }
 
-/* ── 마커 정보 / 길찾기 패널 ─────────────────────────── */
-/* 상단: Flutter 검색바 ~72px, 하단: Flutter 탭바 ~65px */
-.route-panel {
+.map-panel {
   position: absolute;
   left: 14px;
   right: 14px;
-  bottom: 80px; /* 하단 탭바 위 */
-  border-radius: 18px;
+  bottom: 244px;
+  border-radius: 20px;
   background: var(--surface);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow);
-  z-index: 50;
+  z-index: 40;
+  animation: panelSlideIn 220ms ease;
+}
+
+.marker-panel,
+.route-panel {
   padding: 14px 16px;
-  animation: routeSlideIn 250ms ease;
 }
 
-@keyframes routeSlideIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: translateY(0); }
-}
-
-.route-panel-row {
+.panel-row {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.route-icon { font-size: 24px; flex-shrink: 0; }
+.panel-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: rgba(255, 111, 145, 0.12);
+  font-size: 20px;
+  flex-shrink: 0;
+}
 
-.route-info { flex: 1; min-width: 0; }
+.panel-info {
+  flex: 1;
+  min-width: 0;
+}
 
-.route-info strong {
+.panel-info strong {
   display: block;
   font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.panel-info span {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.panel-action,
+.panel-close,
+.detail-button {
+  border: 0;
+  cursor: pointer;
+}
+
+.panel-action {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: var(--primary);
+  color: white;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.panel-action.ghost {
+  background: rgba(255, 111, 145, 0.10);
+  color: var(--primary-dark);
+}
+
+.panel-close {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #f2f4f3;
+  color: var(--muted);
+  font-size: 14px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.detail-panel {
+  overflow: hidden;
+  background: var(--surface-strong);
+}
+
+.detail-hero {
+  height: 150px;
+  background: linear-gradient(135deg, #ffe1ea, #fff3c5);
+}
+
+.detail-hero img,
+.detail-placeholder {
+  width: 100%;
+  height: 100%;
+}
+
+.detail-hero img {
+  display: block;
+  object-fit: cover;
+}
+
+.detail-placeholder {
+  display: grid;
+  place-items: center;
+  font-size: 42px;
+}
+
+.detail-content {
+  padding: 16px;
+}
+
+.detail-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.detail-header strong {
+  flex: 1;
+  font-size: 17px;
+  font-weight: 800;
   color: var(--ink);
 }
 
-.route-info span {
-  display: block;
-  font-size: 12px;
+.detail-meta,
+.detail-body {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.detail-meta {
   color: var(--primary-dark);
-  margin-top: 2px;
-  font-weight: 600;
+  font-weight: 700;
 }
 
-.route-close, .route-toggle {
-  width: 32px;
-  height: 32px;
-  border: 0;
-  border-radius: 50%;
-  background: #f0f0f0;
+.detail-body {
   color: var(--muted);
-  font-size: 14px;
-  cursor: pointer;
-  flex-shrink: 0;
-  display: grid;
-  place-items: center;
 }
 
-.route-close:hover, .route-toggle:hover { background: #e0e0e0; }
+.detail-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+}
 
-.route-error { border-left: 4px solid #e74c3c; }
-.route-error .route-info span { color: #c0392b; }
+.detail-button {
+  flex: 1;
+  height: 42px;
+  border-radius: 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.detail-button.primary {
+  background: var(--primary);
+  color: white;
+}
+
+.detail-button.secondary {
+  background: #f3f5f4;
+  color: var(--muted);
+}
+
+.route-error {
+  border-color: rgba(231, 76, 60, 0.24);
+}
+
+.route-error .panel-info span {
+  color: #c0392b;
+  font-weight: 700;
+}
 
 .route-steps {
-  margin-bottom: 10px;
-  padding-bottom: 10px;
-  border-bottom: 1px solid #eee;
-  max-height: 200px;
+  margin-top: 12px;
+  max-height: 190px;
   overflow-y: auto;
-  order: -1; /* 패널 내에서 위쪽에 표시 */
+  border-top: 1px solid rgba(33, 49, 42, 0.08);
+  padding-top: 8px;
 }
 
 .route-step {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 4px;
-  border-bottom: 1px solid #f5f5f5;
+  padding: 8px 2px;
+  border-bottom: 1px solid rgba(33, 49, 42, 0.06);
   font-size: 13px;
 }
 
-.route-step:last-child { border-bottom: 0; }
-
-.step-num {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  background: #e8f0fe;
-  color: #4285F4;
-  font-size: 16px;
-  font-weight: 700;
+.route-step:last-child {
+  border-bottom: 0;
 }
 
-.step-text { flex: 1; min-width: 0; color: var(--ink); }
+.step-num {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: #e8f0fe;
+  color: #4285f4;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  font-weight: 800;
+}
+
+.step-text {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink);
+}
 
 .step-dist {
   flex-shrink: 0;
   font-size: 11px;
   font-weight: 700;
   color: var(--primary-dark);
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 420px) {
+  .map-panel {
+    bottom: 222px;
+  }
+
+  .panel-row {
+    gap: 10px;
+  }
+
+  .panel-action {
+    padding: 0 10px;
+  }
 }
