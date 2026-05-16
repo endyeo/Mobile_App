@@ -27,6 +27,19 @@ public class CommunityDto {
         private String postType;
         private String plantName;
         private Float plantConfidence;
+        private int commentCount;
+    }
+
+    @Getter
+    @Builder
+    public static class CommentResponse {
+        private Long id;
+        private Long userId;
+        private String nickname;
+        private String profileImageUrl;
+        private String content;
+        private String createdAt;
+        private boolean mine;
     }
 
     @Getter

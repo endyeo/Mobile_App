@@ -16,6 +16,7 @@ class CommunityPost {
   final double? latitude;
   final double? longitude;
   int likeCount;
+  int commentCount;
   bool liked;
   bool saved;
   final String time;
@@ -32,6 +33,7 @@ class CommunityPost {
     this.latitude,
     this.longitude,
     required this.likeCount,
+    this.commentCount = 0,
     this.liked = false,
     this.saved = false,
     required this.time,
@@ -50,6 +52,7 @@ class CommunityPost {
       latitude: (json['latitude'] as num?)?.toDouble(),
       longitude: (json['longitude'] as num?)?.toDouble(),
       likeCount: json['likeCount'] as int? ?? 0,
+      commentCount: json['commentCount'] as int? ?? 0,
       liked: json['liked'] as bool? ?? false,
       saved: json['saved'] as bool? ?? false,
       time: json['createdAt'] as String? ?? '',
@@ -58,9 +61,13 @@ class CommunityPost {
 }
 
 class CommunityApiService {
-  static String get _baseUrl => '${ApiConfig.backendBaseUrl()}/api/v1/community';
+  static String get _baseUrl =>
+      '${ApiConfig.backendBaseUrl()}/api/v1/community';
 
-  static Future<List<CommunityPost>> getPosts(String accessToken, {int? cursor}) async {
+  static Future<List<CommunityPost>> getPosts(
+    String accessToken, {
+    int? cursor,
+  }) async {
     try {
       final uri = Uri.parse('$_baseUrl/posts').replace(
         queryParameters: {
@@ -68,17 +75,21 @@ class CommunityApiService {
           'limit': '10',
         },
       );
-      final response = await http.get(uri,
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .get(uri, headers: {'Authorization': 'Bearer $accessToken'})
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body);
         final data = body['data'] as Map<String, dynamic>;
         final posts = data['posts'] as List;
-        return posts.map((e) => CommunityPost.fromJson(e as Map<String, dynamic>)).toList();
+        return posts
+            .map((e) => CommunityPost.fromJson(e as Map<String, dynamic>))
+            .toList();
       }
-    } catch (e) { debugPrint('[API Error] $e'); }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
     return [];
   }
 
@@ -92,54 +103,77 @@ class CommunityApiService {
     String? address,
   }) async {
     try {
-      final request = http.MultipartRequest('POST', Uri.parse('$_baseUrl/posts'));
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/posts'),
+      );
       request.headers['Authorization'] = 'Bearer $accessToken';
       request.fields['content'] = content;
-      if (flowerSpecies != null) request.fields['flowerSpecies'] = flowerSpecies;
+      if (flowerSpecies != null)
+        request.fields['flowerSpecies'] = flowerSpecies;
       if (latitude != null) request.fields['latitude'] = latitude.toString();
       if (longitude != null) request.fields['longitude'] = longitude.toString();
       if (address != null) request.fields['address'] = address;
       if (image != null) {
-        request.files.add(await http.MultipartFile.fromPath('image', image.path));
+        request.files.add(
+          await http.MultipartFile.fromPath('image', image.path),
+        );
       }
 
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 30),
+      );
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 201) {
         final body = jsonDecode(response.body);
         return CommunityPost.fromJson(body['data'] as Map<String, dynamic>);
       }
-    } catch (e) { debugPrint('[API Error] $e'); }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
     return null;
   }
 
-  static Future<Map<String, dynamic>> toggleLike(String accessToken, int postId) async {
+  static Future<Map<String, dynamic>> toggleLike(
+    String accessToken,
+    int postId,
+  ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/posts/$postId/like'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 5));
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/posts/$postId/like'),
+            headers: {'Authorization': 'Bearer $accessToken'},
+          )
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body)['data'] as Map<String, dynamic>;
       }
-    } catch (e) { debugPrint('[API Error] $e'); }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
     return {};
   }
 
-  static Future<Map<String, dynamic>> toggleSave(String accessToken, int postId) async {
+  static Future<Map<String, dynamic>> toggleSave(
+    String accessToken,
+    int postId,
+  ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/posts/$postId/save'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 5));
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/posts/$postId/save'),
+            headers: {'Authorization': 'Bearer $accessToken'},
+          )
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         return jsonDecode(response.body)['data'] as Map<String, dynamic>;
       }
-    } catch (e) { debugPrint('[API Error] $e'); }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
     return {};
   }
-
 }

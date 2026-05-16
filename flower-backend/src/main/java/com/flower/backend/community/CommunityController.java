@@ -10,6 +10,7 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -49,7 +50,34 @@ public class CommunityController {
         return ResponseEntity.ok(ApiResponse.ok(communityService.toggleSave(getUserId(), postId)));
     }
 
+    @GetMapping("/posts/{postId}/comments")
+    public ResponseEntity<ApiResponse<List<CommunityDto.CommentResponse>>> getComments(
+            @PathVariable Long postId) {
+        Long userId = getUserIdOrNull();
+        return ResponseEntity.ok(ApiResponse.ok(communityService.getComments(postId, userId)));
+    }
+
+    @PostMapping("/posts/{postId}/comments")
+    public ResponseEntity<ApiResponse<CommunityDto.CommentResponse>> addComment(
+            @PathVariable Long postId,
+            @RequestBody Map<String, String> body) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.ok(
+                communityService.addComment(getUserId(), postId, body.get("content"))));
+    }
+
+    @DeleteMapping("/posts/{postId}/comments/{commentId}")
+    public ResponseEntity<ApiResponse<Void>> deleteComment(
+            @PathVariable Long postId,
+            @PathVariable Long commentId) {
+        communityService.deleteComment(getUserId(), postId, commentId);
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
     private Long getUserId() {
         return (Long) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+    }
+
+    private Long getUserIdOrNull() {
+        try { return getUserId(); } catch (Exception e) { return null; }
     }
 }

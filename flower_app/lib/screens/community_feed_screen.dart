@@ -5,9 +5,12 @@ import '../services/community_api_service.dart';
 import '../widgets/app_bottom_navigation.dart';
 import '../widgets/chat_floating_button.dart';
 import 'create_flower_spot_screen.dart';
+import '../widgets/comment_bottom_sheet.dart';
 
 class CommunityFeedScreen extends StatefulWidget {
-  const CommunityFeedScreen({super.key});
+  final int? initialPostId; // 메인화면 미리보기 탭 시 해당 게시글로 스크롤
+
+  const CommunityFeedScreen({super.key, this.initialPostId});
 
   @override
   State<CommunityFeedScreen> createState() => _CommunityFeedScreenState();
@@ -18,6 +21,7 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   bool _isLoading = true;
   String? _error;
   String _accessToken = '';
+  final Map<int, GlobalKey> _postKeys = {};
 
   @override
   void initState() {
@@ -26,15 +30,44 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   }
 
   Future<void> _loadPosts() async {
-    if (mounted) setState(() { _isLoading = true; _error = null; });
+    if (mounted)
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
     try {
       final prefs = await SharedPreferences.getInstance();
       _accessToken = prefs.getString('accessToken') ?? '';
       final posts = await CommunityApiService.getPosts(_accessToken);
-      if (mounted) setState(() { _posts = posts; _isLoading = false; });
+      if (mounted) {
+        setState(() {
+          _posts = posts;
+          _isLoading = false;
+        });
+        _scrollToInitialPost();
+      }
     } catch (e) {
-      if (mounted) setState(() { _isLoading = false; _error = '게시글을 불러오지 못했습니다.'; });
+      if (mounted)
+        setState(() {
+          _isLoading = false;
+          _error = '게시글을 불러오지 못했습니다.';
+        });
     }
+  }
+
+  void _scrollToInitialPost() {
+    if (widget.initialPostId == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final key = _postKeys[widget.initialPostId!];
+      if (key?.currentContext != null) {
+        Scrollable.ensureVisible(
+          key!.currentContext!,
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.easeInOut,
+          alignment: 0.1,
+        );
+      }
+    });
   }
 
   Future<void> _openCreatePost() async {
@@ -56,10 +89,11 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
     try {
       await CommunityApiService.toggleLike(_accessToken, post.id);
     } catch (_) {
-      if (mounted) setState(() {
-        post.liked = originalLiked;
-        post.likeCount = originalCount;
-      });
+      if (mounted)
+        setState(() {
+          post.liked = originalLiked;
+          post.likeCount = originalCount;
+        });
     }
   }
 
@@ -81,7 +115,9 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
       backgroundColor: colors.background,
       floatingActionButton: const ChatFloatingButton(),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      bottomNavigationBar: const AppBottomNavigation(currentTab: AppNavTab.community),
+      bottomNavigationBar: const AppBottomNavigation(
+        currentTab: AppNavTab.community,
+      ),
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
@@ -89,7 +125,10 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           icon: Icon(Icons.arrow_back_ios_new, color: colors.primary, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text('커뮤니티', style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold)),
+        title: Text(
+          '커뮤니티',
+          style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold),
+        ),
         actions: [
           IconButton(
             icon: Icon(Icons.add_circle_outline, color: colors.primary),
@@ -100,24 +139,45 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
       body: _isLoading
           ? Center(child: CircularProgressIndicator(color: colors.primary))
           : _error != null
-              ? Center(child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
                   Icon(Icons.cloud_off, size: 48, color: Colors.grey[400]),
                   const SizedBox(height: 12),
                   Text(_error!, style: TextStyle(color: Colors.grey[500])),
                   const SizedBox(height: 8),
-                  ElevatedButton(onPressed: _loadPosts,
-                    style: ElevatedButton.styleFrom(backgroundColor: colors.primary),
-                    child: const Text('다시 시도', style: TextStyle(color: Colors.white))),
-                ]))
+                  ElevatedButton(
+                    onPressed: _loadPosts,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: colors.primary,
+                    ),
+                    child: const Text(
+                      '다시 시도',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ],
+              ),
+            )
           : RefreshIndicator(
               onRefresh: _loadPosts,
               child: _posts.isEmpty
                   ? _buildEmpty(colors)
                   : ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
                       itemCount: _posts.length,
-                      itemBuilder: (context, index) =>
-                          _buildPostCard(_posts[index], colors, index),
+                      itemBuilder: (context, index) {
+                        final post = _posts[index];
+                        _postKeys[post.id] ??= GlobalKey();
+                        return KeyedSubtree(
+                          key: _postKeys[post.id],
+                          child: _buildPostCard(post, colors, index),
+                        );
+                      },
                     ),
             ),
     );
@@ -130,12 +190,18 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
         children: [
           Icon(Icons.local_florist_outlined, size: 60, color: Colors.grey[300]),
           const SizedBox(height: 12),
-          Text('아직 게시글이 없어요', style: TextStyle(color: Colors.grey[500], fontSize: 16)),
+          Text(
+            '아직 게시글이 없어요',
+            style: TextStyle(color: Colors.grey[500], fontSize: 16),
+          ),
           const SizedBox(height: 8),
           ElevatedButton(
             onPressed: _openCreatePost,
             style: ElevatedButton.styleFrom(backgroundColor: colors.primary),
-            child: const Text('첫 게시글 작성하기', style: TextStyle(color: Colors.white)),
+            child: const Text(
+              '첫 게시글 작성하기',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),
@@ -144,15 +210,25 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
 
   Widget _buildPostCard(CommunityPost post, SeasonColors colors, int index) {
     final flowerColors = [
-      const Color(0xFFFFB7C5), const Color(0xFFFFE082),
-      const Color(0xFFE8A0BF), const Color(0xFFF5F5F5), const Color(0xFFFF6B6B),
+      const Color(0xFFFFB7C5),
+      const Color(0xFFFFE082),
+      const Color(0xFFE8A0BF),
+      const Color(0xFFF5F5F5),
+      const Color(0xFFFF6B6B),
     ];
 
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(20),
-        boxShadow: [BoxShadow(color: colors.primary.withAlpha(15), blurRadius: 10, offset: const Offset(0, 3))],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: colors.primary.withAlpha(15),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -165,10 +241,16 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   radius: 20,
                   backgroundColor: colors.primary.withAlpha(25),
                   backgroundImage: post.profileImageUrl != null
-                      ? NetworkImage(post.profileImageUrl!) : null,
+                      ? NetworkImage(post.profileImageUrl!)
+                      : null,
                   child: post.profileImageUrl == null
-                      ? Text(post.user.isNotEmpty ? post.user[0] : '?',
-                          style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold))
+                      ? Text(
+                          post.user.isNotEmpty ? post.user[0] : '?',
+                          style: TextStyle(
+                            color: colors.primary,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        )
                       : null,
                 ),
                 const SizedBox(width: 10),
@@ -176,45 +258,99 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(post.user, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      Row(children: [
-                        if (post.address != null) ...[
-                          Icon(Icons.location_on, size: 12, color: Colors.grey[400]),
-                          const SizedBox(width: 2),
-                          Text(post.address!, style: TextStyle(fontSize: 11, color: Colors.grey[500])),
-                          const SizedBox(width: 8),
+                      Text(
+                        post.user,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          if (post.address != null) ...[
+                            Icon(
+                              Icons.location_on,
+                              size: 12,
+                              color: Colors.grey[400],
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              post.address!,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey[500],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Text(
+                            post.time,
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey[400],
+                            ),
+                          ),
                         ],
-                        Text(post.time, style: TextStyle(fontSize: 11, color: Colors.grey[400])),
-                      ]),
+                      ),
                     ],
                   ),
                 ),
                 if (post.flowerSpecies != null)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(color: colors.primary.withAlpha(20), borderRadius: BorderRadius.circular(12)),
-                    child: Text(post.flowerSpecies!, style: TextStyle(fontSize: 11, color: colors.primary, fontWeight: FontWeight.w600)),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: colors.primary.withAlpha(20),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      post.flowerSpecies!,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: colors.primary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
               ],
             ),
           ),
           if (post.imageUrl != null)
-            Image.network(post.imageUrl!, height: 200, width: double.infinity, fit: BoxFit.cover,
+            Image.network(
+              post.imageUrl!,
+              height: 200,
+              width: double.infinity,
+              fit: BoxFit.cover,
               errorBuilder: (_, __, ___) => Container(
                 height: 200,
                 color: flowerColors[index % flowerColors.length].withAlpha(80),
-                child: const Icon(Icons.broken_image, size: 48, color: Colors.grey),
+                child: const Icon(
+                  Icons.broken_image,
+                  size: 48,
+                  color: Colors.grey,
+                ),
               ),
             )
           else
             Container(
               height: 120,
               color: flowerColors[index % flowerColors.length].withAlpha(80),
-              child: Center(child: Icon(Icons.local_florist, size: 48, color: colors.primary.withAlpha(100))),
+              child: Center(
+                child: Icon(
+                  Icons.local_florist,
+                  size: 48,
+                  color: colors.primary.withAlpha(100),
+                ),
+              ),
             ),
           Padding(
             padding: const EdgeInsets.all(14),
-            child: Text(post.content, style: const TextStyle(fontSize: 14, height: 1.5)),
+            child: Text(
+              post.content,
+              style: const TextStyle(fontSize: 14, height: 1.5),
+            ),
           ),
           Padding(
             padding: const EdgeInsets.only(left: 8, right: 14, bottom: 10),
@@ -223,18 +359,43 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                 IconButton(
                   icon: Icon(
                     post.liked ? Icons.favorite : Icons.favorite_border,
-                    color: post.liked ? Colors.red[400] : Colors.grey[400], size: 22,
+                    color: post.liked ? Colors.red[400] : Colors.grey[400],
+                    size: 22,
                   ),
                   onPressed: () => _toggleLike(index),
                 ),
-                Text('${post.likeCount}', style: TextStyle(fontSize: 13, color: Colors.grey[600])),
+                Text(
+                  '${post.likeCount}',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                ),
                 const SizedBox(width: 16),
-                Icon(Icons.chat_bubble_outline, size: 20, color: Colors.grey[400]),
+                GestureDetector(
+                  onTap: () => showCommentSheet(
+                    context,
+                    post.id,
+                    onCommentAdded: () => setState(() => post.commentCount++),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.chat_bubble_outline,
+                        size: 20,
+                        color: Colors.grey[400],
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        formatCommentCount(post.commentCount),
+                        style: TextStyle(fontSize: 13, color: Colors.grey[600]),
+                      ),
+                    ],
+                  ),
+                ),
                 const Spacer(),
                 IconButton(
                   icon: Icon(
                     post.saved ? Icons.bookmark : Icons.bookmark_border,
-                    color: post.saved ? colors.primary : Colors.grey[400], size: 22,
+                    color: post.saved ? colors.primary : Colors.grey[400],
+                    size: 22,
                   ),
                   onPressed: () => _toggleSave(index),
                 ),

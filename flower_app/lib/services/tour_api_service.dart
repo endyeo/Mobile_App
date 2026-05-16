@@ -247,7 +247,8 @@ class FestivalData {
   String get fullAddress =>
       <String>[addr1, addr2].where((String e) => e.isNotEmpty).join(' ');
 
-  String get imageUrl => firstImage.isNotEmpty ? firstImage : firstImage2;
+  String get imageUrl =>
+      _normalizeImageUrl(firstImage.isNotEmpty ? firstImage : firstImage2);
 
   String get periodString {
     if (eventStartDate.isEmpty) return '';
@@ -302,5 +303,13 @@ class FestivalData {
   static double _sinSquared(double value) {
     final double s = math.sin(value);
     return s * s;
+  }
+
+  static String _normalizeImageUrl(String value) {
+    final String trimmed = value.trim();
+    if (trimmed.startsWith('http://')) {
+      return 'https://${trimmed.substring(7)}';
+    }
+    return trimmed;
   }
 }

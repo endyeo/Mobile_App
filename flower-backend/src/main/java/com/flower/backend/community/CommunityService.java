@@ -25,6 +25,7 @@ public class CommunityService {
     private final SavedPostRepository savedPostRepository;
     private final UserRepository userRepository;
     private final StorageService storageService;
+    private final CommentRepository commentRepository;
 
     @Transactional(readOnly = true)
     public FeedResponse getFeed(Long userId, Long cursor, int limit) {
@@ -144,6 +145,60 @@ public class CommunityService {
                 .nextCursor(nextCursor).hasNext(hasNext).build();
     }
 
+    // ── 댓글 ──────────────────────────────────────────────────────
+
+    @Transactional(readOnly = true)
+    public List<CommunityDto.CommentResponse> getComments(Long postId, Long currentUserId) {
+        return commentRepository.findByPostId(postId).stream()
+                .map(c -> CommunityDto.CommentResponse.builder()
+                        .id(c.getId())
+                        .userId(c.getUser().getId())
+                        .nickname(c.getUser().getNickname())
+                        .profileImageUrl(c.getUser().getProfileImageUrl())
+                        .content(c.getContent())
+                        .createdAt(c.getCreatedAt() != null ? c.getCreatedAt().toString() : "")
+                        .mine(currentUserId != null && currentUserId.equals(c.getUser().getId()))
+                        .build())
+                .toList();
+    }
+
+    @Transactional
+    public CommunityDto.CommentResponse addComment(Long userId, Long postId, String content) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+        CommunityPost post = postRepository.findById(postId)
+                .orElseThrow(() -> new RuntimeException("게시글을 찾을 수 없습니다."));
+
+        Comment comment = Comment.builder().post(post).user(user).content(content).build();
+        commentRepository.save(comment);
+        post.increaseCommentCount();
+        postRepository.save(post);
+
+        return CommunityDto.CommentResponse.builder()
+                .id(comment.getId())
+                .userId(user.getId())
+                .nickname(user.getNickname())
+                .profileImageUrl(user.getProfileImageUrl())
+                .content(content)
+                .createdAt("")
+                .mine(true)
+                .build();
+    }
+
+    @Transactional
+    public void deleteComment(Long userId, Long postId, Long commentId) {
+        Comment comment = commentRepository.findById(commentId)
+                .orElseThrow(() -> new RuntimeException("댓글을 찾을 수 없습니다."));
+        if (!comment.getUser().getId().equals(userId)) {
+            throw new RuntimeException("본인 댓글만 삭제할 수 있습니다.");
+        }
+        commentRepository.delete(comment);
+        postRepository.findById(postId).ifPresent(p -> {
+            p.decreaseCommentCount();
+            postRepository.save(p);
+        });
+    }
+
     private PostResponse toResponse(CommunityPost post, Set<Long> likedIds, Set<Long> savedIds) {
         return PostResponse.builder()
                 .id(post.getId())
@@ -163,6 +218,7 @@ public class CommunityService {
                 .postType(post.getPostType())
                 .plantName(post.getPlantName())
                 .plantConfidence(post.getPlantConfidence())
+                .commentCount(post.getCommentCount())
                 .build();
     }
 }

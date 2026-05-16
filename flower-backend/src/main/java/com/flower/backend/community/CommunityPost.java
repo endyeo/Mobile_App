@@ -39,6 +39,9 @@ public class CommunityPost {
     @Column(name = "like_count", nullable = false)
     private int likeCount = 0;
 
+    @Column(name = "comment_count", nullable = false)
+    private int commentCount = 0;
+
     @Column(name = "post_type", nullable = false, length = 20)
     private String postType = "GENERAL";
 
@@ -74,4 +77,6 @@ public class CommunityPost {
 
     public void increaseLikeCount() { this.likeCount++; }
     public void decreaseLikeCount() { if (this.likeCount > 0) this.likeCount--; }
+    public void increaseCommentCount() { this.commentCount++; }
+    public void decreaseCommentCount() { if (this.commentCount > 0) this.commentCount--; }
 }

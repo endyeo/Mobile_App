@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FLOWER Map</title>
+  <title>OurT 지도</title>
   <link rel="stylesheet" href="style.css">
   <script>
     (function () {
@@ -11,6 +11,7 @@
       var kakaoKey = params.get('kakaoKey') || '';
       var tourApiKey = params.get('tourApiKey') || '';
       var embedded = params.get('embedded') === '1';
+
       window.MAP_CONFIG = {
         KAKAO_APP_KEY: kakaoKey,
         TOUR_API_KEY: tourApiKey,
@@ -25,12 +26,11 @@
         DEFAULT_LIMIT: Number(params.get('limit') || 50),
         EMBEDDED: embedded
       };
-      document.documentElement.classList.toggle('embedded-map', embedded);
 
       if (kakaoKey && kakaoKey !== 'YOUR_KAKAO_JS_KEY_HERE') {
         var script = document.createElement('script');
-        script.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=' +
-          encodeURIComponent(kakaoKey) + '&libraries=services&autoload=false';
+        script.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey='
+          + encodeURIComponent(kakaoKey) + '&libraries=services&autoload=false';
         script.onload = function () {
           if (window.kakao && window.kakao.maps) {
             window.kakao.maps.load(function () {
@@ -49,52 +49,7 @@
 <body>
   <main id="map-shell">
     <section id="map"></section>
-
-    <header class="top-bar">
-      <strong>FLOWER</strong>
-      <label class="search-box">
-        <span>Search</span>
-        <input id="search-input" type="search" placeholder="Flower name, species, address">
-      </label>
-    </header>
-
-    <section class="filters">
-      <div id="species-filter" class="chip-row"></div>
-      <div id="status-filter" class="chip-row"></div>
-    </section>
-
-    <section class="radius-card">
-      <div>
-        <strong>Search radius</strong>
-        <span id="radius-value">5.0 km</span>
-      </div>
-      <input id="radius-slider" type="range" min="500" max="50000" step="500" value="5000">
-    </section>
-
-    <section id="festival-list" class="festival-list" hidden>
-      <div class="festival-list-header">
-        <strong>🌸 주변 축제</strong>
-        <span id="festival-count">0</span>
-      </div>
-      <div id="festival-items" class="festival-items"></div>
-    </section>
-
-    <nav class="map-controls" aria-label="Map controls">
-      <button id="btn-zoom-in" type="button" aria-label="Zoom in">+</button>
-      <button id="btn-zoom-out" type="button" aria-label="Zoom out">-</button>
-      <button id="btn-gps" type="button" aria-label="Move to current location">GPS</button>
-    </nav>
-
-    <aside id="info-badge" class="info-badge"><span class="count">0</span> flowers nearby</aside>
-    <aside id="no-results" class="no-results" hidden>No flowers match these filters.</aside>
   </main>
-
-  <div id="bottom-sheet-overlay" class="bottom-sheet-overlay"></div>
-  <section id="bottom-sheet" class="bottom-sheet" aria-label="Flower detail">
-    <div class="bottom-sheet-handle"></div>
-    <div id="flower-detail-content" class="bottom-sheet-content"></div>
-  </section>
-
   <script src="app.js"></script>
 </body>
 </html>

@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
 
 import '../api_config.dart';
 import '../models/chat_action.dart';
@@ -32,16 +33,24 @@ class KakaoMapScreen extends StatefulWidget {
 }
 
 class KakaoMapScreenState extends State<KakaoMapScreen> {
+  static const double _defaultCenterLat = 37.5665;
+  static const double _defaultCenterLng = 126.9780;
+  final GlobalKey _topBarKey = GlobalKey();
   final TextEditingController _searchController = TextEditingController();
   final TourApiService _tourApiService = TourApiService();
   final String _webMapViewType = 'flower-map-${identityHashCode(Object())}';
 
   WebViewController? _controller;
+  Widget? _nativeWebViewWidget;
   String? _mapHtml;
+  String? _nativeMapStyle;
+  String? _nativeMapAppScript;
   bool _isLoading = true;
   bool _showFlowerMarkers = true;
   bool _showFestivalMarkers = true;
   bool _isLoadingFestivals = true;
+  bool _isFestivalPanelOpen = true;
+  double _topBarHeight = 112;
   String? _errorMessage;
   String? _festivalError;
   Position? _currentPosition;
@@ -53,12 +62,12 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
     if (!kIsWeb) {
       _configureWebViewController();
     }
-    _initializeFestivalState();
-    _loadMapHtml();
+    _initializeScreen();
   }
 
-  Future<void> _initializeFestivalState() async {
+  Future<void> _initializeScreen() async {
     await _captureCurrentLocation();
+    await _loadMapHtml();
     await _loadFestivalData();
   }
 
@@ -66,9 +75,16 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
+      ..setOnConsoleMessage((JavaScriptConsoleMessage message) {
+        debugPrint('[MapWebView] ${message.level.name}: ${message.message}');
+      })
       ..setNavigationDelegate(
         NavigationDelegate(
+          onPageStarted: (String url) {
+            debugPrint('[MapWebView] page started: $url');
+          },
           onPageFinished: (_) {
+            debugPrint('[MapWebView] page finished');
             if (!mounted) return;
             setState(() => _isLoading = false);
             _syncMapState();
@@ -90,6 +106,52 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
           },
         ),
       );
+
+    final PlatformWebViewWidgetCreationParams baseParams =
+        PlatformWebViewWidgetCreationParams(
+          controller: _controller!.platform,
+          layoutDirection: TextDirection.ltr,
+        );
+
+    final PlatformWebViewWidgetCreationParams params =
+        _controller!.platform is AndroidWebViewController
+        ? AndroidWebViewWidgetCreationParams.fromPlatformWebViewWidgetCreationParams(
+            baseParams,
+            displayWithHybridComposition: true,
+          )
+        : baseParams;
+
+    _nativeWebViewWidget = WebViewWidget.fromPlatformCreationParams(
+      key: const ValueKey<String>('native-kakao-map-webview'),
+      params: params,
+    );
+  }
+
+  Future<void> _captureCurrentLocation() async {
+    try {
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return;
+      }
+
+      final Position position = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _currentPosition = _isKoreanMapPosition(position) ? position : null;
+        _festivals = _sortFestivals(_festivals, _currentPosition);
+      });
+    } catch (_) {
+      // Keep fallback map behavior when location is unavailable.
+    }
   }
 
   Future<void> _loadFestivalData() async {
@@ -113,42 +175,16 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
     }
   }
 
-  Future<void> _captureCurrentLocation() async {
-    try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-      if (permission == LocationPermission.denied ||
-          permission == LocationPermission.deniedForever) {
-        return;
-      }
-
-      final Position position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
-        ),
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _currentPosition = position;
-        _festivals = _sortFestivals(_festivals, position);
-      });
-    } catch (_) {
-      // Keep the list available even when location access is not granted.
-    }
-  }
-
   Future<void> _loadMapHtml() async {
     try {
       final bool useAndroidHost =
           defaultTargetPlatform == TargetPlatform.android;
+      final Position? position = _currentPosition;
       final Map<String, String> mapConfig = <String, String>{
         'kakaoKey': ApiConfig.kakaoMapKey,
         'apiBaseUrl': ApiConfig.mapApiBaseUrl(androidEmulator: useAndroidHost),
-        'centerLat': '37.5665',
-        'centerLng': '126.9780',
+        'centerLat': '${position?.latitude ?? _defaultCenterLat}',
+        'centerLng': '${position?.longitude ?? _defaultCenterLng}',
         'zoom': '5',
         'radius': '5000',
         'maxRadius': '50000',
@@ -166,10 +202,15 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
       }
 
       if (_controller == null) return;
-      final String style = await rootBundle.loadString('assets/map/style.css');
-      final String app = await rootBundle.loadString('assets/map/app.js');
+      _nativeMapStyle ??= await rootBundle.loadString('assets/map/style.css');
+      _nativeMapAppScript ??= await rootBundle.loadString('assets/map/app.js');
+      final String html = _buildNativeMapHtml(
+        mapConfig,
+        _nativeMapStyle!,
+        _nativeMapAppScript!,
+      );
       await _controller!.loadHtmlString(
-        _buildNativeMapHtml(mapConfig, style, app),
+        html,
         baseUrl: 'https://ourt.kro.kr/map/',
       );
     } catch (error) {
@@ -229,13 +270,16 @@ $style
         + encodeURIComponent(kakaoKey)
         + '&libraries=services&autoload=false';
       script.onload = function () {
+        console.log('Kakao SDK script loaded');
         if (window.kakao && window.kakao.maps) {
           window.kakao.maps.load(function () {
+            console.log('Kakao Maps ready event dispatched');
             document.dispatchEvent(new Event('kakao-map-ready'));
           });
         }
       };
       script.onerror = function () {
+        console.error('Kakao SDK script failed to load');
         document.dispatchEvent(new Event('kakao-map-error'));
       };
       document.head.appendChild(script);
@@ -255,10 +299,20 @@ $app
   }
 
   Future<void> _syncMapState() async {
+    await _syncCurrentPositionToMap();
     await _applyInitialActions();
     await _syncFestivalDataToMap();
     await _syncCategoryState();
     await _focusInitialFestivalIfNeeded();
+  }
+
+  Future<void> _syncCurrentPositionToMap() async {
+    final Position? position = _currentPosition;
+    if (kIsWeb || _controller == null || position == null) return;
+    await _controller!.runJavaScript(
+      'if(window.FlowerMap) window.FlowerMap.setCurrentPosition('
+      '${position.latitude},${position.longitude});',
+    );
   }
 
   Future<void> _applyInitialActions() async {
@@ -338,17 +392,30 @@ $app
       if (!mounted) return;
 
       setState(() {
-        _currentPosition = position;
-        _festivals = _sortFestivals(_festivals, position);
+        _currentPosition = _isKoreanMapPosition(position) ? position : null;
+        _festivals = _sortFestivals(_festivals, _currentPosition);
       });
 
-      await _controller?.runJavaScript(
-        'if(window.FlowerMap) window.FlowerMap.setCurrentPosition('
-        '${position.latitude},${position.longitude});',
-      );
+      if (_currentPosition != null) {
+        await _controller?.runJavaScript(
+          'if(window.FlowerMap) window.FlowerMap.setCurrentPosition('
+          '${position.latitude},${position.longitude});',
+        );
+      } else {
+        await _controller?.runJavaScript(
+          'if(window.FlowerMap) window.FlowerMap.resetToDefaultCenter();',
+        );
+      }
     } catch (error) {
       debugPrint('[GPS] Failed to move to current location: $error');
     }
+  }
+
+  bool _isKoreanMapPosition(Position position) {
+    return position.latitude >= 33.0 &&
+        position.latitude <= 38.9 &&
+        position.longitude >= 124.0 &&
+        position.longitude <= 132.0;
   }
 
   Future<void> _focusFestival(FestivalData festival) async {
@@ -417,6 +484,31 @@ $app
     return '${distance.round()}m';
   }
 
+  void _captureTopBarHeight() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final BuildContext? topBarContext = _topBarKey.currentContext;
+      if (topBarContext == null || !mounted) return;
+      final double? height = topBarContext.size?.height;
+      if (height == null || (height - _topBarHeight).abs() < 1) return;
+      setState(() {
+        _topBarHeight = height;
+      });
+    });
+  }
+
+  double _topOverlayStart(BuildContext context) {
+    final double safeTop = MediaQuery.paddingOf(context).top;
+    return safeTop + _topBarHeight + 12;
+  }
+
+  double _festivalOverlayBottom(BuildContext context) {
+    if (widget.isEmbedded) return 16;
+    final double screenHeight = MediaQuery.sizeOf(context).height;
+    if (screenHeight < 720) return 96;
+    if (screenHeight < 820) return 92;
+    return 88;
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -426,6 +518,7 @@ $app
   @override
   Widget build(BuildContext context) {
     final SeasonColors colors = SeasonTheme.getColors();
+    _captureTopBarHeight();
 
     if (widget.isEmbedded) {
       return _buildMapBody(colors);
@@ -436,9 +529,9 @@ $app
       body: Stack(
         children: <Widget>[
           Positioned.fill(child: _buildMapBody(colors)),
+          _buildFestivalOverlay(colors),
           _buildTopBar(colors),
           _buildZoomControls(colors),
-          _buildFestivalOverlay(colors),
         ],
       ),
       floatingActionButton: const ChatFloatingButton(),
@@ -448,14 +541,26 @@ $app
   }
 
   Widget _buildTopBar(SeasonColors colors) {
+    final double screenWidth = MediaQuery.sizeOf(context).width;
+    final bool compactPhone = screenWidth < 380;
+
     return Positioned(
       top: 0,
       left: 0,
       right: 0,
       child: SafeArea(
         child: Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+          key: _topBarKey,
+          margin: EdgeInsets.symmetric(
+            horizontal: compactPhone ? 12 : 16,
+            vertical: compactPhone ? 6 : 8,
+          ),
+          padding: EdgeInsets.fromLTRB(
+            compactPhone ? 8 : 10,
+            compactPhone ? 8 : 10,
+            compactPhone ? 8 : 10,
+            compactPhone ? 10 : 12,
+          ),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.92),
             borderRadius: BorderRadius.circular(22),
@@ -486,7 +591,7 @@ $app
                       controller: _searchController,
                       textInputAction: TextInputAction.search,
                       decoration: const InputDecoration(
-                        hintText: '꽃 이름, 종류 또는 주소',
+                        hintText: '꽃 이름, 종류, 주소',
                         border: InputBorder.none,
                         isDense: true,
                         contentPadding: EdgeInsets.symmetric(
@@ -508,30 +613,35 @@ $app
                 ],
               ),
               const SizedBox(height: 4),
-              Row(
-                children: <Widget>[
-                  _buildCategoryChip(
-                    colors: colors,
-                    label: '꽃',
-                    selected: _showFlowerMarkers,
-                    onTap: () async {
-                      setState(() => _showFlowerMarkers = !_showFlowerMarkers);
-                      await _syncCategoryState();
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  _buildCategoryChip(
-                    colors: colors,
-                    label: '축제',
-                    selected: _showFestivalMarkers,
-                    onTap: () async {
-                      setState(
-                        () => _showFestivalMarkers = !_showFestivalMarkers,
-                      );
-                      await _syncCategoryState();
-                    },
-                  ),
-                ],
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: <Widget>[
+                    _buildCategoryChip(
+                      colors: colors,
+                      label: '꽃',
+                      selected: _showFlowerMarkers,
+                      onTap: () async {
+                        setState(
+                          () => _showFlowerMarkers = !_showFlowerMarkers,
+                        );
+                        await _syncCategoryState();
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    _buildCategoryChip(
+                      colors: colors,
+                      label: '축제',
+                      selected: _showFestivalMarkers,
+                      onTap: () async {
+                        setState(
+                          () => _showFestivalMarkers = !_showFestivalMarkers,
+                        );
+                        await _syncCategoryState();
+                      },
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -586,9 +696,11 @@ $app
   }
 
   Widget _buildZoomControls(SeasonColors colors) {
+    final double screenWidth = MediaQuery.sizeOf(context).width;
+
     return Positioned(
-      top: 132,
-      right: 16,
+      top: _topOverlayStart(context),
+      right: screenWidth < 380 ? 12 : 16,
       child: SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -649,15 +761,80 @@ $app
   }
 
   Widget _buildFestivalOverlay(SeasonColors colors) {
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final double screenWidth = screenSize.width;
+    final double screenHeight = screenSize.height;
+    final double panelWidth = switch (screenWidth) {
+      < 360 => (screenWidth * 0.52).clamp(176.0, 192.0).toDouble(),
+      < 420 => (screenWidth * 0.56).clamp(188.0, 216.0).toDouble(),
+      < 600 => (screenWidth * 0.40).clamp(220.0, 248.0).toDouble(),
+      _ => 270,
+    };
+    final double handleWidth = screenWidth < 380 ? 30 : 34;
+    final double handleGap = screenWidth < 380 ? 6 : 8;
+    final double horizontalInset = screenWidth < 380 ? 8 : 12;
+    final double toggleHeight = screenHeight < 760 ? 64 : 72;
+
     return Positioned(
-      left: 12,
-      right: 12,
-      bottom: 88,
-      child: IgnorePointer(
-        ignoring: _isLoadingFestivals && _festivals.isEmpty,
-        child: AnimatedSwitcher(
-          duration: const Duration(milliseconds: 180),
-          child: _buildFestivalContent(colors),
+      top: _topOverlayStart(context),
+      bottom: _festivalOverlayBottom(context),
+      left: _isFestivalPanelOpen
+          ? horizontalInset
+          : horizontalInset - panelWidth + handleWidth,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+        width: panelWidth,
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: IgnorePointer(
+                ignoring:
+                    !_isFestivalPanelOpen ||
+                    (_isLoadingFestivals && _festivals.isEmpty),
+                child: AnimatedOpacity(
+                  duration: const Duration(milliseconds: 180),
+                  opacity: _isFestivalPanelOpen ? 1 : 0.92,
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 180),
+                    child: _buildFestivalContent(colors),
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(width: handleGap),
+            Align(
+              alignment: Alignment.centerRight,
+              child: GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _isFestivalPanelOpen = !_isFestivalPanelOpen;
+                  });
+                },
+                child: Container(
+                  width: screenWidth < 380 ? 24 : 26,
+                  height: toggleHeight,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.96),
+                    borderRadius: BorderRadius.circular(16),
+                    boxShadow: <BoxShadow>[
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.10),
+                        blurRadius: 10,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Icon(
+                    _isFestivalPanelOpen
+                        ? Icons.chevron_left_rounded
+                        : Icons.chevron_right_rounded,
+                    color: colors.primary,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -746,16 +923,13 @@ $app
             ],
           ),
           const SizedBox(height: 10),
-          SizedBox(
-            height: 108,
+          Expanded(
             child: ListView.separated(
-              scrollDirection: Axis.horizontal,
               padding: EdgeInsets.zero,
               itemCount: visibleFestivals.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              separatorBuilder: (_, __) => const SizedBox(height: 12),
               itemBuilder: (BuildContext context, int index) {
-                final FestivalData festival = visibleFestivals[index];
-                return _festivalCard(colors, festival);
+                return _festivalCard(colors, visibleFestivals[index]);
               },
             ),
           ),
@@ -772,9 +946,10 @@ $app
       key: ValueKey<String>(
         'festival-${_isLoadingFestivals}-${_festivals.length}-${_festivalError != null}',
       ),
-      padding: const EdgeInsets.fromLTRB(14, 14, 98, 14),
+      height: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.95),
+        color: Colors.white.withValues(alpha: 0.96),
         borderRadius: BorderRadius.circular(22),
         boxShadow: <BoxShadow>[
           BoxShadow(
@@ -791,89 +966,132 @@ $app
   Widget _festivalCard(SeasonColors colors, FestivalData festival) {
     final String period = festival.periodString;
     final String distance = _festivalDistanceLabel(festival);
+    final String location = festival.fullAddress;
+    final String contact = festival.tel.trim();
 
     return GestureDetector(
       onTap: () => _focusFestival(festival),
       child: Container(
-        width: 250,
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: colors.primary.withValues(alpha: 0.12)),
-        ),
-        child: Row(
-          children: <Widget>[
-            ClipRRect(
-              borderRadius: const BorderRadius.horizontal(
-                left: Radius.circular(18),
-              ),
-              child: festival.hasImage
-                  ? Image.network(
-                      festival.imageUrl,
-                      width: 96,
-                      height: double.infinity,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) {
-                        return _festivalPlaceholder(colors);
-                      },
-                    )
-                  : _festivalPlaceholder(colors),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.black.withValues(alpha: 0.06)),
+          boxShadow: <BoxShadow>[
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.04),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: <Widget>[
-                    Text(
-                      festival.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w800,
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Stack(
+              children: <Widget>[
+                SizedBox(
+                  width: double.infinity,
+                  height: 136,
+                  child: festival.hasImage
+                      ? Image.network(
+                          festival.imageUrl,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) {
+                            return _festivalPlaceholder(colors);
+                          },
+                        )
+                      : _festivalPlaceholder(colors),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.42),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: const Text(
+                      '축제',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    if (period.isNotEmpty) ...<Widget>[
-                      const SizedBox(height: 6),
-                      Text(
-                        period,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colors.primary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                    if (festival.fullAddress.isNotEmpty) ...<Widget>[
-                      const SizedBox(height: 4),
-                      Text(
-                        festival.fullAddress,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.grey.shade600,
-                          fontSize: 11,
-                          height: 1.35,
-                        ),
-                      ),
-                    ],
-                    if (distance.isNotEmpty) ...<Widget>[
-                      const SizedBox(height: 6),
-                      Text(
-                        distance,
-                        style: TextStyle(
-                          color: Colors.grey.shade500,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ],
+                  ),
                 ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    festival.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: Colors.blue.shade700,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  if (location.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      location,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.grey.shade800,
+                        fontSize: 12,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                  if (period.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 6),
+                    Text(
+                      period,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: colors.primary,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                  if (contact.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 4),
+                    Text(
+                      contact,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                  if (distance.isNotEmpty) ...<Widget>[
+                    const SizedBox(height: 8),
+                    Text(
+                      distance,
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
@@ -884,7 +1102,7 @@ $app
 
   Widget _festivalPlaceholder(SeasonColors colors) {
     return Container(
-      width: 96,
+      width: double.infinity,
       height: double.infinity,
       decoration: BoxDecoration(
         gradient: LinearGradient(
@@ -970,7 +1188,6 @@ $app
       );
     }
 
-    if (_controller == null) return const SizedBox.shrink();
-    return WebViewWidget(controller: _controller!);
+    return _nativeWebViewWidget ?? const SizedBox.shrink();
   }
 }
