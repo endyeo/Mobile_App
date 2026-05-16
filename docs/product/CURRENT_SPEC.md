@@ -1,8 +1,8 @@
 # HAR_FLOWER 현재 프로젝트 명세
-<!-- 2026-05-14 daily-bug-scan: 챗봇 커뮤니티 작성 화면 이동 액션과 명세 반영 상태를 갱신함. -->
+<!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 챗봇 SSE 스트림, 음성 입력, flower_book 조회 반영 상태를 갱신함. -->
 
-- 문서 버전: v1.1.0
-- 최종 반영일: 2026-05-14
+- 문서 버전: v1.2.0
+- 최종 반영일: 2026-05-15
 
 ## 1. 프로젝트 개요
 
@@ -65,7 +65,9 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 
 ### AI 챗봇
 
-챗봇은 사용자 메시지를 받아 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. 상세 명세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`와 도구별 문서를 따른다.
+챗봇은 사용자 메시지를 받아 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영한다. 상세 명세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`와 도구별 문서를 따른다.
+
+Flutter의 플로팅 챗봇 입력창은 Android `flower_app/speech` MethodChannel로 음성 인식을 연결한다. 실행 순서는 마이크 권한 확인, 권한 요청, 음성 인식 시작이며, 응답 대기 중 전송 버튼은 정지 버튼으로 바뀌고 사용자가 중지하면 SSE 연결을 취소한다.
 
 ### 지도
 
@@ -74,6 +76,8 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 ### 꽃 도감/꽃 데이터
 
 백엔드 `FlowerController`는 카테고리, 월별 꽃, 상세, 검색, 학명 매칭 API를 제공한다. Flutter의 `FlowerBookApiService`가 도감 화면에서 이를 호출한다. 별도로 `FlowerApiService`는 농사로 오늘의 꽃 API를 직접 호출하는 클라이언트 서비스이다.
+
+챗봇의 꽃 정보 질문은 승인 꽃 명소 검색과 별도로 `flower_book` 기반 설명/출처 조회, 재배 팁/출처 조회를 사용한다. 이 조회는 `FlowerBookRepository` projection과 `PageRequest` 제한으로 필요한 컬럼만 최대 3건까지 읽는다.
 
 ### 커뮤니티
 

@@ -1,8 +1,8 @@
 # 챗봇 API 명세
-<!-- 2026-05-14 daily-bug-scan: COMMUNITY_COMPOSE 액션과 초안 생성 제거 상태를 반영함. -->
+<!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 SSE 스트림 엔드포인트, 이벤트 계약, flower_book 조회 데이터 필드를 반영함. -->
 
-- 문서 버전: v1.2.0
-- 최종 반영일: 2026-05-14
+- 문서 버전: v1.3.0
+- 최종 반영일: 2026-05-15
 
 ## 1. 공통
 
@@ -143,7 +143,111 @@ Path variable:
 }
 ```
 
-## 4. ChatAction
+## 4. POST `/chatbot/message/stream`
+
+플로팅 챗봇이 사용하는 SSE 엔드포인트다. HTTP 응답 본문 전체를 한 번에 반환하지 않고, 진행 상태와 최종 답변을 이벤트로 순차 전송한다.
+
+### Request
+
+요청 바디는 `POST /chatbot/message`와 동일하다.
+
+```json
+{
+  "message": "벚꽃 어떻게 키워?",
+  "session_id": "session-123",
+  "context": {
+    "lat": 37.5665,
+    "lng": 126.978
+  }
+}
+```
+
+### Event sequence
+
+구현상 일반적인 순서는 아래와 같다.
+
+```text
+CONNECTED
+STATUS
+CONTEXT_PLANNED
+STATUS
+ACTION (optional)
+TOOL_RESULT (0..n)
+STATUS
+FINAL_ANSWER
+DONE
+```
+
+에러가 발생하면 `ERROR` 다음 `DONE(reason=error)`를 보낸다.
+
+### Event payload examples
+
+`CONNECTED`
+
+```json
+{
+  "sessionId": "session-123"
+}
+```
+
+`STATUS`
+
+```json
+{
+  "stage": "SEARCH",
+  "message": "꽃 정보를 검색하고 있어요."
+}
+```
+
+`ACTION`
+
+```json
+{
+  "action": {
+    "type": "NAVIGATE",
+    "target": "MAP",
+    "params": {}
+  },
+  "actions": [
+    {
+      "type": "NAVIGATE",
+      "target": "MAP",
+      "params": {}
+    }
+  ]
+}
+```
+
+`TOOL_RESULT`
+
+```json
+{
+  "toolResult": {
+    "tool": "flower.lookupDescriptionSource",
+    "status": "SUCCESS",
+    "summary": "'벚꽃' flower description lookup returned 1 result(s).",
+    "data": {
+      "items": [
+        {
+          "flowerBookId": 1,
+          "dataNo": "data-1",
+          "name": "벚꽃",
+          "scientificName": "Prunus serrulata",
+          "description": "설명",
+          "source": "NONGSARO"
+        }
+      ],
+      "queryExpanded": false
+    }
+  }
+}
+```
+
+`FINAL_ANSWER`
+
+`POST /chatbot/message`의 `data` 필드와 동일한 `ChatMessageResponse` JSON을 그대로 전송한다.
+
+## 5. ChatAction
 
 ```json
 {
@@ -169,7 +273,7 @@ Path variable:
 | `MAP_SHOW_FLOWER` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 위치 강조 |
 | `MAP_OPEN_FLOWER_PREVIEW` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 미리보기 열기 |
 
-## 5. AgentRunTrace
+## 6. AgentRunTrace
 
 ```json
 {
@@ -188,7 +292,7 @@ Path variable:
 }
 ```
 
-## 6. ToolResult
+## 7. ToolResult
 
 ```json
 {
@@ -203,3 +307,8 @@ Path variable:
 ```
 
 `status`는 현재 구현상 `SUCCESS`, `ERROR`, `READY` 등이 trace/tool 맥락에 따라 사용된다.
+
+꽃 도감 조회 도구의 `data`는 `items` 외에 아래 보조 필드를 가질 수 있다.
+
+- `queryExpanded`: 사용자가 꽃 이름을 특정하지 않아 후보 키워드 확장을 사용했는지 여부
+- `candidateKeywords`: 후보 확장에 사용된 꽃 이름 목록
