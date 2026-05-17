@@ -4,6 +4,7 @@ import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/season_theme.dart';
 import '../services/auth_api_service.dart';
+import '../utils/location_permission_helper.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -62,8 +63,10 @@ class _LoginScreenState extends State<LoginScreen> {
           await prefs.setString('accessToken', accessToken);
           await prefs.setString('refreshToken', data['refreshToken'] ?? '');
           final user = data['user'] as Map<String, dynamic>?;
-          if (user?['nickname'] != null) await prefs.setString('nickname', user!['nickname']);
-          if (user?['profileImageUrl'] != null) await prefs.setString('profileImageUrl', user!['profileImageUrl']);
+          if (user?['nickname'] != null)
+            await prefs.setString('nickname', user!['nickname']);
+          if (user?['profileImageUrl'] != null)
+            await prefs.setString('profileImageUrl', user!['profileImageUrl']);
 
           // FCM 토큰 백엔드에 전송
           final fcmToken = prefs.getString('fcmToken');
@@ -74,6 +77,8 @@ class _LoginScreenState extends State<LoginScreen> {
             );
           }
 
+          if (!mounted) return;
+          await promptAlwaysLocation(context, firstTime: true);
           if (!mounted) return;
           Navigator.pushReplacementNamed(context, '/main');
         }
@@ -171,10 +176,7 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 8),
         Text(
           '${colors.name}의 꽃과 함께 산책해요',
-          style: TextStyle(
-            fontSize: 15,
-            color: Colors.grey[600],
-          ),
+          style: TextStyle(fontSize: 15, color: Colors.grey[600]),
         ),
       ],
     );

@@ -12,6 +12,7 @@ import '../api_config.dart';
 import '../models/chat_action.dart';
 import '../services/tour_api_service.dart';
 import '../theme/season_theme.dart';
+import '../utils/location_permission_helper.dart';
 import '../widgets/app_bottom_navigation.dart';
 import '../widgets/chat_floating_button.dart';
 import '../widgets/map_html_view.dart';
@@ -140,10 +141,10 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
 
       final Position position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
+          accuracy: LocationAccuracy.best,
         ),
       );
-
+      if (mounted) await promptAlwaysLocation(context);
       if (!mounted) return;
       setState(() {
         _currentPosition = _isKoreanMapPosition(position) ? position : null;
@@ -386,7 +387,7 @@ $app
 
       final Position position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.high,
+          accuracy: LocationAccuracy.best,
         ),
       );
       if (!mounted) return;
@@ -997,6 +998,8 @@ $app
                       ? Image.network(
                           festival.imageUrl,
                           fit: BoxFit.cover,
+                          cacheWidth: 300,
+                          filterQuality: FilterQuality.medium,
                           errorBuilder: (_, __, ___) {
                             return _festivalPlaceholder(colors);
                           },
