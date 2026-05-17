@@ -55,7 +55,7 @@ public class ChatbotController {
                         emitter.send(SseEmitter.event().name(eventName).data(data)));
                 emitter.complete();
             } catch (Exception e) {
-                log.error("SSE chatbot stream failed", e);
+                log.error("SSE 챗봇 스트림 처리 실패", e);
                 try {
                     emitter.send(SseEmitter.event()
                             .name("ERROR")

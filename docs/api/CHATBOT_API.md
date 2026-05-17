@@ -267,8 +267,6 @@ DONE
 | `NAVIGATE` | `WALK` | `{}` | 산책/만보기 화면 이동 |
 | `NAVIGATE` | `FLOWER_BOOK` | optional `{ "flowerId": 1 }` | 도감 화면 이동 |
 | `NAVIGATE` | `SAVED` | `{}` | 저장 화면 이동 |
-| `NAVIGATE` | `QUEST` | `{}` | validator 허용, Flutter 전용 매핑 없음 |
-| `NAVIGATE` | `SHOP` | `{}` | validator 허용, Flutter 전용 매핑 없음 |
 | `MAP_SET_SEARCH_QUERY` | `MAP` | `{ "query": "벚꽃" }` | 지도 검색어 적용 |
 | `MAP_SHOW_FLOWER` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 위치 강조 |
 | `MAP_OPEN_FLOWER_PREVIEW` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 미리보기 열기 |
@@ -312,3 +310,7 @@ DONE
 
 - `queryExpanded`: 사용자가 꽃 이름을 특정하지 않아 후보 키워드 확장을 사용했는지 여부
 - `candidateKeywords`: 후보 확장에 사용된 꽃 이름 목록
+
+월/계절 추천 도구 `flower.recommendSeasonalFlowers`는 `data.month`, `data.items`, `data.source`를 반환한다. 각 item은 꽃 도감 id, 꽃 이름, 개화일, 꽃말, 출처, 승인 명소 수와 대표 명소 정보를 포함할 수 있다.
+
+상점, 구매, 퀘스트, 미션, 인증, 포인트 지급처럼 v1에서 직접 실행하지 않는 요청은 `app.unsupported` ToolResult로 반환되며 앱 액션은 비어 있다.

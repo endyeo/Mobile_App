@@ -3,7 +3,14 @@ import '../theme/season_theme.dart';
 import '../services/flower_book_api_service.dart';
 
 class FlowerBookPage extends StatefulWidget {
-  const FlowerBookPage({super.key});
+  final String? initialQuery;
+  final int? initialFlowerBookId;
+
+  const FlowerBookPage({
+    super.key,
+    this.initialQuery,
+    this.initialFlowerBookId,
+  });
 
   @override
   State<FlowerBookPage> createState() => _FlowerBookPageState();
@@ -20,7 +27,16 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
   @override
   void initState() {
     super.initState();
-    _loadFlowers();
+    final initialQuery = widget.initialQuery?.trim();
+    if (initialQuery != null && initialQuery.isNotEmpty) {
+      _searchController.text = initialQuery;
+      _search(initialQuery);
+    } else {
+      _loadFlowers();
+    }
+    if (widget.initialFlowerBookId != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _openInitialDetail());
+    }
   }
 
   @override
@@ -41,12 +57,41 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
 
   Future<void> _search(String keyword) async {
     if (keyword.trim().isEmpty) { _loadFlowers(); return; }
+    _searchController.text = keyword.trim();
     setState(() { _isLoading = true; _isSearching = true; });
     try {
       final results = await FlowerBookApiService.search(keyword.trim());
       if (mounted) setState(() { _flowers = results; _isLoading = false; });
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _isLoading = false; _isSearching = false; });
+    }
+  }
+
+  Future<void> _openInitialDetail() async {
+    final id = widget.initialFlowerBookId;
+    if (id == null || !mounted) return;
+    try {
+      final detail = await FlowerBookApiService.getDetail(id);
+      if (!mounted) return;
+      _showFlowerDetail(
+        FlowerBookItem(
+          id: detail.id,
+          name: detail.name,
+          categoryName: detail.categoryName,
+          categoryEmoji: detail.categoryEmoji,
+          bloomMonth: detail.bloomMonth,
+          bloomDay: detail.bloomDay,
+          flowerLanguage: detail.flowerLanguage,
+          imageUrl: detail.imageUrl,
+        ),
+        SeasonTheme.getColors(),
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('꽃 상세 정보를 열지 못했습니다.')),
+        );
+      }
     }
   }
 
@@ -78,7 +123,7 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
                 : _error != null
                     ? _buildErrorView(colors)
                     : _flowers.isEmpty
-                        ? Center(child: Text('해당 월의 꽃 정보가 없습니다', style: TextStyle(color: Colors.grey[500])))
+                        ? Center(child: Text(_isSearching ? '검색 결과가 없습니다' : '해당 월의 꽃 정보가 없습니다', style: TextStyle(color: Colors.grey[500])))
                         : _buildFlowerGrid(colors),
           ),
         ],

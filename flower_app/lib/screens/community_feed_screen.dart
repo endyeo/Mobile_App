@@ -9,8 +9,9 @@ import '../widgets/comment_bottom_sheet.dart';
 
 class CommunityFeedScreen extends StatefulWidget {
   final int? initialPostId; // 메인화면 미리보기 탭 시 해당 게시글로 스크롤
+  final String? initialQuery;
 
-  const CommunityFeedScreen({super.key, this.initialPostId});
+  const CommunityFeedScreen({super.key, this.initialPostId, this.initialQuery});
 
   @override
   State<CommunityFeedScreen> createState() => _CommunityFeedScreenState();
@@ -21,11 +22,13 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   bool _isLoading = true;
   String? _error;
   String _accessToken = '';
+  String _activeQuery = '';
   final Map<int, GlobalKey> _postKeys = {};
 
   @override
   void initState() {
     super.initState();
+    _activeQuery = widget.initialQuery?.trim() ?? '';
     _loadPosts();
   }
 
@@ -41,7 +44,7 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
       final posts = await CommunityApiService.getPosts(_accessToken);
       if (mounted) {
         setState(() {
-          _posts = posts;
+          _posts = _filterPosts(posts);
           _isLoading = false;
         });
         _scrollToInitialPost();
@@ -68,6 +71,17 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
         );
       }
     });
+  }
+
+  List<CommunityPost> _filterPosts(List<CommunityPost> posts) {
+    if (_activeQuery.isEmpty) return posts;
+    final query = _activeQuery.toLowerCase();
+    return posts.where((post) {
+      return post.content.toLowerCase().contains(query) ||
+          (post.flowerSpecies?.toLowerCase().contains(query) ?? false) ||
+          (post.address?.toLowerCase().contains(query) ?? false) ||
+          post.user.toLowerCase().contains(query);
+    }).toList();
   }
 
   Future<void> _openCreatePost() async {
@@ -169,13 +183,17 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                         horizontal: 16,
                         vertical: 8,
                       ),
-                      itemCount: _posts.length,
+                      itemCount: _posts.length + (_activeQuery.isEmpty ? 0 : 1),
                       itemBuilder: (context, index) {
-                        final post = _posts[index];
+                        if (_activeQuery.isNotEmpty && index == 0) {
+                          return _buildQueryHeader(colors);
+                        }
+                        final postIndex = _activeQuery.isEmpty ? index : index - 1;
+                        final post = _posts[postIndex];
                         _postKeys[post.id] ??= GlobalKey();
                         return KeyedSubtree(
                           key: _postKeys[post.id],
-                          child: _buildPostCard(post, colors, index),
+                          child: _buildPostCard(post, colors, postIndex),
                         );
                       },
                     ),
@@ -191,7 +209,7 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           Icon(Icons.local_florist_outlined, size: 60, color: Colors.grey[300]),
           const SizedBox(height: 12),
           Text(
-            '아직 게시글이 없어요',
+            _activeQuery.isEmpty ? '아직 게시글이 없어요' : '"$_activeQuery" 관련 게시글이 없어요',
             style: TextStyle(color: Colors.grey[500], fontSize: 16),
           ),
           const SizedBox(height: 8),
@@ -202,6 +220,37 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
               '첫 게시글 작성하기',
               style: TextStyle(color: Colors.white),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQueryHeader(SeasonColors colors) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: colors.primary.withAlpha(35)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.search, color: colors.primary, size: 18),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '"$_activeQuery" 관련 후기',
+              style: TextStyle(color: colors.primary, fontWeight: FontWeight.w700),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _activeQuery = '');
+              _loadPosts();
+            },
+            child: const Text('전체'),
           ),
         ],
       ),

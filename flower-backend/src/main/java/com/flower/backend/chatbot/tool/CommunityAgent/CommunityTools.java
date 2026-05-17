@@ -41,16 +41,16 @@ public class CommunityTools {
             return ToolResult.builder()
                     .tool("community.searchPosts")
                     .status("SUCCESS")
-                    .summary("'" + displayKeyword(sanitized) + "' community search returned "
-                            + results.size() + " result(s).")
+                    .summary("'" + displayKeyword(sanitized) + "' 커뮤니티 검색 결과 "
+                            + results.size() + "건을 찾았습니다.")
                     .data(Map.of("items", toItems(results)))
                     .build();
         } catch (Exception e) {
-            log.error("[Tool:searchPosts] search failed", e);
+            log.error("[Tool:searchPosts] 커뮤니티 게시글 검색 실패", e);
             return ToolResult.builder()
                     .tool("community.searchPosts")
                     .status("ERROR")
-                    .summary("Community post search failed.")
+                    .summary("커뮤니티 게시글 검색에 실패했습니다.")
                     .error("게시글 검색 중 오류가 발생했습니다.")
                     .build();
         }
@@ -118,13 +118,13 @@ public class CommunityTools {
         String sanitized = keyword.trim();
         if (sanitized.length() > maxLength) {
             sanitized = sanitized.substring(0, maxLength);
-            log.warn("[Tool:community] keyword truncated to {} characters", maxLength);
+            log.warn("[Tool:community] 검색어를 {}자로 잘랐습니다.", maxLength);
         }
         return sanitized;
     }
 
     private String displayKeyword(String keyword) {
-        return keyword == null || keyword.isBlank() ? "all" : keyword;
+        return keyword == null || keyword.isBlank() ? "전체" : keyword;
     }
 
     private String nullToDash(String value) {

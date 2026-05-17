@@ -68,13 +68,13 @@ class ChatActionValidator {
     }
 
     private boolean isAllowedNavigationTarget(String target) {
-        return List.of("MAP", "COMMUNITY", "COMMUNITY_COMPOSE", "WALK", "FLOWER_BOOK", "SAVED", "QUEST", "SHOP")
+        return List.of("MAP", "COMMUNITY", "COMMUNITY_COMPOSE", "WALK", "FLOWER_BOOK", "SAVED")
                 .contains(target);
     }
 
     private boolean needsMapSearch(List<RouteIntent> intents, String keyword) {
         return intents.contains(RouteIntent.MAP)
-                && intents.contains(RouteIntent.FLOWER)
+                && (intents.contains(RouteIntent.FLOWER) || intents.contains(RouteIntent.FLOWER_GROW))
                 && keyword != null
                 && !keyword.isBlank();
     }

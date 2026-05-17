@@ -26,7 +26,7 @@ public class FlowerTools {
         actionContext.incrementToolCount("flower.searchFlowerSpots");
 
         String sanitized = flowerToolService.sanitizeQuery(query);
-        log.info("[Tool:flower.searchFlowerSpots] query={}", sanitized);
+        log.info("[Tool:flower.searchFlowerSpots] 검색어={}", sanitized);
         return flowerToolService.formatFlowerSpotsForAnswer(sanitized);
     }
 
@@ -39,7 +39,7 @@ public class FlowerTools {
         actionContext.incrementToolCount("flower.lookupDescriptionSource");
 
         String sanitized = flowerToolService.sanitizeQuery(query);
-        log.info("[Tool:flower.lookupDescriptionSource] query={}", sanitized);
+        log.info("[Tool:flower.lookupDescriptionSource] 검색어={}", sanitized);
         return flowerToolService.formatFlowerDescriptionSourceForAnswer(sanitized);
     }
 
@@ -52,8 +52,20 @@ public class FlowerTools {
         actionContext.incrementToolCount("flower.lookupGrowTipsSource");
 
         String sanitized = flowerToolService.sanitizeQuery(query);
-        log.info("[Tool:flower.lookupGrowTipsSource] query={}", sanitized);
+        log.info("[Tool:flower.lookupGrowTipsSource] 검색어={}", sanitized);
         return flowerToolService.formatFlowerGrowTipsSourceForAnswer(sanitized);
+    }
+
+    // 월별 꽃 도감 데이터와 승인 꽃 명소를 조합해 추천합니다.
+    @Tool(description = "Recommend seasonal flowers for a given month using FLOWER's flower book and approved flower spots.")
+    public String recommendSeasonalFlowers(
+            // 추천 기준 월입니다. 비어 있거나 범위를 벗어나면 현재 월을 사용합니다.
+            @ToolParam(description = "Month number from 1 to 12. Uses the current month when omitted or invalid.") Integer month) {
+        actionContext.markSearchInvoked();
+        actionContext.incrementToolCount("flower.recommendSeasonalFlowers");
+
+        log.info("[Tool:flower.recommendSeasonalFlowers] month={}", month);
+        return flowerToolService.formatSeasonalFlowersForAnswer(month);
     }
 
     // 꽃 도감 화면을 여는 앱 내부 액션을 준비합니다.
@@ -68,8 +80,8 @@ public class FlowerTools {
                 .build();
         actionContext.addAction(action);
 
-        log.info("[Tool:flower.openFlowerBook] flower book navigation follow-up created");
-        return "Flower book screen follow-up prepared.";
+        log.info("[Tool:flower.openFlowerBook] 꽃 도감 화면 이동 후속 액션 생성");
+        return "꽃 도감 화면 후속 액션을 준비했습니다.";
     }
 
     // 특정 꽃 ID를 전달해 꽃 도감 화면을 여는 앱 내부 액션을 준비합니다.
@@ -87,6 +99,6 @@ public class FlowerTools {
         actionContext.addAction(action);
 
         log.info("[Tool:flower.openFlowerDetail] flowerId={}", flowerId);
-        return "Flower detail handoff follow-up prepared.";
+        return "꽃 상세 화면 전달 후속 액션을 준비했습니다.";
     }
 }

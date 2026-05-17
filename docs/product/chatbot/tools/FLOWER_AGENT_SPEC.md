@@ -99,6 +99,35 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 - `growTips`
 - `source`
 
+### `recommendSeasonalFlowers(month)`
+
+- 목적: 월/계절 기준 꽃 추천
+- AI 설명: `Recommend seasonal flowers for a given month using FLOWER's flower book and approved flower spots.`
+- 한국어 설명: `flower_book` 월별 개화 데이터와 승인 꽃 명소를 조합해 추천한다.
+- 입력: `month`, 1~12 범위 밖이면 현재 월 사용
+- 결과 제한: 최대 5개
+- 출력: `ToolResult`
+
+`ToolResult.data` 필드:
+
+- `month`
+- `items`
+- `source`
+
+`items` 항목 필드:
+
+- `flowerBookId`
+- `name`
+- `bloomMonth`
+- `bloomDay`
+- `bloomDate`
+- `flowerLanguage`
+- `source`
+- `spotCount`
+- `representativeSpotName`(승인 명소가 있을 때)
+- `address`(승인 명소가 있을 때)
+- `flowerId`/`lat`/`lng`(승인 명소가 있을 때)
+
 ### `openFlowerBook()`
 
 - 목적: 꽃 도감 화면 열기
@@ -139,6 +168,7 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 - 꽃 관련 요청은 `FLOWER` intent로 분류된다.
 - 사용자가 도감 열기를 요청하고 지도 요청이 없으면 `NAVIGATE FLOWER_BOOK`을 반환한다.
 - 꽃 설명/특징 질문은 `lookupDescriptionSource`만 사용하고, 키우기/재배/관리 질문은 `lookupGrowTipsSource`만 사용한다.
+- 월/계절 추천 질문은 `recommendSeasonalFlowers`를 사용한다.
 - 꽃 위치/명소/근처/지도 요청과 함께 꽃 keyword가 있으면 `searchFlowerSpots` 결과가 MapAgent 액션과 함께 사용될 수 있다.
 - 검색 keyword가 없으면 전체/대표 승인 꽃 데이터를 최대 5개까지 조회한다.
 - 꽃 이름을 모르는 묘사형 질문은 후보 꽃 키워드로 확장 검색할 수 있다.

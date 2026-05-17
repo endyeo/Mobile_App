@@ -11,6 +11,7 @@ import com.flower.backend.chatbot.dto.ToolResult;
 import com.flower.backend.chatbot.tool.CommunityAgent.CommunityTools;
 import com.flower.backend.chatbot.tool.FlowerAgent.FlowerToolService;
 import com.flower.backend.flower.Flower;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -149,36 +150,49 @@ public class ChatbotService {
         int step = 1;
 
         steps.add(stepTrace(step++, "RouterAgent", "routeAndPlan", "SUCCESS",
-                plan.source() + " selected the required search tools and internal client follow-ups."));
+                plan.source() + "가 필요한 검색 도구와 내부 앱 액션을 선택했습니다."));
         sendStreamEvent(streamSender, "CONTEXT_PLANNED", Map.of(
                 "route", route,
                 "message", "요청 맥락과 필요한 작업 계획을 확인했습니다."
         ));
 
+        if (hasUnsupportedIntent(intents) || wantsUnsupportedFeature(message)) {
+            ToolResult unsupportedResult = unsupportedToolResult(message);
+            toolResults.add(unsupportedResult);
+            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", unsupportedResult));
+            steps.add(stepTrace(step++, "RouterAgent", "app.unsupported", "READY",
+                    "v1에서 지원하지 않는 앱 제어 요청을 차단했습니다."));
+            AgentRunTrace trace = AgentRunTrace.builder()
+                    .mode("SPRING_AI_ROUTER_PLANNED_LIGHTWEIGHT_AGENTIC_RAG")
+                    .route(route)
+                    .specialist("RouterAgent")
+                    .steps(steps)
+                    .build();
+            return new AgentExecution(List.of(), toolResults, trace);
+        }
+
         sendStatus(streamSender, "PLAN", "필요한 앱 도구를 고르고 있어요.");
         ChatActionValidator.ValidationResult validationResult =
                 chatActionValidator.validateAndComplete(plan.actions(), intents, keyword);
         actions.addAll(validationResult.actions());
-        for (ChatAction action : actions) {
-            steps.add(stepTrace(step++, agentFor(action), toolFor(action), "READY",
-                    "Planned client-side follow-up from " + plan.source() + "."));
-        }
-        if (!actions.isEmpty()) {
-            sendStatus(streamSender, "ACTION", actionStatusMessage(actions));
-            sendStreamEvent(streamSender, "ACTION", Map.of(
-                    "action", actions.get(0),
-                    "actions", actions
-            ));
-        }
 
-        boolean flowerBookInfoRequested = intents.contains(RouteIntent.FLOWER)
+        boolean flowerIntent = hasFlowerIntent(intents);
+        boolean flowerBookInfoRequested = flowerIntent
                 && !flowerBookRequested
                 && wantsFlowerBookInfo(message);
-        if (flowerBookInfoRequested) {
+        if (flowerIntent && wantsSeasonalRecommendation(message)) {
+            sendStatus(streamSender, "SEARCH", "이번 계절에 어울리는 꽃을 찾고 있어요.");
+            ToolResult seasonalResult = flowerToolService.recommendSeasonalFlowersResult(extractRequestedMonth(message));
+            toolResults.add(seasonalResult);
+            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", seasonalResult));
+            steps.add(stepTrace(step++, "FlowerAgent", "flower.recommendSeasonalFlowers", "SUCCESS",
+                    seasonalResult.getSummary()));
+            addRepresentativeMapAction(actions, seasonalResult);
+        } else if (flowerBookInfoRequested || intents.contains(RouteIntent.FLOWER_GROW)) {
             boolean allowCandidateExpansion = wantsUnknownFlowerIdentification(message)
                     && !wantsMap(message)
                     && !wantsFlowerSpotOrEvent(message);
-            if (wantsFlowerGrowTips(message)) {
+            if (wantsFlowerGrowTips(message) || intents.contains(RouteIntent.FLOWER_GROW)) {
                 sendStatus(streamSender, "SEARCH", "꽃 재배 정보를 검색하고 있어요.");
                 ToolResult growTipsResult = flowerToolService.lookupFlowerGrowTipsSourceResult(
                         keyword,
@@ -199,23 +213,36 @@ public class ChatbotService {
                 steps.add(stepTrace(step++, "FlowerAgent", "lookupFlowerDescriptionSource", "SUCCESS",
                         descriptionResult.getSummary()));
             }
-        } else if (intents.contains(RouteIntent.FLOWER) && !flowerBookRequested) {
+        } else if (flowerIntent && !flowerBookRequested) {
             sendStatus(streamSender, "SEARCH", "꽃 정보를 검색하고 있어요.");
             flowerResults = searchFlowers(keyword);
             ToolResult flowerResult = flowerToolResult(keyword, flowerResults);
             toolResults.add(flowerResult);
             sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", flowerResult));
             steps.add(stepTrace(step++, "FlowerAgent", "searchFlowerSpots", "SUCCESS",
-                    "Checked " + flowerResults.size() + " approved flower spot candidates."));
+                    "승인된 꽃 명소 후보 " + flowerResults.size() + "개를 확인했습니다."));
+            addRepresentativeMapAction(actions, flowerResult);
         }
 
-        if (intents.contains(RouteIntent.COMMUNITY)) {
+        if (intents.contains(RouteIntent.COMMUNITY) && !actionsContainTarget(actions, "COMMUNITY_COMPOSE")) {
             sendStatus(streamSender, "SEARCH", "커뮤니티 글을 검색하고 있어요.");
             ToolResult communityResult = communityTools.searchPosts(keyword);
             toolResults.add(communityResult);
             sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", communityResult));
             steps.add(stepTrace(step++, "RouterAgent", "searchCommunityPosts", "SUCCESS",
                     communityResult.getSummary()));
+        }
+
+        for (ChatAction action : actions) {
+            steps.add(stepTrace(step++, agentFor(action), toolFor(action), "READY",
+                    plan.source() + "가 클라이언트 후속 액션을 계획했습니다."));
+        }
+        if (!actions.isEmpty()) {
+            sendStatus(streamSender, "ACTION", actionStatusMessage(actions));
+            sendStreamEvent(streamSender, "ACTION", Map.of(
+                    "action", actions.get(0),
+                    "actions", actions
+            ));
         }
 
         AgentRunTrace trace = AgentRunTrace.builder()
@@ -225,6 +252,78 @@ public class ChatbotService {
                 .steps(steps)
                 .build();
         return new AgentExecution(actions, toolResults, trace);
+    }
+
+    private boolean hasFlowerIntent(List<RouteIntent> intents) {
+        return intents.contains(RouteIntent.FLOWER) || intents.contains(RouteIntent.FLOWER_GROW);
+    }
+
+    private boolean hasUnsupportedIntent(List<RouteIntent> intents) {
+        return intents.contains(RouteIntent.QUEST) || intents.contains(RouteIntent.SHOP);
+    }
+
+    private ToolResult unsupportedToolResult(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        String feature = containsAny(lower, "shop", "store", "buy", "purchase", "상점", "상품", "아이템", "구매", "사줘")
+                ? "상점/구매"
+                : "퀘스트/인증";
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("context", feature + " 요청은 v1 AI 꽃 도우미에서 직접 실행하지 않습니다. 게시, 구매, 포인트 지급, 인증 같은 쓰기 작업은 사용자가 해당 화면에서 직접 해야 합니다.");
+        data.put("feature", feature);
+        return ToolResult.builder()
+                .tool("app.unsupported")
+                .status("READY")
+                .summary(feature + " 요청은 v1에서 지원하지 않습니다.")
+                .data(data)
+                .build();
+    }
+
+    private void addRepresentativeMapAction(List<ChatAction> actions, ToolResult result) {
+        if (actions.stream().noneMatch(action -> "MAP".equals(action.getTarget()))) {
+            return;
+        }
+        Map<String, Object> data = result.getData();
+        if (data == null || !(data.get("items") instanceof List<?> items) || items.isEmpty()) {
+            return;
+        }
+        Object first = items.get(0);
+        if (!(first instanceof Map<?, ?> row)) {
+            return;
+        }
+        Object flowerId = row.get("flowerId");
+        if (flowerId instanceof Number || (flowerId instanceof String text && text.matches("\\d+"))) {
+            ChatAction action = ChatAction.builder()
+                    .type("MAP_SHOW_FLOWER")
+                    .target("MAP")
+                    .params(Map.of("flowerId", flowerId))
+                    .build();
+            if (!containsAction(actions, action)) {
+                actions.add(action);
+            }
+            return;
+        }
+        Object name = row.get("name");
+        if (name != null && !name.toString().isBlank()) {
+            ChatAction action = ChatAction.builder()
+                    .type("MAP_SET_SEARCH_QUERY")
+                    .target("MAP")
+                    .params(Map.of("query", sanitizePlannerKeyword(name.toString())))
+                    .build();
+            if (!containsAction(actions, action)) {
+                actions.add(action);
+            }
+        }
+    }
+
+    private boolean containsAction(List<ChatAction> actions, ChatAction candidate) {
+        return actions.stream().anyMatch(action ->
+                safeEquals(action.getType(), candidate.getType())
+                        && safeEquals(action.getTarget(), candidate.getTarget())
+                        && String.valueOf(action.getParams()).equals(String.valueOf(candidate.getParams())));
+    }
+
+    private boolean safeEquals(String left, String right) {
+        return left == null ? right == null : left.equals(right);
     }
 
     private boolean wantsMap(String message) {
@@ -271,6 +370,76 @@ public class ChatbotService {
                 "festival", "event", "place", "spot", "nearby", "recommend");
     }
 
+    private boolean wantsSeasonalRecommendation(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower,
+                "season", "seasonal", "month", "monthly", "recommend",
+                "계절", "이번 달", "이번달", "월에", "월 꽃", "월의 꽃", "봄", "여름", "가을", "겨울",
+                "추천", "볼 만한", "볼만한", "피는 꽃");
+    }
+
+    private Integer extractRequestedMonth(String message) {
+        String value = message == null ? "" : message;
+        for (int month = 1; month <= 12; month++) {
+            if (value.contains(month + "월")) {
+                return month;
+            }
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        if (containsAny(lower, "spring", "봄")) {
+            return 4;
+        }
+        if (containsAny(lower, "summer", "여름")) {
+            return 7;
+        }
+        if (containsAny(lower, "fall", "autumn", "가을")) {
+            return 10;
+        }
+        if (containsAny(lower, "winter", "겨울")) {
+            return 1;
+        }
+        return LocalDate.now().getMonthValue();
+    }
+
+    private boolean wantsCommunity(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "community", "review", "post", "커뮤니티", "후기", "게시글", "글");
+    }
+
+    private boolean wantsCommunityCompose(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "write", "create post", "compose", "작성", "써줘", "글쓰기", "올리고");
+    }
+
+    private boolean wantsWalk(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "walk", "step", "pedometer", "산책", "걸음", "만보기", "포인트");
+    }
+
+    private boolean wantsSaved(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "saved", "bookmark", "bookmarks", "저장", "저장됨", "북마크");
+    }
+
+    private boolean wantsFlowerBookOpen(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "book", "flower book", "dictionary", "도감", "꽃도감", "상세");
+    }
+
+    private boolean wantsUnsupportedFeature(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower,
+                "shop", "store", "buy", "purchase", "quest", "mission",
+                "상점", "상품", "아이템", "구매", "사줘", "퀘스트", "미션", "인증", "포인트 지급");
+    }
+
+    private boolean mentionsFlower(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower,
+                "flower", "bloom", "rose", "hydrangea", "cherry blossom",
+                "꽃", "개화", "꽃말", "벚꽃", "장미", "수국", "튤립", "해바라기", "라벤더");
+    }
+
     private AgentPlan createAgentPlan(String message) {
         if (!openAiApiKey.isBlank() && chatClient != null) {
             try {
@@ -284,7 +453,7 @@ public class ChatbotService {
                     return plan;
                 }
             } catch (Exception e) {
-                log.warn("AI plan JSON generation failed. Falling back to local planner: {}", e.getMessage());
+                log.warn("AI 계획 JSON 생성 실패. 로컬 플래너로 전환합니다: {}", e.getMessage());
             }
         }
         return fallbackAgentPlan(message);
@@ -301,10 +470,10 @@ public class ChatbotService {
                 Return only valid JSON. Do not wrap it in markdown.
                 Schema:
                 {
-                  "intents": ["GENERAL" | "MAP" | "FLOWER" | "COMMUNITY" | "WALK" | "QUEST" | "SHOP"],
+                  "intents": ["GENERAL" | "MAP" | "FLOWER" | "FLOWER_GROW" | "COMMUNITY" | "WALK" | "SAVED" | "QUEST" | "SHOP"],
                   "searchKeyword": "optional keyword, empty string if the user only wants screen navigation",
                   "actions": [
-                    {"type":"NAVIGATE","target":"MAP|COMMUNITY|COMMUNITY_COMPOSE|WALK|FLOWER_BOOK|SAVED|QUEST|SHOP","params":{}},
+                    {"type":"NAVIGATE","target":"MAP|COMMUNITY|COMMUNITY_COMPOSE|WALK|FLOWER_BOOK|SAVED","params":{}},
                     {"type":"MAP_SET_SEARCH_QUERY","target":"MAP","params":{"query":"flower name only"}},
                     {"type":"NAVIGATE","target":"COMMUNITY_COMPOSE","params":{}}
                   ]
@@ -312,7 +481,9 @@ public class ChatbotService {
                 Rules:
                 - For greetings, thanks, small talk, capability questions, and general conversation, return intents ["GENERAL"], searchKeyword "", and actions [].
                 - If there is no appropriate app-control action to run, return actions [].
-                - If the user asks for flower facts, descriptions, features, care, or grow tips, use intent FLOWER, no navigation action, and searchKeyword should be the flower name.
+                - If the user asks for flower facts, descriptions, features, flower language, or identification, use intent FLOWER, no navigation action, and searchKeyword should be the flower name.
+                - If the user asks for flower care, growing, watering, sunlight, soil, or grow tips, use intent FLOWER_GROW, no navigation action, and searchKeyword should be the flower name.
+                - If the user asks for seasonal or monthly flower recommendations, use intent FLOWER and searchKeyword "" unless a flower name is specified.
                 - If the user describes a flower but says they do not know its name, use intent FLOWER, no navigation action, and keep the descriptive phrase as searchKeyword.
                 - If the user asks about a flower festival, event, spot, place, nearby area, recommendation, or map, do not treat it as flower-book identification.
                 - Do not create any NAVIGATE action unless the user explicitly asks to open, show, move to, or view a screen.
@@ -321,6 +492,8 @@ public class ChatbotService {
                 - Use MAP_SET_SEARCH_QUERY only when the user names a flower or flower place to find on the map.
                 - If the user wants to write or create a community post, use NAVIGATE COMMUNITY_COMPOSE only.
                 - Do not generate community post content or drafts.
+                - If the user asks to open saved/bookmarked items, use NAVIGATE SAVED.
+                - Shop, purchase, quest, mission, point grant, and verification actions are not supported in v1. Return intent SHOP or QUEST with actions [].
                 - For Korean flower names, preserve the full name such as "벚꽃"; remove particles such as "에서".
                 - Do not invent actions outside the schema.
                 """;
@@ -371,7 +544,69 @@ public class ChatbotService {
     }
 
     private AgentPlan fallbackAgentPlan(String message) {
-        return new AgentPlan(List.of(RouteIntent.GENERAL), "", List.of(), "FallbackPlanner");
+        String keyword = sanitizePlannerKeyword(extractKeyword(message));
+        List<RouteIntent> intents = new ArrayList<>();
+        List<ChatAction> actions = new ArrayList<>();
+
+        if (wantsUnsupportedFeature(message)) {
+            intents.add(wantsShopRequest(message) ? RouteIntent.SHOP : RouteIntent.QUEST);
+            return new AgentPlan(intents, keyword, actions, "FallbackPlanner");
+        }
+        boolean communityIntent = wantsCommunity(message);
+        boolean communityCompose = communityIntent && wantsCommunityCompose(message);
+        if (wantsMap(message)) {
+            intents.add(RouteIntent.MAP);
+            actions.add(navigateAction("MAP", Map.of()));
+        }
+        if (communityIntent) {
+            intents.add(RouteIntent.COMMUNITY);
+            if (communityCompose) {
+                actions.add(navigateAction("COMMUNITY_COMPOSE", Map.of()));
+            } else {
+                actions.add(navigateAction("COMMUNITY", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
+            }
+        }
+        if (wantsWalk(message)) {
+            intents.add(RouteIntent.WALK);
+            actions.add(navigateAction("WALK", Map.of()));
+        }
+        if (wantsSaved(message)) {
+            intents.add(RouteIntent.SAVED);
+            actions.add(navigateAction("SAVED", Map.of()));
+        }
+        if (wantsFlowerGrowTips(message)) {
+            intents.add(RouteIntent.FLOWER_GROW);
+        } else if (!communityCompose && (!communityIntent || wantsMap(message) || wantsSeasonalRecommendation(message) || wantsFlowerBookInfo(message))
+                && (mentionsFlower(message) || wantsFlowerBookInfo(message) || wantsSeasonalRecommendation(message))) {
+            intents.add(RouteIntent.FLOWER);
+        }
+        if (wantsFlowerBookOpen(message) && !wantsMap(message)) {
+            actions.add(navigateAction("FLOWER_BOOK", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
+        }
+        if (intents.contains(RouteIntent.MAP) && hasFlowerIntent(intents) && !wantsSeasonalRecommendation(message) && !keyword.isBlank()) {
+            actions.add(ChatAction.builder()
+                    .type("MAP_SET_SEARCH_QUERY")
+                    .target("MAP")
+                    .params(Map.of("query", keyword))
+                    .build());
+        }
+        if (intents.isEmpty()) {
+            intents.add(RouteIntent.GENERAL);
+        }
+        return new AgentPlan(intents.stream().distinct().toList(), keyword, actions, "FallbackPlanner");
+    }
+
+    private ChatAction navigateAction(String target, Map<String, Object> params) {
+        return ChatAction.builder()
+                .type("NAVIGATE")
+                .target(target)
+                .params(params == null || params.isEmpty() ? Map.of() : params)
+                .build();
+    }
+
+    private boolean wantsShopRequest(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "shop", "store", "buy", "purchase", "상점", "상품", "아이템", "구매", "사줘");
     }
 
     private String agentFor(ChatAction action) {
@@ -379,7 +614,24 @@ public class ChatbotService {
     }
 
     private String toolFor(ChatAction action) {
-        return action.getType() == null ? "unknownAction" : action.getType();
+        if (action.getType() == null) {
+            return "unknownAction";
+        }
+        if ("MAP_SET_SEARCH_QUERY".equals(action.getType())) {
+            return "app.openMapWithFlowerQuery";
+        }
+        if ("NAVIGATE".equals(action.getType())) {
+            return switch (action.getTarget() == null ? "" : action.getTarget()) {
+                case "FLOWER_BOOK" -> "app.openFlowerBook";
+                case "COMMUNITY" -> "app.openCommunityWithQuery";
+                case "COMMUNITY_COMPOSE" -> "app.openCommunityComposer";
+                case "MAP" -> "app.openMap";
+                case "WALK" -> "app.openWalk";
+                case "SAVED" -> "app.openSaved";
+                default -> action.getType();
+            };
+        }
+        return action.getType();
     }
 
     private String sanitizePlannerKeyword(String keyword) {
@@ -402,7 +654,7 @@ public class ChatbotService {
         return ToolResult.builder()
                 .tool("flower.searchFlowerSpots")
                 .status("SUCCESS")
-                .summary("'" + displayKeyword(keyword) + "' flower spot search returned " + flowers.size() + " result(s).")
+                .summary("'" + displayKeyword(keyword) + "' 꽃 명소 검색 결과 " + flowers.size() + "건을 찾았습니다.")
                 .data(Map.of("items", rows))
                 .build();
     }
@@ -423,9 +675,9 @@ public class ChatbotService {
             for (ChatTurn turn : history) {
                 userPrompt.append(turn.role()).append(": ").append(turn.content()).append("\n");
             }
-            userPrompt.append("\nUser message:\n")
+            userPrompt.append("\n사용자 메시지:\n")
                     .append(message)
-                    .append("\n\nTool results and app actions:\n")
+                    .append("\n\n도구 결과와 앱 액션:\n")
                     .append(localContext);
 
             String content = chatClient.prompt()
@@ -438,41 +690,41 @@ public class ChatbotService {
                     ? fallbackReply(message, localContext, action)
                     : content.trim();
         } catch (Exception e) {
-            log.warn("Spring AI chatbot call failed. Falling back to local response: {}", e.getMessage());
+            log.warn("Spring AI 챗봇 호출 실패. 로컬 응답으로 전환합니다: {}", e.getMessage());
             return fallbackReply(message, localContext, action);
         }
     }
 
     private String systemPrompt(ChatAction action) {
         String actionInstruction = action == null
-                ? "No internal app action is required unless the tool results include one."
-                : "An internal app action is prepared for the client: " + action.getType() + " / " + action.getTarget()
-                + ". You may show it as Korean read-only test information, but do not mention buttons or shortcuts.";
+                ? "도구 결과에 별도 액션이 포함되지 않았다면 내부 앱 액션은 필요하지 않습니다."
+                : "클라이언트에 전달할 내부 앱 액션이 준비되었습니다: " + action.getType() + " / " + action.getTarget()
+                + ". 이 정보는 한국어 읽기 전용 테스트 정보로만 보여줄 수 있으며, 버튼이나 바로가기는 언급하지 마세요.";
 
         return """
-                You are FLOWER's in-app lightweight Agentic RAG chatbot.
-                Answer in Korean when the user writes Korean; answer in English when the user writes English.
-                The user's language has higher priority than the language of tool names, field names, database values, or internal context labels.
-                If the user writes Korean, all final prose, explanations, caveats, and source mentions must be written naturally in Korean.
-                Do not copy English tool labels such as "description", "growTips", "source", "Tool results", or "lookup returned" into the final answer.
-                Use only the provided tool results as factual ground truth.
-                Do not invent exact bloom dates, locations, post content, purchases, or completed writes.
-                Flower description and grow-tip answers must use flower_book tool results and include the source when available.
-                If the flower query was expanded from a vague description, explain that the answer is based on likely candidates, not a confirmed identification.
-                Flower tools provide flower spot data and flower book navigation only; map actions are handled by map tools.
-                If a write-like task opens the community composer, clearly say the post editor is being opened without generated content or an automatic save.
-                Internal client follow-ups may be shown as Korean read-only test information. Never tell the user that a shortcut button or navigation button was prepared.
+                당신은 FLOWER 앱 안에서 동작하는 경량 Agentic RAG 챗봇입니다.
+                사용자가 한국어로 쓰면 한국어로 답하고, 영어로 쓰면 영어로 답하세요.
+                사용자 언어는 도구 이름, 필드명, 데이터베이스 값, 내부 컨텍스트 라벨의 언어보다 우선합니다.
+                사용자가 한국어로 쓴 경우 최종 답변의 본문, 설명, 주의사항, 출처 언급을 모두 자연스러운 한국어로 작성하세요.
+                "description", "growTips", "source", "Tool results", "lookup returned" 같은 영어 도구 라벨을 최종 답변에 그대로 복사하지 마세요.
+                사실 근거는 제공된 도구 결과만 사용하세요.
+                정확한 개화일, 위치, 게시글 내용, 구매, 작성 완료 여부를 지어내지 마세요.
+                꽃 설명과 재배 팁 답변은 flower_book 도구 결과를 사용하고, 출처가 있으면 포함해야 합니다.
+                월별/계절 추천은 flower.recommendSeasonalFlowers 결과를 우선 사용하고, 승인 명소가 함께 있으면 보러 갈 후보로 설명하세요.
+                모호한 설명에서 꽃 후보를 확장 검색한 경우, 확정 식별이 아니라 가능성 있는 후보 기반 답변임을 설명하세요.
+                꽃 도구는 꽃 명소 데이터와 꽃 도감 이동만 제공합니다. 지도 액션은 지도 도구가 처리합니다.
+                커뮤니티 작성처럼 쓰기 성격의 작업에서 작성 화면을 여는 경우, 내용을 생성하거나 자동 저장하지 않고 글 작성 화면만 연다고 명확히 말하세요.
+                상점, 구매, 퀘스트, 미션, 인증, 포인트 지급 같은 미지원 요청은 실행하지 말고 아직 지원하지 않는다고 말하세요.
+                내부 클라이언트 후속 액션은 한국어 읽기 전용 테스트 정보로 보여줄 수 있습니다. 바로가기 버튼이나 이동 버튼이 준비됐다고 말하지 마세요.
                 """ + "\n" + actionInstruction;
     }
 
     private String fallbackReply(String message, String localContext, ChatAction action) {
         StringBuilder reply = new StringBuilder();
-        reply.append("OpenAI API 키가 설정되지 않아 로컬 도구 결과를 사용했습니다.\n\n");
+        reply.append("확인한 정보를 바탕으로 안내드릴게요.\n\n");
         reply.append(localContext);
         if (action != null && "NAVIGATE".equals(action.getType()) && "COMMUNITY_COMPOSE".equals(action.getTarget())) {
             reply.append("\n\n게시글 작성 화면을 열도록 준비했습니다. 글 내용은 생성하거나 저장하지 않았습니다.");
-        } else if (message != null && !message.isBlank()) {
-            reply.append("\n\n자연스러운 Spring AI 답변을 사용하려면 OPENAI_API_KEY를 설정해야 합니다.");
         }
         return reply.toString();
     }
@@ -489,10 +741,10 @@ public class ChatbotService {
     private String extractKeyword(String message) {
         String cleaned = message == null ? "" : message.trim();
         String[] noise = {
-                "지도", "위치", "추천", "알려줘", "보여줘", "어디", "근처", "주변", "길", "안내",
+                "지도", "위치", "추천", "알려줘", "보여줘", "찾아줘", "찾아", "검색", "어디", "근처", "주변", "길", "안내",
                 "볼래요", "볼래", "보기", "보고싶", "보고 싶",
                 "에서", "으로", "로", "을", "를", "은", "는", "이", "가",
-                "커뮤니티", "게시글", "후기", "글", "작성", "써줘", "초안",
+                "커뮤니티", "게시글", "후기", "글", "작성", "써줘", "초안", "법",
                 "flowers", "flower", "nearby", "near", "map", "recommend", "show", "tell", "me", "post",
                 "community", "on", "the", "a", "an", "to", "please"
         };
@@ -507,6 +759,7 @@ public class ChatbotService {
                 "\uC815\uBCF4", "\uC124\uBA85", "\uD2B9\uC9D5", "\uD0A4\uC6B0\uAE30",
                 "\uD0A4\uC6B0\uB294", "\uC7AC\uBC30", "\uAD00\uB9AC", "\uBB3C\uC8FC\uAE30",
                 "\uD587\uBE5B", "\uD1A0\uC591", "\uD301", "\uBC29\uBC95",
+                "\uCC3E\uC544\uC918", "\uCC3E\uC544", "\uAC80\uC0C9", "\uBC95",
                 "\uC5D0\uC11C", "\uC73C\uB85C", "\uB85C", "\uC744", "\uB97C", "\uC740", "\uB294", "\uC774", "\uAC00"
         };
         for (String word : unicodeNoise) {
@@ -523,7 +776,7 @@ public class ChatbotService {
     }
 
     private String displayKeyword(String keyword) {
-        return keyword == null || keyword.isBlank() ? "all" : keyword;
+        return keyword == null || keyword.isBlank() ? "전체" : keyword;
     }
 
     private void sendStatus(StreamSender streamSender, String stage, String message) {
@@ -540,7 +793,7 @@ public class ChatbotService {
         try {
             streamSender.send(eventName, data);
         } catch (Exception e) {
-            throw new IllegalStateException("Failed to send chatbot stream event: " + eventName, e);
+            throw new IllegalStateException("챗봇 스트림 이벤트 전송 실패: " + eventName, e);
         }
     }
 
@@ -620,7 +873,7 @@ public class ChatbotService {
                 context.append(formatToolDataForAnswer(result));
             }
             if (!actions.isEmpty()) {
-                context.append("\n테스트용 내부 액션:\n");
+                context.append("\n앱에서 실행할 작업:\n");
                 for (ChatAction action : actions) {
                     context.append("- ")
                             .append(koreanActionLabel(action))
@@ -669,6 +922,10 @@ public class ChatbotService {
                     appendIfPresent(context, row, "description", "설명");
                     appendIfPresent(context, row, "growTips", "재배 팁");
                     appendIfPresent(context, row, "source", "출처");
+                    appendIfPresent(context, row, "bloomDate", "개화");
+                    appendIfPresent(context, row, "flowerLanguage", "꽃말");
+                    appendIfPresent(context, row, "spotCount", "승인 명소 수");
+                    appendIfPresent(context, row, "representativeSpotName", "대표 명소");
                     appendIfPresent(context, row, "address", "주소");
                     appendIfPresent(context, row, "bloomStart", "개화 시작");
                     appendIfPresent(context, row, "bloomEnd", "개화 종료");
@@ -685,7 +942,9 @@ public class ChatbotService {
                 case "flower.lookupDescriptionSource" -> "꽃 설명 조회";
                 case "flower.lookupGrowTipsSource" -> "꽃 재배 팁 조회";
                 case "flower.searchFlowerSpots" -> "꽃 명소 조회";
-                case "searchCommunityPosts" -> "커뮤니티 글 조회";
+                case "flower.recommendSeasonalFlowers" -> "계절 꽃 추천";
+                case "community.searchPosts", "searchCommunityPosts" -> "커뮤니티 글 조회";
+                case "app.unsupported" -> "지원하지 않는 요청";
                 default -> tool;
             };
         }
@@ -724,8 +983,6 @@ public class ChatbotService {
                 case "WALK" -> "산책";
                 case "FLOWER_BOOK", "FLOWER" -> "꽃 도감";
                 case "SAVED" -> "저장됨";
-                case "QUEST" -> "퀘스트";
-                case "SHOP" -> "상점";
                 default -> target.isBlank() ? "대상" : target;
             };
         }

@@ -38,7 +38,7 @@ class _ChatScreenState extends State<ChatScreen> {
     _currentAgentRun = _sharedAgentRun;
     _currentToolResults = _sharedToolResults;
     if (_messages.isEmpty) {
-      _addBotMessage('안녕하세요. 궁금한 꽃, 지도 이동, 커뮤니티 작업을 말해 주세요.');
+      _addBotMessage('안녕하세요. 이번 달 꽃 추천, 꽃 키우기, 꽃 명소 지도, 커뮤니티 후기를 물어보세요.');
     }
   }
 
@@ -351,8 +351,18 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (tool) {
       case 'routeAndPlan': return '의도 파악과 계획 수립';
       case 'searchFlowerSpots': case 'flower.searchFlowerSpots': return '꽃 명소 검색';
+      case 'flower.recommendSeasonalFlowers': return '계절 꽃 추천';
+      case 'lookupFlowerDescriptionSource': case 'flower.lookupDescriptionSource': return '꽃 설명 조회';
+      case 'lookupFlowerGrowTipsSource': case 'flower.lookupGrowTipsSource': return '꽃 재배 팁 조회';
       case 'searchCommunityPosts': case 'community.searchPosts': return '커뮤니티 글 검색';
       case 'NAVIGATE': return '관련 화면 열기';
+      case 'app.openFlowerBook': return '꽃 도감 열기';
+      case 'app.openMap': case 'app.openMapWithFlowerQuery': return '지도 열기';
+      case 'app.openCommunityWithQuery': return '커뮤니티 열기';
+      case 'app.openCommunityComposer': return '커뮤니티 글 작성 화면 열기';
+      case 'app.openSaved': return '저장 화면 열기';
+      case 'app.openWalk': return '산책 화면 열기';
+      case 'app.unsupported': return '지원하지 않는 요청 확인';
       case 'MAP_SET_SEARCH_QUERY': return '지도 검색어 적용';
       case 'MAP_SHOW_FLOWER': return '지도 꽃 위치 표시';
       case 'MAP_OPEN_FLOWER_PREVIEW': return '지도 꽃 미리보기';
@@ -374,12 +384,12 @@ class _ChatScreenState extends State<ChatScreen> {
   String _targetLabel(String target) {
     switch (target) {
       case 'MAP': return '지도';
-      case 'FLOWER': case 'FLOWER_BOOK': return '꽃';
+      case 'FLOWER': case 'FLOWER_GROW': case 'FLOWER_BOOK': return '꽃';
       case 'COMMUNITY': return '커뮤니티';
       case 'COMMUNITY_COMPOSE': return '커뮤니티 글 작성';
       case 'WALK': return '산책';
-      case 'QUEST': return '퀘스트';
-      case 'SHOP': return '상점';
+      case 'SAVED': return '저장됨';
+      case 'QUEST': case 'SHOP': return '지원하지 않는 요청';
       default: return target;
     }
   }

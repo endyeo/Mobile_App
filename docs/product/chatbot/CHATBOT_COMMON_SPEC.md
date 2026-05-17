@@ -30,7 +30,7 @@ AI 챗봇은 사용자의 자연어 요청을 분석해 꽃 데이터, 커뮤니
 - `ChatbotController`: `/chatbot/message`, `/chatbot/message/stream`, `/chatbot/session/{sessionId}` 제공
 - `ChatbotService`: 세션 관리, 라우팅, 도구 실행, Spring AI 응답 생성
 - `ChatActionValidator`: planner가 만든 액션만 허용 목록 기준으로 정규화하고 중복을 제거
-- `RouteIntent`: `GENERAL`, `MAP`, `FLOWER`, `COMMUNITY`, `WALK`, `QUEST`, `SHOP`
+- `RouteIntent`: `GENERAL`, `MAP`, `FLOWER`, `FLOWER_GROW`, `COMMUNITY`, `WALK`, `SAVED`, `QUEST`, `SHOP`
 - `ChatbotActionContext`: request scope 도구 실행 상태와 액션 저장
 
 Flutter 구성:
@@ -76,12 +76,14 @@ Flutter 구성:
 - `MAP`: 지도, 위치, 근처, 길찾기, 주변 요청
 - `FLOWER`: 꽃, 개화, 꽃명, 추천, 명소, 도감 요청
 - `COMMUNITY`: 커뮤니티, 게시글, 후기, 글 요청
-- `WALK`: 산책, 만보기, 걸음, 포인트 요청
-- `QUEST`: 퀘스트, 미션, 인증 요청
-- `SHOP`: 상점, 구매, 상품, 아이템 요청
+- `FLOWER_GROW`: 꽃 키우기, 재배, 관리, 물주기, 햇빛, 토양 요청
+- `WALK`: 산책, 만보기, 걸음, 포인트 화면 요청
+- `SAVED`: 저장됨, 북마크 화면 요청
+- `QUEST`: 퀘스트, 미션, 인증 요청. v1에서는 실행하지 않고 미지원 응답만 반환
+- `SHOP`: 상점, 구매, 상품, 아이템 요청. v1에서는 실행하지 않고 미지원 응답만 반환
 - `GENERAL`: 인사, 감사, 잡담, 일반 질문처럼 앱 화면 이동이나 검색 도구 실행이 필요 없는 요청
 
-현재 Flutter 실행 연결은 `MAP`, `COMMUNITY`, `WALK`, `FLOWER_BOOK`, `SAVED` 중심이다. `QUEST`, `SHOP`은 백엔드 validator에서 허용하지만 Flutter `AppActionRuntime`에는 전용 화면 매핑이 없다.
+현재 Flutter 실행 연결은 `MAP`, `COMMUNITY`, `WALK`, `FLOWER_BOOK`, `SAVED` 중심이다. `QUEST`, `SHOP`은 v1에서 앱 액션으로 허용하지 않는다.
 
 ## 6. 앱 액션 계약
 
@@ -103,7 +105,7 @@ Flutter 구성:
 
 허용 액션:
 
-- `NAVIGATE`: `MAP`, `COMMUNITY`, `COMMUNITY_COMPOSE`, `WALK`, `FLOWER_BOOK`, `SAVED`, `QUEST`, `SHOP`
+- `NAVIGATE`: `MAP`, `COMMUNITY`, `COMMUNITY_COMPOSE`, `WALK`, `FLOWER_BOOK`, `SAVED`
 - `MAP_SET_SEARCH_QUERY`: `target=MAP`, `params.query`
 - `MAP_SHOW_FLOWER`: `target=MAP`, `params.flowerId`
 - `MAP_OPEN_FLOWER_PREVIEW`: `target=MAP`, `params.flowerId`
@@ -124,6 +126,8 @@ Flutter 실행 규칙:
 Spring AI 응답은 도구 결과만 사실 근거로 사용해야 한다. 정확한 개화일, 위치, 게시글 내용, 구매/글 작성 완료 여부를 임의로 만들어내지 않는다.
 
 커뮤니티 글 작성 요청은 `NAVIGATE COMMUNITY_COMPOSE`로 작성 화면 이동까지만 가능하며 실제 게시글 저장이나 초안 생성은 하지 않는다.
+
+상점, 구매, 퀘스트, 미션, 인증, 포인트 지급은 v1 챗봇 도구가 직접 실행하지 않는다.
 
 한국어 질문에는 최종 설명, 주의사항, 출처 언급을 자연스러운 한국어로 작성해야 한다. 도구 내부 영어 라벨(`description`, `growTips`, `source`, `Tool results`)은 최종 답변에 그대로 노출하지 않는다.
 

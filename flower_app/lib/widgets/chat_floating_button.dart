@@ -21,6 +21,13 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
   static const MethodChannel _speechChannel = MethodChannel(
     'flower_app/speech',
   );
+  static const List<String> _examplePrompts = [
+    '이번 달에 볼 만한 꽃 추천해줘',
+    '분홍색 꽃인데 이름이 뭘까?',
+    '장미 키우는 법 알려줘',
+    '벚꽃 명소 지도에서 보여줘',
+    '수국 후기 찾아줘',
+  ];
   static final List<_FloatingChatMessage> _messages = [];
   static final String _sessionId = const Uuid().v4();
 
@@ -319,7 +326,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
             onPressed: () {
               setState(() {
                 _showComposer = true;
-                _showHistory = _messages.isNotEmpty;
+                _showHistory = true;
               });
             },
             child: const Icon(Icons.chat_bubble_outline, size: 26),
@@ -391,13 +398,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
           ),
           const SizedBox(height: 4),
           if (_messages.isEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 18),
-              child: Text(
-                '아직 대화 내역이 없습니다.',
-                style: TextStyle(color: Colors.grey[600], fontSize: 12),
-              ),
-            )
+            _buildExamplePrompts(colors)
           else
             Flexible(
               child: ListView.builder(
@@ -411,6 +412,29 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildExamplePrompts(SeasonColors colors) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 8, 0, 6),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 6,
+        children: _examplePrompts
+            .map(
+              (prompt) => ActionChip(
+                label: Text(prompt, style: const TextStyle(fontSize: 11)),
+                visualDensity: VisualDensity.compact,
+                backgroundColor: colors.primary.withValues(alpha: 0.08),
+                side: BorderSide(color: colors.primary.withValues(alpha: 0.16)),
+                onPressed: _isSending || _isListening
+                    ? null
+                    : () => _sendMessage(prompt),
+              ),
+            )
+            .toList(),
       ),
     );
   }

@@ -4,8 +4,10 @@ enum RouteIntent {
     GENERAL,
     MAP,
     FLOWER,
+    FLOWER_GROW,
     COMMUNITY,
     WALK,
+    SAVED,
     QUEST,
     SHOP
 }

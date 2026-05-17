@@ -38,8 +38,11 @@ class AppActionRuntime {
       await _push(context, screen);
     } catch (e) {
       if (context.mounted) {
+        final target = actions.isEmpty
+            ? '화면'
+            : actions.first.target ?? actions.first.type;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('화면 이동에 실패했습니다.')),
+          SnackBar(content: Text('$target 이동에 실패했습니다.')),
         );
       }
     }
@@ -84,7 +87,7 @@ class AppActionRuntime {
 
     switch ((action.target ?? '').toUpperCase()) {
       case 'COMMUNITY':
-        return const CommunityFeedScreen();
+        return CommunityFeedScreen(initialQuery: _stringParam(action, 'query'));
       case 'COMMUNITY_COMPOSE':
         return const CreatePostScreen();
       case 'WALK':
@@ -93,7 +96,10 @@ class AppActionRuntime {
       case 'FLOWER':
       case 'FLOWER_BOOK':
       case 'BOOK':
-        return const FlowerBookPage();
+        return FlowerBookPage(
+          initialQuery: _stringParam(action, 'query'),
+          initialFlowerBookId: _intParam(action, 'flowerBookId'),
+        );
       case 'SAVED':
       case 'BOOKMARK':
       case 'BOOKMARKS':
@@ -101,5 +107,20 @@ class AppActionRuntime {
       default:
         return null;
     }
+  }
+
+  static String? _stringParam(ChatAction action, String key) {
+    final value = action.params?[key];
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
+
+  static int? _intParam(ChatAction action, String key) {
+    final value = action.params?[key];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 }

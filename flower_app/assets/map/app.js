@@ -189,13 +189,12 @@
         lat: center.lat,
         lng: center.lng,
         radius: state.radius,
-        limit: config.DEFAULT_LIMIT || 50,
       });
-      const response = await fetch(`${baseUrl}/flowers?${params.toString()}`);
+      const response = await fetch(`${baseUrl}/flower-spots?${params.toString()}`);
       if (!response.ok) return [];
       const body = await response.json();
-      const data = Array.isArray(body) ? body : body.data;
-      return normalizeFlowers(data || []);
+      const posts = body.data?.posts ?? (Array.isArray(body) ? body : []);
+      return normalizeFlowers(posts);
     } catch (error) {
       console.warn('Flower API is unavailable.', error);
       return [];
@@ -205,13 +204,14 @@
   function normalizeFlowers(flowers) {
     return flowers
       .map(function (flower) {
-        const lat = flower.location?.lat ?? flower.lat ?? flower.mapY;
-        const lng = flower.location?.lng ?? flower.lng ?? flower.mapX;
+        const lat = flower.latitude ?? flower.location?.lat ?? flower.lat ?? flower.mapY;
+        const lng = flower.longitude ?? flower.location?.lng ?? flower.lng ?? flower.mapX;
         return {
-          flower_id: flower.flower_id ?? flower.flowerId ?? flower.id,
-          name: flower.name || '',
-          species: flower.species || '',
+          flower_id: flower.id ?? flower.flower_id ?? flower.flowerId,
+          name: flower.plantName || flower.name || flower.nickname || '',
+          species: flower.flowerSpecies || flower.species || '',
           address: flower.address || '',
+          imageUrl: flower.imageUrl || '',
           location: { lat: Number(lat), lng: Number(lng) },
           distance_m: flower.distance_m ?? flower.distanceM,
         };
