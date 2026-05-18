@@ -28,6 +28,26 @@ class TourApiService {
     '\uC720\uCC44',
     'flower',
   ];
+  static const List<String> _touristSpotKeywords = <String>[
+    ..._flowerKeywords,
+    '\uC218\uBAA9\uC6D0',
+    '\uC2DD\uBB3C\uC6D0',
+    '\uC815\uC6D0',
+    '\uACF5\uC6D0',
+    '\uC232',
+    '\uC0DD\uD0DC\uC6D0',
+    '\uC0DD\uD0DC\uACF5\uC6D0',
+    '\uC790\uC5F0\uD734\uC591\uB9BC',
+    '\uAF43\uAE38',
+    '\uC0B0\uCC45\uB85C',
+    '\uB458\uB808\uAE38',
+    '\uB18D\uC6D0',
+    '\uD654\uC6D0',
+    'arboretum',
+    'botanical',
+    'garden',
+    'park',
+  ];
   static const List<String> _priorityFestivalKeywords = <String>[
     '\uAF43',
     '\uBC9A\uAF43',
@@ -41,10 +61,12 @@ class TourApiService {
 
   Future<List<FestivalData>> getFlowerFestivals({
     DateTime? eventStartDate,
+    DateTime? today,
     int pageNo = 1,
     int numOfRows = 60,
   }) async {
     final DateTime startDate = eventStartDate ?? _defaultEventStartDate();
+    final DateTime localToday = _dateOnly(today ?? DateTime.now());
     final Map<String, String> params = <String, String>{
       'serviceKey': serviceKey,
       'numOfRows': '$numOfRows',
@@ -67,13 +89,17 @@ class TourApiService {
       throw Exception('TourAPI request failed: ${response.statusCode}');
     }
 
-    final List<FestivalData> broadMatches = _parseFestivalList(response.body);
+    final List<FestivalData> broadMatches = _parseFestivalList(
+      response.body,
+      today: localToday,
+    );
     if (broadMatches.isNotEmpty) {
       return _dedupeFestivals(broadMatches);
     }
 
     final List<FestivalData> keywordMatches =
         await _fetchFlowerKeywordFestivals(
+          today: localToday,
           pageNo: pageNo,
           numOfRows: math.min(numOfRows, 30),
         );
@@ -82,6 +108,7 @@ class TourApiService {
 
   Future<List<FestivalData>> searchFlowerFestivals({
     String keyword = '\uAF43',
+    DateTime? today,
     int pageNo = 1,
     int numOfRows = 30,
   }) async {
@@ -107,10 +134,49 @@ class TourApiService {
       throw Exception('TourAPI request failed: ${response.statusCode}');
     }
 
-    return _parseFestivalList(response.body);
+    return _parseFestivalList(
+      response.body,
+      today: _dateOnly(today ?? DateTime.now()),
+    );
+  }
+
+  Future<List<TouristSpotData>> getFlowerTouristSpots({
+    required double latitude,
+    required double longitude,
+    int radius = 5000,
+    int pageNo = 1,
+    int numOfRows = 80,
+  }) async {
+    final Map<String, String> params = <String, String>{
+      'serviceKey': serviceKey,
+      'numOfRows': '$numOfRows',
+      'pageNo': '$pageNo',
+      'MobileOS': 'ETC',
+      'MobileApp': 'FlowerApp',
+      '_type': 'json',
+      'mapX': '$longitude',
+      'mapY': '$latitude',
+      'radius': '$radius',
+      'arrange': 'E',
+      'contentTypeId': '12',
+    };
+
+    final Uri uri = Uri.parse(
+      '$_baseUrl/locationBasedList2',
+    ).replace(queryParameters: params);
+    final http.Response response = await _client
+        .get(uri)
+        .timeout(const Duration(seconds: 15));
+
+    if (response.statusCode != 200) {
+      throw Exception('TourAPI request failed: ${response.statusCode}');
+    }
+
+    return _dedupeTouristSpots(_parseTouristSpotList(response.body));
   }
 
   Future<List<FestivalData>> _fetchFlowerKeywordFestivals({
+    required DateTime today,
     required int pageNo,
     required int numOfRows,
   }) async {
@@ -120,6 +186,7 @@ class TourApiService {
       try {
         final List<FestivalData> matches = await searchFlowerFestivals(
           keyword: keyword,
+          today: today,
           pageNo: pageNo,
           numOfRows: numOfRows,
         );
@@ -154,7 +221,10 @@ class TourApiService {
     return results;
   }
 
-  List<FestivalData> _parseFestivalList(String responseBody) {
+  List<FestivalData> _parseFestivalList(
+    String responseBody, {
+    required DateTime today,
+  }) {
     try {
       final Map<String, dynamic> decoded =
           jsonDecode(responseBody) as Map<String, dynamic>;
@@ -170,12 +240,51 @@ class TourApiService {
           .map(FestivalData.fromApi)
           .where(
             (FestivalData festival) =>
-                festival.hasValidLocation && festival.isFlowerFestival,
+                festival.hasValidLocation &&
+                festival.isFlowerFestival &&
+                !festival.isPast(today),
           )
           .toList();
     } catch (error) {
       throw Exception('Failed to parse TourAPI response: $error');
     }
+  }
+
+  List<TouristSpotData> _parseTouristSpotList(String responseBody) {
+    try {
+      final Map<String, dynamic> decoded =
+          jsonDecode(responseBody) as Map<String, dynamic>;
+      final dynamic items = decoded['response']?['body']?['items']?['item'];
+      final List<dynamic> itemList = items is List<dynamic>
+          ? items
+          : items == null
+          ? const <dynamic>[]
+          : <dynamic>[items];
+
+      return itemList
+          .whereType<Map<String, dynamic>>()
+          .map(TouristSpotData.fromApi)
+          .where(
+            (TouristSpotData spot) =>
+                spot.hasValidLocation && spot.containsTouristSpotKeyword,
+          )
+          .toList();
+    } catch (error) {
+      throw Exception('Failed to parse TourAPI tourist response: $error');
+    }
+  }
+
+  List<TouristSpotData> _dedupeTouristSpots(List<TouristSpotData> spots) {
+    final Map<String, TouristSpotData> deduped = <String, TouristSpotData>{};
+
+    for (final TouristSpotData spot in spots) {
+      final String key = spot.contentId.isNotEmpty
+          ? spot.contentId
+          : '${spot.title}_${spot.mapX}_${spot.mapY}';
+      deduped.putIfAbsent(key, () => spot);
+    }
+
+    return deduped.values.toList();
   }
 
   DateTime _defaultEventStartDate() {
@@ -189,9 +298,21 @@ class TourApiService {
         '${date.day.toString().padLeft(2, '0')}';
   }
 
+  DateTime _dateOnly(DateTime value) {
+    return DateTime(value.year, value.month, value.day);
+  }
+
   static bool containsFlowerKeyword(String text) {
+    return _containsAnyKeyword(text, _flowerKeywords);
+  }
+
+  static bool containsTouristSpotKeyword(String text) {
+    return _containsAnyKeyword(text, _touristSpotKeywords);
+  }
+
+  static bool _containsAnyKeyword(String text, List<String> keywords) {
     final String normalized = text.toLowerCase();
-    return _flowerKeywords.any(
+    return keywords.any(
       (String keyword) => normalized.contains(keyword.toLowerCase()),
     );
   }
@@ -248,7 +369,7 @@ class FestivalData {
       <String>[addr1, addr2].where((String e) => e.isNotEmpty).join(' ');
 
   String get imageUrl =>
-      _normalizeImageUrl(firstImage.isNotEmpty ? firstImage : firstImage2);
+      _normalizeImageUrl(firstImage2.isNotEmpty ? firstImage2 : firstImage);
 
   String get periodString {
     if (eventStartDate.isEmpty) return '';
@@ -268,10 +389,20 @@ class FestivalData {
       'address': fullAddress,
       'imageUrl': imageUrl,
       'period': periodString,
+      'eventStartDate': eventStartDate,
+      'eventEndDate': eventEndDate,
       'tel': tel,
       'mapX': mapX,
       'mapY': mapY,
+      'contentTypeId': '15',
+      'type': 'festival',
     };
+  }
+
+  bool isPast(DateTime today) {
+    final DateTime? endDate = _parseApiDate(eventEndDate);
+    if (endDate == null) return false;
+    return endDate.isBefore(DateTime(today.year, today.month, today.day));
   }
 
   String _formatDate(String value) {
@@ -311,5 +442,80 @@ class FestivalData {
       return 'https://${trimmed.substring(7)}';
     }
     return trimmed;
+  }
+
+  static DateTime? _parseApiDate(String value) {
+    if (value.length != 8) return null;
+    final int? year = int.tryParse(value.substring(0, 4));
+    final int? month = int.tryParse(value.substring(4, 6));
+    final int? day = int.tryParse(value.substring(6, 8));
+    if (year == null || month == null || day == null) return null;
+    return DateTime(year, month, day);
+  }
+}
+
+class TouristSpotData {
+  const TouristSpotData({
+    required this.contentId,
+    required this.title,
+    required this.addr1,
+    required this.addr2,
+    required this.mapX,
+    required this.mapY,
+    required this.firstImage,
+    required this.firstImage2,
+    required this.contentTypeId,
+  });
+
+  factory TouristSpotData.fromApi(Map<String, dynamic> json) {
+    return TouristSpotData(
+      contentId: (json['contentid'] ?? '').toString(),
+      title: (json['title'] ?? '').toString(),
+      addr1: (json['addr1'] ?? '').toString(),
+      addr2: (json['addr2'] ?? '').toString(),
+      mapX: double.tryParse((json['mapx'] ?? '').toString()) ?? 0,
+      mapY: double.tryParse((json['mapy'] ?? '').toString()) ?? 0,
+      firstImage: (json['firstimage'] ?? '').toString(),
+      firstImage2: (json['firstimage2'] ?? '').toString(),
+      contentTypeId: (json['contenttypeid'] ?? '12').toString(),
+    );
+  }
+
+  final String contentId;
+  final String title;
+  final String addr1;
+  final String addr2;
+  final double mapX;
+  final double mapY;
+  final String firstImage;
+  final String firstImage2;
+  final String contentTypeId;
+
+  bool get hasValidLocation => mapX != 0 && mapY != 0;
+  bool get containsTouristSpotKeyword =>
+      TourApiService.containsTouristSpotKeyword('$title $fullAddress');
+
+  String get fullAddress =>
+      <String>[addr1, addr2].where((String e) => e.isNotEmpty).join(' ');
+
+  String get imageUrl => FestivalData._normalizeImageUrl(
+    firstImage2.isNotEmpty ? firstImage2 : firstImage,
+  );
+
+  double distanceFrom({required double latitude, required double longitude}) {
+    return FestivalData._distanceMeters(latitude, longitude, mapY, mapX);
+  }
+
+  Map<String, dynamic> toMapPayload() {
+    return <String, dynamic>{
+      'contentId': contentId,
+      'title': title,
+      'address': fullAddress,
+      'imageUrl': imageUrl,
+      'mapX': mapX,
+      'mapY': mapY,
+      'contentTypeId': contentTypeId,
+      'type': 'tourist',
+    };
   }
 }

@@ -8,20 +8,29 @@
     flowers: [],
     filteredFlowers: [],
     festivals: [],
+    touristSpots: [],
+    filteredMapItems: [],
     currentPosition: null,
+    currentAccuracy: null,
     radius: config.DEFAULT_RADIUS || 5000,
     search: '',
     kakaoReady: false,
     mapError: null,
     markers: [],
     festivalMarkers: [],
+    clusterMarkers: [],
+    currentPositionMarker: null,
+    currentAccuracyCircle: null,
     routePolylines: [],
     routeStartMarker: null,
     routeEndMarker: null,
+    routeBounds: null,
     routeSteps: [],
     showFlowers: true,
     showFestivals: true,
+    showTouristSpots: true,
     mapInteractionBound: false,
+    suppressMapDismissUntil: 0,
   };
 
   const FLOWER_KEYWORDS = [
@@ -40,6 +49,31 @@
     '\uC720\uCC44',
     'flower',
   ];
+  const TOURIST_SPOT_KEYWORDS = [
+    ...FLOWER_KEYWORDS,
+    '\uC218\uBAA9\uC6D0',
+    '\uC2DD\uBB3C\uC6D0',
+    '\uC815\uC6D0',
+    '\uACF5\uC6D0',
+    '\uC232',
+    '\uC0DD\uD0DC\uC6D0',
+    '\uC0DD\uD0DC\uACF5\uC6D0',
+    '\uC790\uC5F0\uD734\uC591\uB9BC',
+    '\uAF43\uAE38',
+    '\uC0B0\uCC45\uB85C',
+    '\uB458\uB808\uAE38',
+    '\uB18D\uC6D0',
+    '\uD654\uC6D0',
+    'arboretum',
+    'botanical',
+    'garden',
+    'park',
+  ];
+  const CATEGORY_COLORS = {
+    flower: '#3B82F6',
+    festival: '#ff4fa3',
+    tourist: '#10b981',
+  };
 
   const $ = (selector) => document.querySelector(selector);
 
@@ -57,6 +91,7 @@
     initGeolocation();
     loadFlowers();
     loadFestivals();
+    loadTouristSpots();
   }
 
   function isKoreanMapPosition(lat, lng) {
@@ -101,6 +136,11 @@
       moveToCurrentLocation() {
         initGeolocation();
       },
+      setRoutePanelTop(top) {
+        const nextTop = Math.max(96, Number(top || 0));
+        document.documentElement.style.setProperty('--route-panel-top', `${nextTop}px`);
+        refitVisibleRoute();
+      },
       setCurrentPosition(lat, lng) {
         if (!isKoreanMapPosition(lat, lng)) {
           console.warn('Ignoring non-Korean current position', lat, lng);
@@ -108,26 +148,33 @@
         }
         state.currentPosition = { lat: Number(lat), lng: Number(lng) };
         if (state.map && state.kakaoReady) {
+          markProgrammaticMove();
           state.map.setCenter(new kakao.maps.LatLng(lat, lng));
+          renderCurrentPositionMarker();
         }
         applyFilters();
       },
       resetToDefaultCenter() {
         state.currentPosition = null;
+        state.currentAccuracy = null;
+        clearCurrentPositionMarker();
         if (state.map && state.kakaoReady) {
+          markProgrammaticMove();
           state.map.setCenter(
             new kakao.maps.LatLng(
               DEFAULT_FALLBACK_POSITION.lat,
               DEFAULT_FALLBACK_POSITION.lng,
             ),
           );
+          renderCurrentPositionMarker();
         }
         applyFilters();
       },
-      setVisibleCategories(flowers, festivals) {
+      setVisibleCategories(flowers, festivals, touristSpots) {
         state.showFlowers = !!flowers;
         state.showFestivals = !!festivals;
-        renderMapMarkers();
+        state.showTouristSpots = touristSpots !== false;
+        applyFilters();
       },
       setFestivals(festivals) {
         try {
@@ -135,9 +182,20 @@
             ? JSON.parse(festivals)
             : festivals;
           state.festivals = normalizeFestivalList(parsed);
-          renderMapMarkers();
+          applyFilters();
         } catch (error) {
           console.warn('Failed to set festivals from Flutter.', error);
+        }
+      },
+      setTouristSpots(spots) {
+        try {
+          const parsed = typeof spots === 'string'
+            ? JSON.parse(spots)
+            : spots;
+          state.touristSpots = normalizeTouristSpotList(parsed);
+          applyFilters();
+        } catch (error) {
+          console.warn('Failed to set tourist spots from Flutter.', error);
         }
       },
       focusFestival(festival) {
@@ -189,6 +247,7 @@
         lat: center.lat,
         lng: center.lng,
         radius: state.radius,
+        limit: config.DEFAULT_LIMIT || 50,
       });
       const response = await fetch(`${baseUrl}/flower-spots?${params.toString()}`);
       if (!response.ok) return [];
@@ -204,14 +263,13 @@
   function normalizeFlowers(flowers) {
     return flowers
       .map(function (flower) {
-        const lat = flower.latitude ?? flower.location?.lat ?? flower.lat ?? flower.mapY;
-        const lng = flower.longitude ?? flower.location?.lng ?? flower.lng ?? flower.mapX;
+        const lat = flower.location?.lat ?? flower.lat ?? flower.mapY;
+        const lng = flower.location?.lng ?? flower.lng ?? flower.mapX;
         return {
-          flower_id: flower.id ?? flower.flower_id ?? flower.flowerId,
-          name: flower.plantName || flower.name || flower.nickname || '',
-          species: flower.flowerSpecies || flower.species || '',
+          flower_id: flower.flower_id ?? flower.flowerId ?? flower.id,
+          name: flower.name || '',
+          species: flower.species || '',
           address: flower.address || '',
-          imageUrl: flower.imageUrl || '',
           location: { lat: Number(lat), lng: Number(lng) },
           distance_m: flower.distance_m ?? flower.distanceM,
         };
@@ -253,9 +311,45 @@
       const items = data?.response?.body?.items?.item;
       const itemList = Array.isArray(items) ? items : items ? [items] : [];
       state.festivals = normalizeFestivalList(itemList);
-      renderMapMarkers();
+      applyFilters();
     } catch (error) {
       console.warn('Festival API is unavailable.', error);
+    }
+  }
+
+  async function loadTouristSpots() {
+    const tourKey = config.TOUR_API_KEY;
+    if (!tourKey) return;
+
+    try {
+      const center = state.currentPosition ||
+        config.DEFAULT_CENTER ||
+        DEFAULT_FALLBACK_POSITION;
+      const params = new URLSearchParams({
+        serviceKey: tourKey,
+        numOfRows: '80',
+        pageNo: '1',
+        MobileOS: 'ETC',
+        MobileApp: 'FlowerApp',
+        _type: 'json',
+        mapX: center.lng,
+        mapY: center.lat,
+        radius: state.radius,
+        arrange: 'E',
+        contentTypeId: '12',
+      });
+
+      const response = await fetch(
+        `https://apis.data.go.kr/B551011/KorService2/locationBasedList2?${params.toString()}`,
+      );
+      if (!response.ok) return;
+      const data = await response.json();
+      const items = data?.response?.body?.items?.item;
+      const itemList = Array.isArray(items) ? items : items ? [items] : [];
+      state.touristSpots = normalizeTouristSpotList(itemList);
+      applyFilters();
+    } catch (error) {
+      console.warn('Tourist spot API is unavailable.', error);
     }
   }
 
@@ -272,6 +366,8 @@
       contentId: item.contentId || item.contentid || '',
       title: item.title || '',
       address: item.address || [item.addr1 || '', item.addr2 || ''].join(' ').trim(),
+      eventStartDate: item.eventStartDate || item.eventstartdate || '',
+      eventEndDate: item.eventEndDate || item.eventenddate || '',
       imageUrl: normalizeImageUrl(
         item.imageUrl || item.firstimage || item.firstimage2 || '',
       ),
@@ -292,14 +388,96 @@
     }
 
     if (!isFlowerFestival(festival.title)) return null;
+    if (isPastFestival(festival)) return null;
     return festival;
   }
 
+  function normalizeTouristSpotList(list) {
+    return (Array.isArray(list) ? list : [])
+      .map(normalizeTouristSpot)
+      .filter(Boolean);
+  }
+
+  function normalizeTouristSpot(item) {
+    if (!item) return null;
+
+    const spot = {
+      contentId: item.contentId || item.contentid || '',
+      title: item.title || '',
+      address: item.address || [item.addr1 || '', item.addr2 || ''].join(' ').trim(),
+      imageUrl: normalizeImageUrl(
+        item.imageUrl || item.firstimage2 || item.firstimage || '',
+      ),
+      period: item.period || formatPeriod(
+        item.eventStartDate || item.eventstartdate || '',
+        item.eventEndDate || item.eventenddate || '',
+      ),
+      eventStartDate: item.eventStartDate || item.eventstartdate || '',
+      eventEndDate: item.eventEndDate || item.eventenddate || '',
+      mapX: Number(item.mapX ?? item.mapx ?? item.lng ?? item.longitude ?? 0),
+      mapY: Number(item.mapY ?? item.mapy ?? item.lat ?? item.latitude ?? 0),
+      contentTypeId: String(item.contentTypeId || item.contenttypeid || '12'),
+      type: 'tourist',
+    };
+
+    if (!spot.title) return null;
+    if (!Number.isFinite(spot.mapX) ||
+        !Number.isFinite(spot.mapY) ||
+        spot.mapX === 0 ||
+        spot.mapY === 0) {
+      return null;
+    }
+
+    if (hasFestivalPeriod(spot)) return null;
+    if (!containsTouristSpotKeyword(`${spot.title} ${spot.address}`)) return null;
+    return spot;
+  }
+
   function isFlowerFestival(title) {
-    const text = String(title || '').toLowerCase();
-    return FLOWER_KEYWORDS.some(function (keyword) {
+    return containsFlowerKeyword(title);
+  }
+
+  function hasFestivalPeriod(item) {
+    return Boolean(
+      item?.period ||
+      item?.eventStartDate ||
+      item?.eventstartdate ||
+      item?.eventEndDate ||
+      item?.eventenddate,
+    );
+  }
+
+  function containsFlowerKeyword(value) {
+    return containsKeyword(value, FLOWER_KEYWORDS);
+  }
+
+  function containsTouristSpotKeyword(value) {
+    return containsKeyword(value, TOURIST_SPOT_KEYWORDS);
+  }
+
+  function containsKeyword(value, keywords) {
+    const text = String(value || '').toLowerCase();
+    return keywords.some(function (keyword) {
       return text.includes(String(keyword).toLowerCase());
     });
+  }
+
+  function isPastFestival(festival) {
+    const end = String(
+      festival.eventEndDate ||
+      festival.eventenddate ||
+      festival.eventEnd ||
+      '',
+    );
+    if (!/^\d{8}$/.test(end)) return false;
+    const endDate = new Date(
+      Number(end.substring(0, 4)),
+      Number(end.substring(4, 6)) - 1,
+      Number(end.substring(6, 8)),
+    );
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    return endDate < today;
   }
 
   function formatPeriod(start, end) {
@@ -342,7 +520,74 @@
       return true;
     });
 
+    state.filteredMapItems = buildVisibleMapItems().filter(function (item) {
+      if (!query) return true;
+      return `${item.name} ${item.kindLabel} ${item.address} ${item.period || ''}`
+        .toLowerCase()
+        .includes(query);
+    });
+
     renderMap();
+  }
+
+  function buildVisibleMapItems() {
+    const items = [];
+
+    if (state.showFlowers) {
+      state.filteredFlowers.forEach(function (flower) {
+        items.push({
+          id: `flower-${flower.flower_id || `${flower.location.lat},${flower.location.lng}`}`,
+          type: 'flower',
+          kindLabel: flower.species || '꽃',
+          name: flower.name || flower.species || '꽃 명소',
+          address: flower.address || '',
+          lat: flower.location.lat,
+          lng: flower.location.lng,
+          isFestival: false,
+          source: flower,
+        });
+      });
+    }
+
+    if (state.showFestivals) {
+      state.festivals.forEach(function (festival) {
+        if (isPastFestival(festival)) return;
+        items.push({
+          id: `festival-${festival.contentId || `${festival.mapY},${festival.mapX}`}`,
+          type: 'festival',
+          kindLabel: '축제',
+          name: festival.title || '축제',
+          address: festival.address || '',
+          lat: festival.mapY,
+          lng: festival.mapX,
+          isFestival: true,
+          imageUrl: festival.imageUrl || '',
+          period: festival.period || '',
+          festival: festival,
+          source: festival,
+        });
+      });
+    }
+
+    if (state.showTouristSpots) {
+      state.touristSpots.forEach(function (spot) {
+        items.push({
+          id: `tourist-${spot.contentId || `${spot.mapY},${spot.mapX}`}`,
+          type: 'tourist',
+          kindLabel: '관광지',
+          name: spot.title || '관광지',
+          address: spot.address || '',
+          lat: spot.mapY,
+          lng: spot.mapX,
+          isFestival: false,
+          isTourist: true,
+          imageUrl: spot.imageUrl || '',
+          source: spot,
+        });
+      });
+    }
+
+    return items;
   }
 
   function renderMap() {
@@ -407,50 +652,101 @@
     if (!state.map || !window.kakao?.maps) return;
     clearKakaoMarkers();
 
-    if (state.showFlowers) {
-      state.filteredFlowers.forEach(function (flower) {
-        const position = new kakao.maps.LatLng(
-          flower.location.lat,
-          flower.location.lng,
-        );
-        const marker = new kakao.maps.Marker({ position: position });
-        marker.setMap(state.map);
-        kakao.maps.event.addListener(marker, 'click', function () {
-          showMarkerInfo({
-            name: flower.name || flower.species || '꽃 명소',
-            address: flower.address || '',
-            lat: flower.location.lat,
-            lng: flower.location.lng,
-            isFestival: false,
-          });
-        });
-        state.markers.push(marker);
-      });
-    }
+    const items = state.filteredMapItems.length || state.search
+      ? state.filteredMapItems
+      : buildVisibleMapItems();
+    const groups = clusterMapItems(items);
 
-    if (state.showFestivals) {
-      state.festivals.forEach(function (festival) {
-        const position = new kakao.maps.LatLng(festival.mapY, festival.mapX);
-        const marker = new kakao.maps.Marker({
-          position: position,
-          image: buildFestivalMarkerImage(),
-        });
-        marker.setMap(state.map);
-        kakao.maps.event.addListener(marker, 'click', function () {
-          showMarkerInfo({
-            name: festival.title || '축제',
-            address: festival.address || '',
-            lat: festival.mapY,
-            lng: festival.mapX,
-            isFestival: true,
-            imageUrl: festival.imageUrl || '',
-            period: festival.period || '',
-            festival: festival,
-          });
-        });
-        state.festivalMarkers.push(marker);
-      });
+    groups.forEach(function (group) {
+      if (group.items.length > 1) {
+        renderClusterMarker(group);
+        return;
+      }
+      renderSingleMapMarker(group.items[0]);
+    });
+
+    renderCurrentPositionMarker();
+  }
+
+  function renderSingleMapMarker(item) {
+    const position = new kakao.maps.LatLng(item.lat, item.lng);
+    const markerOptions = { position: position };
+    if (item.type === 'festival') {
+      markerOptions.image = buildFestivalMarkerImage();
+    } else if (item.type === 'tourist') {
+      markerOptions.image = buildTouristMarkerImage();
+    } else {
+      markerOptions.image = buildFlowerMarkerImage();
     }
+    const marker = new kakao.maps.Marker(markerOptions);
+    marker.setMap(state.map);
+    kakao.maps.event.addListener(marker, 'click', function () {
+      showMarkerInfo(item);
+    });
+
+    if (item.type === 'festival') {
+      state.festivalMarkers.push(marker);
+    } else {
+      state.markers.push(marker);
+    }
+  }
+
+  function clusterMapItems(items) {
+    if (!state.map || !window.kakao?.maps) return [];
+    const projection = state.map.getProjection();
+    const groups = [];
+
+    items.forEach(function (item) {
+      const point = projection.containerPointFromCoords(
+        new kakao.maps.LatLng(item.lat, item.lng),
+      );
+      let matched = null;
+      for (const group of groups) {
+        if (group.type !== item.type) {
+          continue;
+        }
+        const dx = group.point.x - point.x;
+        const dy = group.point.y - point.y;
+        if (Math.sqrt(dx * dx + dy * dy) <= 44) {
+          matched = group;
+          break;
+        }
+      }
+
+      if (matched) {
+        matched.items.push(item);
+        matched.point = new kakao.maps.Point(
+          (matched.point.x * (matched.items.length - 1) + point.x) / matched.items.length,
+          (matched.point.y * (matched.items.length - 1) + point.y) / matched.items.length,
+        );
+        matched.lat = average(matched.items.map(function (entry) { return entry.lat; }));
+        matched.lng = average(matched.items.map(function (entry) { return entry.lng; }));
+      } else {
+        groups.push({
+          point: point,
+          lat: item.lat,
+          lng: item.lng,
+          type: item.type,
+          items: [item],
+        });
+      }
+    });
+
+    return groups;
+  }
+
+  function renderClusterMarker(group) {
+    const position = new kakao.maps.LatLng(group.lat, group.lng);
+    const marker = new kakao.maps.Marker({
+      position: position,
+      image: buildClusterMarkerImage(group.items.length, group),
+      zIndex: 12,
+    });
+    marker.setMap(state.map);
+    kakao.maps.event.addListener(marker, 'click', function () {
+      showClusterInfo(group);
+    });
+    state.clusterMarkers.push(marker);
   }
 
   function buildFestivalMarkerImage() {
@@ -469,6 +765,56 @@
     );
   }
 
+  function buildFlowerMarkerImage() {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="42" viewBox="0 0 34 42">',
+      `<path d="M17 0C7.61 0 0 7.61 0 17c0 11.8 17 25 17 25s17-13.2 17-25C34 7.61 26.39 0 17 0z" fill="${CATEGORY_COLORS.flower}"/>`,
+      '<circle cx="17" cy="16" r="8" fill="white"/>',
+      `<circle cx="17" cy="16" r="4.5" fill="${CATEGORY_COLORS.flower}"/>`,
+      '</svg>',
+    ].join('');
+
+    return new kakao.maps.MarkerImage(
+      `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+      new kakao.maps.Size(34, 42),
+      { offset: new kakao.maps.Point(17, 42) },
+    );
+  }
+
+  function buildTouristMarkerImage() {
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="34" height="42" viewBox="0 0 34 42">',
+      '<path d="M17 0C7.61 0 0 7.61 0 17c0 11.8 17 25 17 25s17-13.2 17-25C34 7.61 26.39 0 17 0z" fill="#10b981"/>',
+      '<circle cx="17" cy="16" r="8" fill="white"/>',
+      '<path d="M17 8l6 12h-4l-2 4-2-4h-4l6-12z" fill="#10b981"/>',
+      '</svg>',
+    ].join('');
+
+    return new kakao.maps.MarkerImage(
+      `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+      new kakao.maps.Size(34, 42),
+      { offset: new kakao.maps.Point(17, 42) },
+    );
+  }
+
+  function buildClusterMarkerImage(count, group) {
+    const label = count > 99 ? '99+' : String(count);
+    const fill = CATEGORY_COLORS[group?.type] || CATEGORY_COLORS.festival;
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="46" height="46" viewBox="0 0 46 46">',
+      `<circle cx="23" cy="23" r="21" fill="${fill}" fill-opacity="0.94"/>`,
+      '<circle cx="23" cy="23" r="17" fill="#fff" fill-opacity="0.20"/>',
+      `<text x="23" y="28" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" font-weight="800" fill="#fff">${escapeHtml(label)}</text>`,
+      '</svg>',
+    ].join('');
+
+    return new kakao.maps.MarkerImage(
+      `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+      new kakao.maps.Size(46, 46),
+      { offset: new kakao.maps.Point(23, 23) },
+    );
+  }
+
   function clearKakaoMarkers() {
     state.markers.forEach(function (marker) {
       marker.setMap(null);
@@ -479,6 +825,69 @@
       marker.setMap(null);
     });
     state.festivalMarkers = [];
+
+    state.clusterMarkers.forEach(function (marker) {
+      marker.setMap(null);
+    });
+    state.clusterMarkers = [];
+  }
+
+  function renderCurrentPositionMarker() {
+    if (!state.map || !window.kakao?.maps) return;
+    clearCurrentPositionMarker();
+
+    const markerPosition = getCurrentMarkerPosition();
+    const position = new kakao.maps.LatLng(
+      markerPosition.lat,
+      markerPosition.lng,
+    );
+    const svg = [
+      '<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28">',
+      '<circle cx="14" cy="14" r="12" fill="#2563eb" fill-opacity="0.22"/>',
+      '<circle cx="14" cy="14" r="7" fill="#2563eb" stroke="#fff" stroke-width="3"/>',
+      '</svg>',
+    ].join('');
+    state.currentPositionMarker = new kakao.maps.Marker({
+      position: position,
+      image: new kakao.maps.MarkerImage(
+        `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`,
+        new kakao.maps.Size(28, 28),
+        { offset: new kakao.maps.Point(14, 14) },
+      ),
+      zIndex: 20,
+    });
+    state.currentPositionMarker.setMap(state.map);
+
+    const accuracy = Number(state.currentAccuracy || 0);
+    if (accuracy > 0 && accuracy < 1000) {
+      state.currentAccuracyCircle = new kakao.maps.Circle({
+        center: position,
+        radius: accuracy,
+        strokeWeight: 1,
+        strokeColor: '#2563eb',
+        strokeOpacity: 0.32,
+        fillColor: '#2563eb',
+        fillOpacity: 0.10,
+      });
+      state.currentAccuracyCircle.setMap(state.map);
+    }
+  }
+
+  function getCurrentMarkerPosition() {
+    return state.currentPosition ||
+      config.DEFAULT_CENTER ||
+      DEFAULT_FALLBACK_POSITION;
+  }
+
+  function clearCurrentPositionMarker() {
+    if (state.currentPositionMarker) {
+      state.currentPositionMarker.setMap(null);
+      state.currentPositionMarker = null;
+    }
+    if (state.currentAccuracyCircle) {
+      state.currentAccuracyCircle.setMap(null);
+      state.currentAccuracyCircle = null;
+    }
   }
 
   function zoomMap(delta) {
@@ -508,7 +917,9 @@
           lat: position.coords.latitude,
           lng: position.coords.longitude,
         };
+        state.currentAccuracy = position.coords.accuracy || null;
         if (state.map) {
+          markProgrammaticMove();
           state.map.setCenter(
             new kakao.maps.LatLng(
               state.currentPosition.lat,
@@ -517,6 +928,7 @@
           );
         }
         applyFilters();
+        loadTouristSpots();
       },
       function () {
         applyFilters();
@@ -528,7 +940,8 @@
   function focusFestival(festival) {
     if (!festival || !state.map || !window.kakao?.maps) return;
     const position = new kakao.maps.LatLng(festival.mapY, festival.mapX);
-    state.map.setLevel(Math.min(state.map.getLevel(), 5));
+    markProgrammaticMove();
+    state.map.setLevel(Math.min(state.map.getLevel(), 3));
     state.map.panTo(position);
 
     showMarkerInfo({
@@ -546,9 +959,28 @@
   function bindMapInteractions() {
     if (!state.map || !window.kakao?.maps || state.mapInteractionBound) return;
     kakao.maps.event.addListener(state.map, 'click', function () {
-      dismissTransientUi();
+      dismissFloatingUi();
+    });
+    kakao.maps.event.addListener(state.map, 'dragstart', function () {
+      if (shouldIgnoreMapDismiss()) return;
+      dismissFloatingUi();
+    });
+    kakao.maps.event.addListener(state.map, 'zoom_start', function () {
+      if (shouldIgnoreMapDismiss()) return;
+      dismissFloatingUi();
+    });
+    kakao.maps.event.addListener(state.map, 'zoom_changed', function () {
+      renderMapMarkers();
     });
     state.mapInteractionBound = true;
+  }
+
+  function markProgrammaticMove() {
+    state.suppressMapDismissUntil = Date.now() + 450;
+  }
+
+  function shouldIgnoreMapDismiss() {
+    return Date.now() < state.suppressMapDismissUntil;
   }
 
   function panToMarkerWithOffset(position, offsetY) {
@@ -565,12 +997,26 @@
     }
   }
 
+  function getAdaptiveMarkerFocusOffset(offsetY) {
+    const width = window.innerWidth || document.documentElement.clientWidth || 0;
+    const height = window.innerHeight || document.documentElement.clientHeight || 0;
+    if (width <= 480 || height <= 640) return 0;
+    return offsetY || 0;
+  }
+
   function positionFloatingPanel(panel, lat, lng, options) {
     if (!panel || !state.map || !window.kakao?.maps) return;
 
     const offsetY = options?.offsetY ?? 18;
     const minMargin = options?.minMargin ?? 12;
-    const maxWidth = options?.maxWidth ?? window.innerWidth - 24;
+    const shell = $('#map-shell') || document.body;
+    const shellRect = shell.getBoundingClientRect();
+    const viewportWidth = shell.clientWidth || window.innerWidth;
+    const viewportHeight = shell.clientHeight || window.innerHeight;
+    const maxWidth = Math.min(
+      options?.maxWidth ?? viewportWidth - minMargin * 2,
+      viewportWidth - minMargin * 2,
+    );
     panel.style.maxWidth = `${maxWidth}px`;
 
     window.requestAnimationFrame(function () {
@@ -583,25 +1029,47 @@
         const panelHeight = panel.offsetHeight || 84;
         const left = Math.min(
           Math.max(point.x - panelWidth / 2, minMargin),
-          window.innerWidth - panelWidth - minMargin,
+          viewportWidth - panelWidth - minMargin,
         );
-        const top = Math.max(point.y - panelHeight - offsetY, minMargin);
+        const preferredTop = point.y - panelHeight - offsetY;
+        const fallbackTop = point.y + offsetY;
+        const top = clamp(
+          preferredTop >= minMargin ? preferredTop : fallbackTop,
+          minMargin,
+          viewportHeight - panelHeight - minMargin,
+        );
         panel.style.left = `${left}px`;
         panel.style.right = 'auto';
         panel.style.top = `${top}px`;
         panel.style.bottom = 'auto';
+        panel.style.transform = 'none';
       } catch (_) {
-        panel.style.left = `${minMargin}px`;
-        panel.style.right = `${minMargin}px`;
+        panel.style.left = `${Math.max(minMargin, shellRect.width / 2 - 150)}px`;
+        panel.style.right = 'auto';
         panel.style.top = `${minMargin}px`;
         panel.style.bottom = 'auto';
+        panel.style.transform = 'none';
       }
     });
   }
 
+  function positionFloatingPanelAfterMapSettles(panel, lat, lng, options) {
+    if (!panel) return;
+    panel.style.visibility = 'hidden';
+
+    window.setTimeout(function () {
+      positionFloatingPanel(panel, lat, lng, options);
+      panel.style.visibility = 'visible';
+    }, options?.delayMs ?? 240);
+
+    window.setTimeout(function () {
+      positionFloatingPanel(panel, lat, lng, options);
+    }, options?.settleDelayMs ?? 520);
+  }
+
   function showMarkerInfo(item) {
     dismissTransientUi();
-    panToMarkerWithOffset(new kakao.maps.LatLng(item.lat, item.lng), 120);
+    focusMapOnMarker(item.lat, item.lng, 120);
 
     const panel = document.createElement('div');
     panel.id = 'marker-info';
@@ -617,12 +1085,17 @@
       '<button class="panel-action" data-role="navigate">길찾기</button>',
       item.isFestival
         ? '<button class="panel-action ghost" data-role="detail">정보</button>'
-        : '',
+        : item.isTourist
+          ? '<button class="panel-action ghost" data-role="detail">정보</button>'
+          : '',
       '</div>',
     ].join('');
 
     $('#map-shell').appendChild(panel);
-    positionFloatingPanel(panel, item.lat, item.lng, { offsetY: 22, maxWidth: 260 });
+    positionFloatingPanelAfterMapSettles(panel, item.lat, item.lng, {
+      offsetY: 22,
+      maxWidth: 260,
+    });
 
     panel.querySelector('[data-role="navigate"]').addEventListener('click', function () {
       panel.remove();
@@ -632,14 +1105,73 @@
     const detailButton = panel.querySelector('[data-role="detail"]');
     if (detailButton) {
       detailButton.addEventListener('click', function () {
-        showFestivalDetail(item.festival || item);
+        if (item.isTourist) {
+          showTouristDetail(item.source || item);
+        } else {
+          showFestivalDetail(item.festival || item);
+        }
       });
     }
   }
 
+  function showClusterInfo(group) {
+    dismissTransientUi();
+    markProgrammaticMove();
+    state.map.setLevel(Math.max(1, state.map.getLevel() - 1));
+    panToMarkerWithOffset(new kakao.maps.LatLng(group.lat, group.lng), 140);
+
+    const panel = document.createElement('div');
+    panel.id = 'cluster-info';
+    panel.className = 'map-panel marker-panel marker-panel-floating cluster-panel';
+    panel.innerHTML = [
+      '<div class="panel-info">',
+      `<strong>${escapeHtml(String(group.items.length))}개 장소</strong>`,
+      '<span>겹친 마커를 선택하세요.</span>',
+      '</div>',
+      '<div class="cluster-list">',
+      group.items.map(function (item, index) {
+        return [
+          `<button class="cluster-item" type="button" data-index="${index}">`,
+          `<strong>${escapeHtml(item.name || '')}</strong>`,
+          `<span>${escapeHtml([item.kindLabel, item.address].filter(Boolean).join(' · '))}</span>`,
+          '</button>',
+        ].join('');
+      }).join(''),
+      '</div>',
+    ].join('');
+
+    $('#map-shell').appendChild(panel);
+    positionFloatingPanelAfterMapSettles(panel, group.lat, group.lng, {
+      offsetY: 22,
+      maxWidth: 300,
+    });
+
+    panel.querySelectorAll('.cluster-item').forEach(function (button) {
+      button.addEventListener('click', function () {
+        const item = group.items[Number(button.dataset.index)];
+        if (item) showMarkerInfo(item);
+      });
+    });
+  }
+
+  function focusMapOnMarker(lat, lng, offsetY) {
+    if (!state.map || !window.kakao?.maps) return;
+    markProgrammaticMove();
+    state.map.setLevel(Math.min(state.map.getLevel(), 3));
+    window.setTimeout(function () {
+      const position = new kakao.maps.LatLng(lat, lng);
+      const adaptiveOffsetY = getAdaptiveMarkerFocusOffset(offsetY);
+      if (adaptiveOffsetY === 0) {
+        state.map.panTo(position);
+      } else {
+        panToMarkerWithOffset(position, adaptiveOffsetY);
+      }
+    }, 80);
+  }
+
   function showRouteModeChooser(item) {
     removePanel('route-mode-panel');
-    panToMarkerWithOffset(new kakao.maps.LatLng(item.lat, item.lng), 156);
+    focusMapOnMarker(item.lat, item.lng, 156);
 
     const panel = document.createElement('div');
     panel.id = 'route-mode-panel';
@@ -651,16 +1183,25 @@
       '</div>',
       '<div class="panel-actions">',
       '<button class="panel-action secondary" data-role="walk">도보</button>',
+      '<button class="panel-action secondary" data-role="car">자동차</button>',
       '<button class="panel-action" data-role="transit">대중교통</button>',
       '</div>',
     ].join('');
 
     $('#map-shell').appendChild(panel);
-    positionFloatingPanel(panel, item.lat, item.lng, { offsetY: 22, maxWidth: 260 });
+    positionFloatingPanelAfterMapSettles(panel, item.lat, item.lng, {
+      offsetY: 22,
+      maxWidth: 260,
+    });
 
     panel.querySelector('[data-role="walk"]').addEventListener('click', function () {
       panel.remove();
       navigateInApp(item.lat, item.lng, item.name || '축제', 'walk');
+    });
+
+    panel.querySelector('[data-role="car"]').addEventListener('click', function () {
+      panel.remove();
+      navigateInApp(item.lat, item.lng, item.name || '축제', 'car');
     });
 
     panel.querySelector('[data-role="transit"]').addEventListener('click', function () {
@@ -709,6 +1250,7 @@
         : '',
       '<div class="detail-actions">',
       '<button class="detail-button secondary" data-role="walk">도보</button>',
+      '<button class="detail-button secondary" data-role="car">자동차</button>',
       '<button class="detail-button primary" data-role="transit">대중교통</button>',
       '</div>',
       '</div>',
@@ -727,6 +1269,16 @@
         enrichedFestival.mapX,
         enrichedFestival.title || '축제',
         'walk',
+      );
+    });
+
+    panel.querySelector('[data-role="car"]').addEventListener('click', function () {
+      panel.remove();
+      navigateInApp(
+        enrichedFestival.mapY,
+        enrichedFestival.mapX,
+        enrichedFestival.title || '축제',
+        'car',
       );
     });
 
@@ -767,6 +1319,52 @@
       console.warn('축제 상세 정보를 가져오지 못했습니다.', error);
       return festival;
     }
+  }
+
+  function showTouristDetail(spot) {
+    dismissTransientUi();
+
+    const panel = document.createElement('section');
+    panel.id = 'festival-detail';
+    panel.className = 'map-panel detail-panel';
+    const imageUrl = normalizeImageUrl(spot.imageUrl || spot.firstimage2 || spot.firstimage || '');
+    const title = spot.title || '관광지';
+    const address = spot.address || [spot.addr1 || '', spot.addr2 || ''].join(' ').trim();
+    const mapY = Number(spot.mapY ?? spot.mapy ?? spot.lat);
+    const mapX = Number(spot.mapX ?? spot.mapx ?? spot.lng);
+    const imageMarkup = imageUrl
+      ? `<img src="${escapeAttribute(imageUrl)}" alt="${escapeAttribute(title)}">`
+      : '<div class="detail-placeholder">관광</div>';
+
+    panel.innerHTML = [
+      '<div class="detail-hero">', imageMarkup, '</div>',
+      '<div class="detail-content">',
+      '<div class="detail-header">',
+      `<strong>${escapeHtml(title)}</strong>`,
+      '<button class="detail-close" type="button" data-role="close" aria-label="닫기">×</button>',
+      '</div>',
+      '<p class="detail-meta">꽃 관련 관광지</p>',
+      address ? `<p class="detail-body">주소: ${escapeHtml(address)}</p>` : '',
+      '<div class="detail-actions">',
+      '<button class="detail-button secondary" data-role="walk">도보</button>',
+      '<button class="detail-button secondary" data-role="car">자동차</button>',
+      '<button class="detail-button primary" data-role="transit">대중교통</button>',
+      '</div>',
+      '</div>',
+    ].join('');
+
+    $('#map-shell').appendChild(panel);
+
+    panel.querySelector('[data-role="close"]').addEventListener('click', function () {
+      panel.remove();
+    });
+
+    ['walk', 'car', 'transit'].forEach(function (mode) {
+      panel.querySelector(`[data-role="${mode}"]`).addEventListener('click', function () {
+        panel.remove();
+        navigateInApp(mapY, mapX, title, mode);
+      });
+    });
   }
 
   async function fetchFestivalCommonDetail(contentId) {
@@ -837,48 +1435,29 @@
     showRouteLoading(destName, routeMode);
 
     try {
-      if (routeMode === 'transit') {
-        const transitRoute = await fetchTransitRoute(
-          state.currentPosition.lat,
-          state.currentPosition.lng,
-          destLat,
-          destLng,
-          destName,
-        );
-        drawTransitRouteOnMap(transitRoute, {
-          lat: state.currentPosition.lat,
-          lng: state.currentPosition.lng,
-        }, {
-          lat: destLat,
-          lng: destLng,
-        });
-        showTransitRoutePanel(transitRoute, destName);
-        return;
-      }
-
-      const walkingRoute = await fetchWalkingRoute(
+      const route = await fetchRoute(
         state.currentPosition.lat,
         state.currentPosition.lng,
         destLat,
         destLng,
+        routeMode,
       );
-      drawRouteOnMap(walkingRoute.coordinates, state.currentPosition, {
+      drawTransitRouteOnMap(route, {
+        lat: state.currentPosition.lat,
+        lng: state.currentPosition.lng,
+      }, {
         lat: destLat,
         lng: destLng,
       });
-      state.routeSteps = walkingRoute.steps || [];
-      showRoutePanel(
-        walkingRoute.distance,
-        walkingRoute.duration,
-        destName,
-        walkingRoute.steps || [],
-      );
+      showTransitRoutePanel(route, destName);
     } catch (error) {
       console.warn('Route lookup failed.', error);
       showRouteError(
         routeMode === 'transit'
           ? '대중교통 경로를 찾지 못했습니다.'
-          : '도보 경로를 찾지 못했습니다.',
+          : routeMode === 'car'
+            ? '자동차 경로를 찾지 못했습니다.'
+            : '도보 경로를 찾지 못했습니다.',
       );
     }
   }
@@ -904,13 +1483,16 @@
                 lat: position.coords.latitude,
                 lng: position.coords.longitude,
               };
+              state.currentAccuracy = position.coords.accuracy || null;
             } else {
               state.currentPosition = DEFAULT_FALLBACK_POSITION;
+              state.currentAccuracy = null;
             }
             resolve();
           },
           function () {
             state.currentPosition = DEFAULT_FALLBACK_POSITION;
+            state.currentAccuracy = null;
             resolve();
           },
           { enableHighAccuracy: true, timeout: 8000 },
@@ -918,6 +1500,7 @@
       });
     } catch (_) {
       state.currentPosition = DEFAULT_FALLBACK_POSITION;
+      state.currentAccuracy = null;
     }
   }
 
@@ -958,8 +1541,12 @@
     };
   }
 
-  async function fetchTransitRoute(startLat, startLng, endLat, endLng, destName) {
-    const response = await fetch(`${config.API_BASE_URL}/map/transit-route`, {
+  async function fetchRoute(startLat, startLng, endLat, endLng, mode) {
+    if (!config.API_BASE_URL) {
+      throw new Error('Route API base URL is not configured.');
+    }
+
+    const response = await fetch(`${config.API_BASE_URL}/map/routes`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -970,6 +1557,7 @@
         startLng: startLng,
         endLat: endLat,
         endLng: endLng,
+        mode: mode,
       }),
     });
 
@@ -978,9 +1566,19 @@
     });
 
     if (!response.ok || !body?.success || !body?.data) {
-      throw new Error(body?.error?.message || `Transit API ${response.status}`);
+      console.warn('Route API failed.', {
+        status: response.status,
+        mode: mode,
+        body: body,
+        apiBaseUrl: config.API_BASE_URL,
+      });
+      throw new Error(body?.error?.message || `Route API ${response.status}`);
     }
 
+    console.log('Route API succeeded.', {
+      mode: mode,
+      legCount: Array.isArray(body.data.legs) ? body.data.legs.length : 0,
+    });
     return body.data;
   }
 
@@ -1016,23 +1614,63 @@
       return new kakao.maps.LatLng(coord[1], coord[0]);
     });
 
-    const polyline = new kakao.maps.Polyline({
-      path: path,
-      strokeWeight: 7,
-      strokeColor: '#4285F4',
-      strokeOpacity: 0.9,
-      strokeStyle: 'solid',
-    });
-    polyline.setMap(state.map);
-    state.routePolylines.push(polyline);
+    drawStyledRoutePolyline(path, '#4285F4', 14, 0.96);
 
-    drawRouteMarkers(endPos);
+    drawRouteMarkers(startPos, endPos);
 
     const bounds = new kakao.maps.LatLngBounds();
     path.forEach(function (point) {
       bounds.extend(point);
     });
+    fitRouteBounds(bounds, getRoutePanelHeight());
+  }
+
+  function fitRouteBounds(bounds, panelPadding) {
+    if (!bounds || !state.map || !window.kakao?.maps) return;
+    state.routeBounds = bounds;
     state.map.setBounds(bounds);
+
+    const padding = Math.max(0, Number(panelPadding || 0));
+    if (padding <= 0) return;
+
+    window.setTimeout(function () {
+      try {
+        const projection = state.map.getProjection();
+        const center = state.map.getCenter();
+        const centerPoint = projection.containerPointFromCoords(center);
+        const offsetY = isRoutePanelTopAnchored() ? -padding / 2 : padding / 2;
+        const nextPoint = new kakao.maps.Point(
+          centerPoint.x,
+          centerPoint.y + offsetY,
+        );
+        state.map.setCenter(projection.coordsFromContainerPoint(nextPoint));
+      } catch (error) {
+        console.warn('Failed to offset route bounds.', error);
+      }
+    }, 80);
+  }
+
+  function refitVisibleRoute() {
+    if (!state.routeBounds) return;
+    window.requestAnimationFrame(function () {
+      fitRouteBounds(state.routeBounds, getRoutePanelHeight());
+    });
+  }
+
+  function getRoutePanelHeight() {
+    const panel = $('#route-panel');
+    const shell = $('#map-shell') || document.body;
+    const shellHeight = shell.clientHeight || window.innerHeight || 0;
+    if (!panel) return 64;
+
+    const panelHeight = panel.offsetHeight || 64;
+    const padding = panelHeight + 36;
+    if (!shellHeight) return padding;
+    return Math.min(padding, shellHeight * 0.55);
+  }
+
+  function isRoutePanelTopAnchored() {
+    return Boolean($('#route-panel')?.classList.contains('route-panel-top'));
   }
 
   function drawTransitRouteOnMap(route, startPos, endPos) {
@@ -1045,29 +1683,35 @@
     (route.legs || []).forEach(function (leg) {
       const path = (leg.polyline || [])
         .filter(function (point) {
-          return Number.isFinite(point.lat) && Number.isFinite(point.lng);
+          return Number.isFinite(Number(point.lat)) &&
+            Number.isFinite(Number(point.lng));
         })
         .map(function (point) {
-          const latLng = new kakao.maps.LatLng(point.lat, point.lng);
+          const latLng = new kakao.maps.LatLng(Number(point.lat), Number(point.lng));
           bounds.extend(latLng);
-          hasPath = true;
           return latLng;
         });
 
       if (path.length < 2) return;
+      hasPath = true;
 
-      const polyline = new kakao.maps.Polyline({
-        path: path,
-        strokeWeight: leg.mode === 'WALK' ? 5 : 7,
-        strokeColor: normalizeRouteColor(leg.routeColor, leg.mode),
-        strokeOpacity: 0.92,
-        strokeStyle: leg.mode === 'WALK' ? 'shortdash' : 'solid',
-      });
-      polyline.setMap(state.map);
-      state.routePolylines.push(polyline);
+      const mode = normalizeRouteMode(leg.mode);
+      drawStyledRoutePolyline(
+        path,
+        normalizeRouteColor(leg.routeColor, mode),
+        getRouteStrokeWeight(mode),
+        0.99,
+      );
     });
 
-    drawRouteMarkers(endPos);
+    if ((!hasPath || state.routePolylines.length === 0) && startPos && endPos) {
+      drawFallbackRouteLine(startPos, endPos, route.mode || 'transit');
+      bounds.extend(new kakao.maps.LatLng(startPos.lat, startPos.lng));
+      bounds.extend(new kakao.maps.LatLng(endPos.lat, endPos.lng));
+      hasPath = true;
+    }
+
+    drawRouteMarkers(startPos, endPos);
     if (startPos && Number.isFinite(startPos.lat) && Number.isFinite(startPos.lng)) {
       bounds.extend(new kakao.maps.LatLng(startPos.lat, startPos.lng));
     }
@@ -1075,15 +1719,73 @@
       bounds.extend(new kakao.maps.LatLng(endPos.lat, endPos.lng));
     }
 
-    if (hasPath) {
-      state.map.setBounds(bounds);
+    if (hasPath || (startPos && endPos)) {
+      fitRouteBounds(bounds, getRoutePanelHeight());
     } else if (endPos) {
       state.map.panTo(new kakao.maps.LatLng(endPos.lat, endPos.lng));
     }
   }
 
-  function drawRouteMarkers(endPos) {
+  function drawFallbackRouteLine(startPos, endPos, mode) {
+    if (!Number.isFinite(startPos.lat) ||
+        !Number.isFinite(startPos.lng) ||
+        !Number.isFinite(endPos.lat) ||
+        !Number.isFinite(endPos.lng)) {
+      return;
+    }
+
+    drawStyledRoutePolyline(
+      [
+        new kakao.maps.LatLng(startPos.lat, startPos.lng),
+        new kakao.maps.LatLng(endPos.lat, endPos.lng),
+      ],
+      normalizeRouteColor('', String(mode || '').toUpperCase()),
+      getRouteStrokeWeight(mode),
+      0.96,
+    );
+  }
+
+  function drawStyledRoutePolyline(path, color, weight, opacity) {
+    const outline = new kakao.maps.Polyline({
+      path: path,
+      strokeWeight: weight + 10,
+      strokeColor: '#FFFFFF',
+      strokeOpacity: 0.96,
+      strokeStyle: 'solid',
+      zIndex: 29,
+    });
+    outline.setMap(state.map);
+    state.routePolylines.push(outline);
+
+    const polyline = new kakao.maps.Polyline({
+      path: path,
+      strokeWeight: weight,
+      strokeColor: color,
+      strokeOpacity: opacity,
+      strokeStyle: 'solid',
+      zIndex: 30,
+    });
+    polyline.setMap(state.map);
+    state.routePolylines.push(polyline);
+  }
+
+  function drawRouteMarkers(startPos, endPos) {
     try {
+      if (startPos && Number.isFinite(startPos.lat) && Number.isFinite(startPos.lng)) {
+        const startSvg =
+          '<svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 30 30">'
+          + '<circle cx="15" cy="15" r="11" fill="#2563EB" stroke="white" stroke-width="4"/></svg>';
+        state.routeStartMarker = new kakao.maps.Marker({
+          position: new kakao.maps.LatLng(startPos.lat, startPos.lng),
+          image: new kakao.maps.MarkerImage(
+            `data:image/svg+xml;charset=utf-8,${encodeURIComponent(startSvg)}`,
+            new kakao.maps.Size(30, 30),
+            { offset: new kakao.maps.Point(15, 15) },
+          ),
+        });
+        state.routeStartMarker.setMap(state.map);
+      }
+
       const endSvg =
         '<svg xmlns="http://www.w3.org/2000/svg" width="36" height="44" viewBox="0 0 36 44">'
         + '<path d="M18 0C8.06 0 0 8.06 0 18c0 12.6 18 26 18 26s18-13.4 18-26C36 8.06 27.94 0 18 0z" fill="#EA4335"/>'
@@ -1103,13 +1805,23 @@
   }
 
   function normalizeRouteColor(color, mode) {
+    const normalizedMode = normalizeRouteMode(mode);
+    if (normalizedMode === 'WALK') return '#000000';
+    if (normalizedMode === 'CAR') return '#6B7280';
     const text = String(color || '').trim();
     if (/^#[0-9a-f]{6}$/i.test(text)) return text;
     if (/^[0-9a-f]{6}$/i.test(text)) return `#${text}`;
-    if (mode === 'SUBWAY') return '#2F80ED';
-    if (mode === 'BUS') return '#27AE60';
-    if (mode === 'WALK') return '#6B7280';
+    if (normalizedMode === 'SUBWAY') return '#2F80ED';
+    if (normalizedMode === 'BUS') return '#27AE60';
     return '#8B5CF6';
+  }
+
+  function getRouteStrokeWeight(mode) {
+    return normalizeRouteMode(mode) === 'WALK' ? 13 : 14;
+  }
+
+  function normalizeRouteMode(mode) {
+    return String(mode || '').toUpperCase();
   }
 
   function clearRoute() {
@@ -1117,6 +1829,7 @@
       polyline.setMap(null);
     });
     state.routePolylines = [];
+    state.routeBounds = null;
     if (state.routeStartMarker) {
       state.routeStartMarker.setMap(null);
       state.routeStartMarker = null;
@@ -1140,7 +1853,7 @@
 
     const panel = document.createElement('div');
     panel.id = 'route-panel';
-    panel.className = 'map-panel route-panel';
+    panel.className = 'map-panel route-panel route-panel-top';
 
     let html = [
       '<div class="panel-row">',
@@ -1174,6 +1887,7 @@
 
     panel.innerHTML = html;
     $('#map-shell').appendChild(panel);
+    refitVisibleRoute();
 
     const toggleButton = panel.querySelector('[data-role="toggle"]');
     if (toggleButton) {
@@ -1183,6 +1897,7 @@
         const hidden = stepElement.style.display === 'none';
         stepElement.style.display = hidden ? 'block' : 'none';
         toggleButton.textContent = hidden ? '접기' : '경로';
+        refitVisibleRoute();
       });
     }
   }
@@ -1191,25 +1906,34 @@
     removePanel('route-panel');
 
     const summary = route.summary || {};
+    const routeMode = String(route.mode || 'transit').toLowerCase();
+    const routeLabel = routeMode === 'car'
+      ? '자동차'
+      : routeMode === 'walk'
+        ? '도보'
+        : '대중교통';
     const totalTime = formatDuration(summary.totalTimeSec || 0);
+    const totalDistance = formatDistance(summary.totalDistanceM || 0);
     const walkTime = formatDuration(summary.totalWalkTimeSec || 0);
     const fare = formatFare(summary.totalFare || 0);
     const transfers = Number(summary.transferCount || 0);
 
     const panel = document.createElement('div');
     panel.id = 'route-panel';
-    panel.className = 'map-panel route-panel transit-route-panel';
+    panel.className = 'map-panel route-panel route-panel-top transit-route-panel';
 
     let html = [
       '<div class="panel-row panel-row-start">',
-      '<span class="panel-icon">교통</span>',
+      `<span class="panel-icon">${escapeHtml(routeMode === 'car' ? '차' : routeMode === 'walk' ? '도보' : '교통')}</span>`,
       '<div class="panel-info">',
       `<strong>${escapeHtml(destName || '')}</strong>`,
-      `<span>대중교통 ${escapeHtml(totalTime)} · 도보 ${escapeHtml(walkTime)} · 환승 ${escapeHtml(String(transfers))}회 · ${escapeHtml(fare)}</span>`,
+      routeMode === 'transit'
+        ? `<span>${escapeHtml(routeLabel)} ${escapeHtml(totalTime)} · 거리 ${escapeHtml(totalDistance)} · 도보 ${escapeHtml(walkTime)} · 환승 ${escapeHtml(String(transfers))}회 · ${escapeHtml(fare)}</span>`
+        : `<span>${escapeHtml(routeLabel)} ${escapeHtml(totalTime)} · 거리 ${escapeHtml(totalDistance)}</span>`,
       '</div>',
       '<button class="panel-close" data-role="toggle">구간</button>',
       '</div>',
-      '<div id="route-steps" class="route-steps transit-steps" style="display:block;">',
+      '<div id="route-steps" class="route-steps transit-steps" style="display:none;">',
     ].join('');
 
     (route.legs || []).forEach(function (leg) {
@@ -1219,6 +1943,7 @@
 
     panel.innerHTML = html;
     $('#map-shell').appendChild(panel);
+    refitVisibleRoute();
 
     const toggleButton = panel.querySelector('[data-role="toggle"]');
     if (toggleButton) {
@@ -1228,21 +1953,23 @@
         const hidden = stepElement.style.display === 'none';
         stepElement.style.display = hidden ? 'block' : 'none';
         toggleButton.textContent = hidden ? '접기' : '구간';
+        refitVisibleRoute();
       });
     }
   }
 
   function buildTransitLegHtml(leg) {
-    const modeLabel = getTransitModeLabel(leg.mode);
+    const mode = normalizeRouteMode(leg.mode);
+    const modeLabel = getTransitModeLabel(mode);
     const duration = formatDuration(leg.durationSec || 0);
     const distance = formatDistance(leg.distanceM || 0);
-    const badgeStyle = leg.mode === 'WALK'
+    const badgeStyle = mode === 'WALK'
       ? ''
-      : ` style="background:${escapeAttribute(normalizeRouteColor(leg.routeColor, leg.mode))};color:#fff;"`;
+      : ` style="background:${escapeAttribute(normalizeRouteColor(leg.routeColor, mode))};color:#fff;"`;
     const routeLabel = leg.route
       ? `<span class="route-badge"${badgeStyle}>${escapeHtml(leg.route)}</span>`
       : `<span class="route-badge subtle">${escapeHtml(modeLabel)}</span>`;
-    const title = leg.mode === 'WALK'
+    const title = mode === 'WALK'
       ? `${escapeHtml(leg.startName || '현재 위치')}에서 ${escapeHtml(leg.endName || '도착지')}까지 도보 이동`
       : `${routeLabel}<span class="route-places">${escapeHtml(leg.startName || '')} → ${escapeHtml(leg.endName || '')}</span>`;
     const subtext = [];
@@ -1260,7 +1987,7 @@
 
     return [
       '<div class="transit-leg">',
-      `<div class="transit-leg-header transit-${escapeAttribute(String(leg.mode || '').toLowerCase())}">`,
+      `<div class="transit-leg-header transit-${escapeAttribute(mode.toLowerCase())}">`,
       `<span class="transit-mode">${escapeHtml(modeLabel)}</span>`,
       `<span class="transit-summary">${subtext.join(' · ')}</span>`,
       '</div>',
@@ -1295,6 +2022,10 @@
         return '항공';
       case 'FERRY':
         return '해운';
+      case 'CAR':
+        return '자동차';
+      case 'WALK':
+        return '도보';
       default:
         return '도보';
     }
@@ -1320,16 +2051,17 @@
 
   function showRouteLoading(destName, mode) {
     removePanel('route-panel');
+    const label = mode === 'transit' ? '대중교통' : mode === 'car' ? '자동차' : '도보';
 
     const panel = document.createElement('div');
     panel.id = 'route-panel';
-    panel.className = 'map-panel route-panel';
+    panel.className = 'map-panel route-panel route-panel-top';
     panel.innerHTML = [
       '<div class="panel-row">',
-      `<span class="panel-icon">${mode === 'transit' ? '교통' : '도보'}</span>`,
+      `<span class="panel-icon">${escapeHtml(mode === 'transit' ? '교통' : mode === 'car' ? '차' : '도보')}</span>`,
       '<div class="panel-info">',
       `<strong>${escapeHtml(destName || '')}</strong>`,
-      `<span>${mode === 'transit' ? '대중교통 경로를 찾는 중입니다.' : '도보 경로를 찾는 중입니다.'}</span>`,
+      `<span>${escapeHtml(label)} 경로를 찾는 중입니다.</span>`,
       '</div>',
       '</div>',
     ].join('');
@@ -1341,7 +2073,7 @@
 
     const panel = document.createElement('div');
     panel.id = 'route-panel';
-    panel.className = 'map-panel route-panel route-error';
+    panel.className = 'map-panel route-panel route-panel-top route-error';
     panel.innerHTML = [
       '<div class="panel-row">',
       '<span class="panel-icon">...</span>',
@@ -1365,10 +2097,15 @@
     if (target) target.remove();
   }
 
-  function dismissTransientUi() {
+  function dismissFloatingUi() {
     removePanel('marker-info');
+    removePanel('cluster-info');
     removePanel('route-mode-panel');
     removePanel('festival-detail');
+  }
+
+  function dismissTransientUi() {
+    dismissFloatingUi();
     clearRoute();
   }
 
@@ -1381,6 +2118,18 @@
       Math.cos(toRadians(lat2)) *
       Math.sin(dLng / 2) ** 2;
     return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+
+  function average(values) {
+    if (!values.length) return 0;
+    return values.reduce(function (sum, value) {
+      return sum + Number(value || 0);
+    }, 0) / values.length;
+  }
+
+  function clamp(value, min, max) {
+    if (max < min) return min;
+    return Math.min(Math.max(value, min), max);
   }
 
   function toRadians(value) {

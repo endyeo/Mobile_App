@@ -76,6 +76,15 @@ body {
   padding: 14px 16px;
 }
 
+.route-panel {
+  top: var(--route-panel-top, 150px);
+  bottom: auto;
+  z-index: 44;
+  max-height: calc(100vh - var(--route-panel-top, 150px) - 20px);
+  overflow: hidden;
+  border-radius: 18px;
+}
+
 .marker-panel {
   left: auto;
   right: 16px;
@@ -90,6 +99,10 @@ body {
 
 .route-mode-panel {
   z-index: 42;
+}
+
+.cluster-panel {
+  z-index: 43;
 }
 
 .panel-row {
@@ -166,6 +179,45 @@ body {
   color: var(--ink);
 }
 
+.cluster-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.cluster-item {
+  width: 100%;
+  border: 0;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #f6f8f7;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.cluster-item strong,
+.cluster-item span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cluster-item strong {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.cluster-item span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .panel-close {
   width: 32px;
   height: 32px;
@@ -176,6 +228,17 @@ body {
   display: grid;
   place-items: center;
   flex-shrink: 0;
+}
+
+.route-panel .panel-close {
+  width: auto;
+  min-width: 52px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .detail-panel {

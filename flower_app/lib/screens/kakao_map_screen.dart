@@ -49,6 +49,7 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
   bool _isLoading = true;
   bool _showFlowerMarkers = true;
   bool _showFestivalMarkers = true;
+  bool _showTouristMarkers = true;
   bool _isLoadingFestivals = true;
   bool _isFestivalPanelOpen = true;
   double _topBarHeight = 112;
@@ -56,6 +57,7 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
   String? _festivalError;
   Position? _currentPosition;
   List<FestivalData> _festivals = <FestivalData>[];
+  List<TouristSpotData> _touristSpots = <TouristSpotData>[];
 
   @override
   void initState() {
@@ -70,6 +72,7 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
     await _captureCurrentLocation();
     await _loadMapHtml();
     await _loadFestivalData();
+    await _loadTouristSpotData();
   }
 
   void _configureWebViewController() {
@@ -108,6 +111,12 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
         ),
       );
 
+    if (_controller!.platform is AndroidWebViewController) {
+      (_controller!.platform as AndroidWebViewController).setMixedContentMode(
+        MixedContentMode.alwaysAllow,
+      );
+    }
+
     final PlatformWebViewWidgetCreationParams baseParams =
         PlatformWebViewWidgetCreationParams(
           controller: _controller!.platform,
@@ -144,11 +153,13 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
           accuracy: LocationAccuracy.best,
         ),
       );
+
       if (mounted) await promptAlwaysLocation(context);
       if (!mounted) return;
       setState(() {
         _currentPosition = _isKoreanMapPosition(position) ? position : null;
         _festivals = _sortFestivals(_festivals, _currentPosition);
+        _touristSpots = _sortTouristSpots(_touristSpots, _currentPosition);
       });
     } catch (_) {
       // Keep fallback map behavior when location is unavailable.
@@ -173,6 +184,24 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
         _isLoadingFestivals = false;
         _festivalError = error.toString();
       });
+    }
+  }
+
+  Future<void> _loadTouristSpotData() async {
+    try {
+      final Position? position = _currentPosition;
+      final List<TouristSpotData> spots = await _tourApiService
+          .getFlowerTouristSpots(
+            latitude: position?.latitude ?? _defaultCenterLat,
+            longitude: position?.longitude ?? _defaultCenterLng,
+          );
+      if (!mounted) return;
+      setState(() {
+        _touristSpots = _sortTouristSpots(spots, _currentPosition);
+      });
+      await _syncTouristSpotDataToMap();
+    } catch (error) {
+      debugPrint('[TourAPI] Failed to load tourist spots: $error');
     }
   }
 
@@ -300,9 +329,11 @@ $app
   }
 
   Future<void> _syncMapState() async {
+    await _syncRoutePanelTop();
     await _syncCurrentPositionToMap();
     await _applyInitialActions();
     await _syncFestivalDataToMap();
+    await _syncTouristSpotDataToMap();
     await _syncCategoryState();
     await _focusInitialFestivalIfNeeded();
   }
@@ -344,13 +375,39 @@ $app
     );
   }
 
+  Future<void> _syncTouristSpotDataToMap() async {
+    if (kIsWeb || _controller == null || _touristSpots.isEmpty) return;
+    final String payload = jsonEncode(
+      _touristSpots.map((TouristSpotData spot) => spot.toMapPayload()).toList(),
+    );
+    await _controller!.runJavaScript(
+      'if(window.FlowerMap) window.FlowerMap.setTouristSpots($payload);',
+    );
+  }
+
   Future<void> _syncCategoryState() async {
     if (kIsWeb || _controller == null) return;
     await _controller!.runJavaScript(
       'if(window.FlowerMap) window.FlowerMap.setVisibleCategories('
       '${_showFlowerMarkers ? 'true' : 'false'},'
-      '${_showFestivalMarkers ? 'true' : 'false'});',
+      '${_showFestivalMarkers ? 'true' : 'false'},'
+      '${_showTouristMarkers ? 'true' : 'false'});',
     );
+  }
+
+  Future<void> _syncRoutePanelTop() async {
+    if (kIsWeb || _controller == null || !mounted || _isLoading) return;
+    final double routePanelTop = widget.isEmbedded
+        ? 16
+        : _topOverlayStart(context);
+    try {
+      await _controller!.runJavaScript(
+        'if(window.FlowerMap) window.FlowerMap.setRoutePanelTop('
+        '${routePanelTop.toStringAsFixed(1)});',
+      );
+    } catch (error) {
+      debugPrint('[MapWebView] route panel top sync failed: $error');
+    }
   }
 
   Future<void> _focusInitialFestivalIfNeeded() async {
@@ -395,6 +452,7 @@ $app
       setState(() {
         _currentPosition = _isKoreanMapPosition(position) ? position : null;
         _festivals = _sortFestivals(_festivals, _currentPosition);
+        _touristSpots = _sortTouristSpots(_touristSpots, _currentPosition);
       });
 
       if (_currentPosition != null) {
@@ -407,6 +465,7 @@ $app
           'if(window.FlowerMap) window.FlowerMap.resetToDefaultCenter();',
         );
       }
+      await _loadTouristSpotData();
     } catch (error) {
       debugPrint('[GPS] Failed to move to current location: $error');
     }
@@ -472,6 +531,32 @@ $app
     return copy;
   }
 
+  List<TouristSpotData> _sortTouristSpots(
+    List<TouristSpotData> spots,
+    Position? position,
+  ) {
+    final List<TouristSpotData> copy = List<TouristSpotData>.from(spots);
+    if (position == null) {
+      copy.sort((TouristSpotData a, TouristSpotData b) {
+        return a.title.compareTo(b.title);
+      });
+      return copy;
+    }
+
+    copy.sort((TouristSpotData a, TouristSpotData b) {
+      final double aDistance = a.distanceFrom(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      final double bDistance = b.distanceFrom(
+        latitude: position.latitude,
+        longitude: position.longitude,
+      );
+      return aDistance.compareTo(bDistance);
+    });
+    return copy;
+  }
+
   String _festivalDistanceLabel(FestivalData festival) {
     final Position? position = _currentPosition;
     if (position == null) return '';
@@ -494,6 +579,7 @@ $app
       setState(() {
         _topBarHeight = height;
       });
+      _syncRoutePanelTop();
     });
   }
 
@@ -621,6 +707,7 @@ $app
                     _buildCategoryChip(
                       colors: colors,
                       label: '꽃',
+                      accentColor: const Color(0xFFFBBF24),
                       selected: _showFlowerMarkers,
                       onTap: () async {
                         setState(
@@ -633,10 +720,24 @@ $app
                     _buildCategoryChip(
                       colors: colors,
                       label: '축제',
+                      accentColor: const Color(0xFFFF4FA3),
                       selected: _showFestivalMarkers,
                       onTap: () async {
                         setState(
                           () => _showFestivalMarkers = !_showFestivalMarkers,
+                        );
+                        await _syncCategoryState();
+                      },
+                    ),
+                    const SizedBox(width: 8),
+                    _buildCategoryChip(
+                      colors: colors,
+                      label: '관광지',
+                      accentColor: const Color(0xFF10B981),
+                      selected: _showTouristMarkers,
+                      onTap: () async {
+                        setState(
+                          () => _showTouristMarkers = !_showTouristMarkers,
                         );
                         await _syncCategoryState();
                       },
@@ -654,6 +755,7 @@ $app
   Widget _buildCategoryChip({
     required SeasonColors colors,
     required String label,
+    required Color accentColor,
     required bool selected,
     required VoidCallback onTap,
   }) {
@@ -664,12 +766,12 @@ $app
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: selected
-              ? colors.primary.withValues(alpha: 0.14)
+              ? accentColor.withValues(alpha: 0.16)
               : Colors.grey.shade100,
           borderRadius: BorderRadius.circular(999),
           border: Border.all(
             color: selected
-                ? colors.primary.withValues(alpha: 0.38)
+                ? accentColor.withValues(alpha: 0.46)
                 : Colors.grey.shade300,
           ),
         ),
@@ -679,13 +781,13 @@ $app
             Icon(
               selected ? Icons.check_circle : Icons.circle_outlined,
               size: 16,
-              color: selected ? colors.primary : Colors.grey.shade500,
+              color: selected ? accentColor : Colors.grey.shade500,
             ),
             const SizedBox(width: 6),
             Text(
               label,
               style: TextStyle(
-                color: selected ? colors.primary : Colors.grey.shade700,
+                color: selected ? accentColor : Colors.grey.shade700,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
