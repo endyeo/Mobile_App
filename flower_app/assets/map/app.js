@@ -265,6 +265,10 @@
   async function loadFlowers() {
     const apiFlowers = await fetchFlowersFromApi();
     state.flowers = apiFlowers;
+    console.log('[FlowerMap] loadFlowers: received', apiFlowers.length, 'flowers');
+    if (apiFlowers.length > 0) {
+      console.log('[FlowerMap] first flower:', JSON.stringify(apiFlowers[0]));
+    }
     applyFilters();
     applyPendingFlowerFocus();
     applyPendingRouteAction();
@@ -272,25 +276,33 @@
 
   async function fetchFlowersFromApi() {
     const baseUrl = config.API_BASE_URL;
-    if (!baseUrl) return [];
+    console.log('[FlowerMap] fetchFlowersFromApi baseUrl=', baseUrl);
+    if (!baseUrl) {
+      console.warn('[FlowerMap] API_BASE_URL is empty');
+      return [];
+    }
 
+    const url = `${baseUrl}/flower-spots`;
+    console.log('[FlowerMap] fetching:', url);
     try {
-      const center = state.currentPosition ||
-        config.DEFAULT_CENTER ||
-        { lat: 37.5665, lng: 126.9780 };
-      const params = new URLSearchParams({
-        lat: center.lat,
-        lng: center.lng,
-        radius: state.radius,
-        limit: config.DEFAULT_LIMIT || 50,
-      });
-      const response = await fetch(`${baseUrl}/flower-spots?${params.toString()}`);
-      if (!response.ok) return [];
-      const body = await response.json();
+      // 지도 전체 뷰: 위치 필터 없이 최근 게시글 전부 표시
+      // (반경 검색은 백엔드 근처 알림 등에서만 사용)
+      const response = await fetch(url);
+      console.log('[FlowerMap] response status:', response.status);
+      if (!response.ok) {
+        console.warn('[FlowerMap] response not ok:', response.status);
+        return [];
+      }
+      const text = await response.text();
+      console.log('[FlowerMap] response body length:', text.length);
+      const body = JSON.parse(text);
       const posts = body.data?.posts ?? (Array.isArray(body) ? body : []);
-      return normalizeFlowers(posts);
+      console.log('[FlowerMap] parsed posts count:', posts.length);
+      const normalized = normalizeFlowers(posts);
+      console.log('[FlowerMap] after normalize:', normalized.length);
+      return normalized;
     } catch (error) {
-      console.warn('Flower API is unavailable.', error);
+      console.warn('Flower API is unavailable.', String(error));
       return [];
     }
   }
@@ -540,6 +552,8 @@
         return false;
       }
 
+      // 거리는 표시용으로만 계산하고 반경 필터링은 하지 않음
+      // (지도 전체 뷰: 위치 무관하게 모든 꽃 게시글 표시)
       if (center && !flower._test) {
         flower.distance_m = Math.round(
           distanceMeters(
@@ -549,7 +563,6 @@
             flower.location.lng,
           ),
         );
-        if (flower.distance_m > state.radius) return false;
       }
 
       return true;
@@ -686,12 +699,17 @@
   }
 
   function renderMapMarkers() {
-    if (!state.map || !window.kakao?.maps) return;
+    if (!state.map || !window.kakao?.maps) {
+      console.warn('[FlowerMap] renderMapMarkers skipped: map=', !!state.map, 'kakao=', !!window.kakao?.maps);
+      return;
+    }
     clearKakaoMarkers();
 
     const items = state.filteredMapItems.length || state.search
       ? state.filteredMapItems
       : buildVisibleMapItems();
+    console.log('[FlowerMap] renderMapMarkers:', items.length, 'items (flowers:',
+      state.filteredFlowers.length, 'showFlowers:', state.showFlowers, ')');
     const groups = clusterMapItems(items);
 
     groups.forEach(function (group) {

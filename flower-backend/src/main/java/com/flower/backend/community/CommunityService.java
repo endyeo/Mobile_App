@@ -128,13 +128,23 @@ public class CommunityService {
     }
 
     @Transactional(readOnly = true)
-    public FeedResponse getFlowerSpots(Double lat, Double lng, double radius, int days, Long cursor) {
+    public FeedResponse getFlowerSpots(Double lat, Double lng, Double radius, int days, Long cursor) {
         LocalDateTime since = LocalDateTime.now().minusDays(days);
-        var pageable = PageRequest.of(0, 21);
+        int limit = 21;
 
-        List<CommunityPost> posts = cursor == null
-                ? postRepository.findFlowerSpots(since, pageable)
-                : postRepository.findFlowerSpotsByCursor(cursor, since, pageable);
+        // 위치 + 반경 모두 지정된 경우만 PostGIS 반경 검색
+        // 미지정 시 days 이내 모든 FLOWER_SPOT 반환 (지도 전체 뷰 등)
+        List<CommunityPost> posts;
+        if (lat != null && lng != null && radius != null) {
+            posts = cursor == null
+                    ? postRepository.findFlowerSpotsNearby(lat, lng, radius, since, limit)
+                    : postRepository.findFlowerSpotsNearbyByCursor(cursor, lat, lng, radius, since, limit);
+        } else {
+            var pageable = PageRequest.of(0, limit);
+            posts = cursor == null
+                    ? postRepository.findFlowerSpots(since, pageable)
+                    : postRepository.findFlowerSpotsByCursor(cursor, since, pageable);
+        }
 
         boolean hasNext = posts.size() > 20;
         if (hasNext) posts = posts.subList(0, 20);

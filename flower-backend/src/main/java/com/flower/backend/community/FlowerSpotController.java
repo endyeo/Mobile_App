@@ -51,12 +51,14 @@ public class FlowerSpotController {
         return ResponseEntity.status(201).body(ApiResponse.ok(response));
     }
 
-    // 꽃 지도 게시글 목록 (향후 지도 표시용 — GPS 있는 것만)
+    // 꽃 지도 게시글 목록 (지도 표시용 — GPS 있는 것만)
+    // radius 미지정 시 위치 필터 없이 days 이내 모든 게시글 반환 (전체 지도 뷰)
+    // radius 지정 시 lat/lng 기준 반경 검색 (근처 알림 등 위치 기반 필터)
     @GetMapping
     public ResponseEntity<ApiResponse<CommunityDto.FeedResponse>> getFlowerSpots(
             @RequestParam(required = false) Double lat,
             @RequestParam(required = false) Double lng,
-            @RequestParam(defaultValue = "5000") double radius,
+            @RequestParam(required = false) Double radius,
             @RequestParam(defaultValue = "7") int days,
             @RequestParam(required = false) Long cursor) {
 

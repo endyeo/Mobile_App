@@ -39,6 +39,7 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
       source: ImageSource.camera,
       imageQuality: 80,
       maxWidth: 1080,
+      requestFullMetadata: false,
     );
     if (picked == null) return;
 
@@ -59,6 +60,7 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
       source: ImageSource.gallery,
       imageQuality: 80,
       maxWidth: 1080,
+      requestFullMetadata: false,
     );
     if (picked == null) return;
 

@@ -21,4 +21,47 @@ public interface CommunityPostRepository extends JpaRepository<CommunityPost, Lo
 
     @Query("SELECT p FROM CommunityPost p WHERE p.postType = 'FLOWER_SPOT' AND p.id < :cursor AND p.createdAt >= :since ORDER BY p.createdAt DESC")
     List<CommunityPost> findFlowerSpotsByCursor(@Param("cursor") Long cursor, @Param("since") LocalDateTime since, Pageable pageable);
+
+    // PostGIS 반경 기반 꽃 게시글 조회 (지도용)
+    @Query(nativeQuery = true, value = """
+        SELECT * FROM community_posts
+         WHERE post_type = 'FLOWER_SPOT'
+           AND created_at >= :since
+           AND location IS NOT NULL
+           AND ST_DWithin(
+                 location,
+                 ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                 :radiusM
+               )
+         ORDER BY created_at DESC
+         LIMIT :limit
+        """)
+    List<CommunityPost> findFlowerSpotsNearby(
+            @Param("lat") double lat,
+            @Param("lng") double lng,
+            @Param("radiusM") double radiusM,
+            @Param("since") LocalDateTime since,
+            @Param("limit") int limit);
+
+    @Query(nativeQuery = true, value = """
+        SELECT * FROM community_posts
+         WHERE post_type = 'FLOWER_SPOT'
+           AND id < :cursor
+           AND created_at >= :since
+           AND location IS NOT NULL
+           AND ST_DWithin(
+                 location,
+                 ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography,
+                 :radiusM
+               )
+         ORDER BY created_at DESC
+         LIMIT :limit
+        """)
+    List<CommunityPost> findFlowerSpotsNearbyByCursor(
+            @Param("cursor") Long cursor,
+            @Param("lat") double lat,
+            @Param("lng") double lng,
+            @Param("radiusM") double radiusM,
+            @Param("since") LocalDateTime since,
+            @Param("limit") int limit);
 }

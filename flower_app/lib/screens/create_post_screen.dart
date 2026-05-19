@@ -28,7 +28,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     final picker = ImagePicker();
-    final picked = await picker.pickImage(source: source, imageQuality: 70, maxWidth: 1080);
+    final picked = await picker.pickImage(
+      source: source,
+      imageQuality: 70,
+      maxWidth: 1080,
+      requestFullMetadata: false,
+    );
     if (picked != null) setState(() => _selectedImage = File(picked.path));
   }
 
@@ -36,7 +41,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     final colors = SeasonTheme.getColors();
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -44,18 +51,27 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             ListTile(
               leading: Icon(Icons.camera_alt, color: colors.primary),
               title: const Text('카메라'),
-              onTap: () { Navigator.pop(context); _pickImage(ImageSource.camera); },
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.camera);
+              },
             ),
             ListTile(
               leading: Icon(Icons.photo_library, color: colors.primary),
               title: const Text('갤러리'),
-              onTap: () { Navigator.pop(context); _pickImage(ImageSource.gallery); },
+              onTap: () {
+                Navigator.pop(context);
+                _pickImage(ImageSource.gallery);
+              },
             ),
             if (_selectedImage != null)
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('이미지 제거'),
-                onTap: () { Navigator.pop(context); setState(() => _selectedImage = null); },
+                onTap: () {
+                  Navigator.pop(context);
+                  setState(() => _selectedImage = null);
+                },
               ),
           ],
         ),
@@ -65,9 +81,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
   Future<void> _submit() async {
     if (_contentController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('내용을 입력해 주세요.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('내용을 입력해 주세요.')));
       return;
     }
 
@@ -89,9 +105,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       if (post != null) {
         Navigator.pop(context, post);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('게시글 등록에 실패했습니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('게시글 등록에 실패했습니다.')));
       }
     } finally {
       if (mounted) setState(() => _isLoading = false);
@@ -110,15 +126,32 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
           icon: Icon(Icons.close, color: colors.primary),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Text('새 게시글', style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold)),
+        title: Text(
+          '새 게시글',
+          style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold),
+        ),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: TextButton(
               onPressed: _isLoading ? null : _submit,
               child: _isLoading
-                  ? SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: colors.primary))
-                  : Text('등록', style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold, fontSize: 15)),
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: colors.primary,
+                      ),
+                    )
+                  : Text(
+                      '등록',
+                      style: TextStyle(
+                        color: colors.primary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -142,15 +175,28 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 child: _selectedImage != null
                     ? ClipRRect(
                         borderRadius: BorderRadius.circular(16),
-                        child: Image.file(_selectedImage!, fit: BoxFit.cover,
-                            cacheWidth: 1080, filterQuality: FilterQuality.medium),
+                        child: Image.file(
+                          _selectedImage!,
+                          fit: BoxFit.cover,
+                          cacheWidth: 1080,
+                          filterQuality: FilterQuality.medium,
+                        ),
                       )
                     : Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.add_photo_alternate_outlined, size: 48, color: colors.primary.withOpacity(0.5)),
+                          Icon(
+                            Icons.add_photo_alternate_outlined,
+                            size: 48,
+                            color: colors.primary.withOpacity(0.5),
+                          ),
                           const SizedBox(height: 8),
-                          Text('사진 추가', style: TextStyle(color: colors.primary.withOpacity(0.6))),
+                          Text(
+                            '사진 추가',
+                            style: TextStyle(
+                              color: colors.primary.withOpacity(0.6),
+                            ),
+                          ),
                         ],
                       ),
               ),
@@ -158,7 +204,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             const SizedBox(height: 16),
 
             // 꽃 종류 선택
-            Text('꽃 종류', style: TextStyle(fontWeight: FontWeight.bold, color: colors.primary)),
+            Text(
+              '꽃 종류',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: colors.primary,
+              ),
+            ),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -168,15 +220,24 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   label: Text(s),
                   selected: isSelected,
                   selectedColor: colors.primary,
-                  labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.grey[700]),
-                  onSelected: (_) => setState(() => _selectedSpecies = isSelected ? null : s),
+                  labelStyle: TextStyle(
+                    color: isSelected ? Colors.white : Colors.grey[700],
+                  ),
+                  onSelected: (_) =>
+                      setState(() => _selectedSpecies = isSelected ? null : s),
                 );
               }).toList(),
             ),
             const SizedBox(height: 16),
 
             // 내용 입력
-            Text('내용', style: TextStyle(fontWeight: FontWeight.bold, color: colors.primary)),
+            Text(
+              '내용',
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: colors.primary,
+              ),
+            ),
             const SizedBox(height: 8),
             TextField(
               controller: _contentController,
@@ -186,9 +247,18 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                 hintText: '오늘 발견한 꽃에 대해 이야기해 주세요...',
                 filled: true,
                 fillColor: Colors.white,
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: colors.accent)),
-                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: colors.accent.withOpacity(0.5))),
-                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide(color: colors.primary, width: 2)),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: colors.accent),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: colors.accent.withOpacity(0.5)),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide(color: colors.primary, width: 2),
+                ),
               ),
             ),
           ],
