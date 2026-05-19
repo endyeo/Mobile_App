@@ -166,6 +166,31 @@ function Get-ResponseData($Response) {
     return $data
 }
 
+function Invoke-JsonPostUtf8($Uri, $BodyObject, [int]$TimeoutSeconds) {
+    Add-Type -AssemblyName System.Net.Http
+    $json = $BodyObject | ConvertTo-Json -Depth 10
+    $client = [System.Net.Http.HttpClient]::new()
+    $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
+    $content = [System.Net.Http.StringContent]::new(
+        $json,
+        [System.Text.Encoding]::UTF8,
+        "application/json"
+    )
+
+    try {
+        $httpResponse = $client.PostAsync($Uri, $content).GetAwaiter().GetResult()
+        $bytes = $httpResponse.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+        if (-not $httpResponse.IsSuccessStatusCode) {
+            throw "HTTP $([int]$httpResponse.StatusCode) $($httpResponse.ReasonPhrase): $text"
+        }
+        return $text | ConvertFrom-Json
+    } finally {
+        $content.Dispose()
+        $client.Dispose()
+    }
+}
+
 $caseFile = Join-Path $PSScriptRoot ("chatbot-eval-{0}.json" -f $Set)
 if (-not (Test-Path -LiteralPath $caseFile)) {
     throw "Evaluation set not found: $caseFile"
@@ -196,12 +221,10 @@ foreach ($case in $cases) {
     $response = $null
     $requestError = $null
     try {
-        $response = Invoke-RestMethod `
+        $response = Invoke-JsonPostUtf8 `
             -Uri $endpoint `
-            -Method Post `
-            -ContentType "application/json; charset=utf-8" `
-            -Body ($body | ConvertTo-Json -Depth 10) `
-            -TimeoutSec $TimeoutSec
+            -BodyObject $body `
+            -TimeoutSeconds $TimeoutSec
     } catch {
         $requestError = $_.Exception.Message
     } finally {

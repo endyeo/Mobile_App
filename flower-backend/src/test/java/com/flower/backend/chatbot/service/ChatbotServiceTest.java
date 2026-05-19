@@ -43,6 +43,18 @@ class ChatbotServiceTest {
                 .thenReturn(tool("flower.lookupGrowTipsSource"));
         when(flowerToolService.recommendSeasonalFlowersResult(any()))
                 .thenReturn(tool("flower.recommendSeasonalFlowers"));
+        when(flowerToolService.getBasicInfoResult(anyString(), anyBoolean()))
+                .thenReturn(tool("flower.getBasicInfo"));
+        when(flowerToolService.getMeaningAndBloomResult(anyString(), anyBoolean()))
+                .thenReturn(tool("flower.getMeaningAndBloom"));
+        when(flowerToolService.getGrowGuideResult(anyString(), anyBoolean()))
+                .thenReturn(tool("flower.getGrowGuide"));
+        when(flowerToolService.recommendByMonthResult(any()))
+                .thenReturn(tool("flower.recommendByMonth"));
+        when(flowerToolService.inferCandidatesResult(anyString()))
+                .thenReturn(tool("flower.inferCandidates"));
+        when(flowerToolService.searchFlowerSpotsResult(anyString()))
+                .thenReturn(tool("flower.searchFlowerSpots"));
         when(communityTools.searchPosts(anyString()))
                 .thenReturn(tool("community.searchPosts"));
     }
@@ -55,7 +67,9 @@ class ChatbotServiceTest {
         assertThat(response.getActions()).extracting(ChatAction::getType)
                 .contains("NAVIGATE", "MAP_SET_SEARCH_QUERY");
         assertThat(response.getActions().get(1).getParams()).containsEntry("query", "벚꽃");
-        verify(flowerToolService).searchFlowerSpots("벚꽃");
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("flower.getBasicInfo");
+        verify(flowerToolService).getBasicInfoResult("벚꽃", false);
     }
 
     @Test
@@ -64,8 +78,8 @@ class ChatbotServiceTest {
 
         assertThat(response.getAgentRun().getRoute()).isEqualTo("FLOWER");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
-                .containsExactly("flower.recommendSeasonalFlowers");
-        verify(flowerToolService).recommendSeasonalFlowersResult(any());
+                .containsExactly("flower.recommendByMonth");
+        verify(flowerToolService).recommendByMonthResult(any());
     }
 
     @Test
@@ -74,8 +88,8 @@ class ChatbotServiceTest {
 
         assertThat(response.getAgentRun().getRoute()).isEqualTo("FLOWER_GROW");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
-                .containsExactly("flower.lookupGrowTipsSource");
-        verify(flowerToolService).lookupFlowerGrowTipsSourceResult("장미", false);
+                .containsExactly("flower.getGrowGuide");
+        verify(flowerToolService).getGrowGuideResult("장미", false);
     }
 
     @Test

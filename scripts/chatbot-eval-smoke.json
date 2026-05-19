@@ -1,128 +1,124 @@
 [
   {
     "id": "001",
-    "message": "벚꽃 지도에서 보여줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "MAP" },
-      { "type": "MAP_SET_SEARCH_QUERY", "target": "MAP", "params": { "query": "벚꽃" } }
-    ],
-    "expectedTools": ["flower.searchFlowerSpots"]
-  },
-  {
-    "id": "007",
-    "message": "꽃 지도 열어줘",
-    "expectedRoutes": ["MAP"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "MAP" }
-    ],
-    "expectedTools": []
-  },
-  {
-    "id": "011",
-    "message": "이번 달에 볼 만한 꽃 추천해줘",
+    "message": "장미가 어떤 꽃이야?",
     "expectedRoutes": ["FLOWER"],
     "expectedActions": [],
-    "expectedTools": ["flower.recommendSeasonalFlowers"]
+    "expectedTools": ["flower.getBasicInfo"],
+    "forbiddenActions": ["*"],
+    "forbiddenTools": ["flower.searchFlowerSpots"]
   },
   {
-    "id": "031",
-    "message": "장미 키우는 법 알려줘",
-    "expectedRoutes": ["FLOWER_GROW"],
+    "id": "002",
+    "message": "벚꽃 특징 알려줘",
+    "expectedRoutes": ["FLOWER"],
     "expectedActions": [],
-    "expectedTools": ["flower.lookupGrowTipsSource"]
+    "expectedTools": ["flower.getBasicInfo"],
+    "forbiddenActions": ["*"],
+    "forbiddenTools": ["flower.searchFlowerSpots"]
   },
   {
-    "id": "045",
-    "message": "수국 후기 찾아줘",
-    "expectedRoutes": ["COMMUNITY"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "COMMUNITY", "params": { "query": "수국" } }
-    ],
-    "expectedTools": ["community.searchPosts"]
-  },
-  {
-    "id": "051",
-    "message": "수국 후기 글 써줘",
-    "expectedRoutes": ["COMMUNITY"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "COMMUNITY_COMPOSE" }
-    ],
-    "expectedTools": [],
-    "forbiddenTools": ["community.searchPosts"],
-    "forbiddenReplyIncludes": ["저장했습니다", "작성했습니다"]
-  },
-  {
-    "id": "056",
-    "message": "산책 화면 열어줘",
-    "expectedRoutes": ["WALK"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "WALK" }
-    ],
-    "expectedTools": []
-  },
-  {
-    "id": "061",
-    "message": "저장한 글 보여줘",
-    "expectedRoutes": ["SAVED"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "SAVED" }
-    ],
-    "expectedTools": []
-  },
-  {
-    "id": "066",
-    "message": "상점에서 아이템 사줘",
-    "expectedRoutes": ["SHOP"],
+    "id": "003",
+    "message": "튤립 학명과 설명 알려줘",
+    "expectedRoutes": ["FLOWER"],
     "expectedActions": [],
-    "expectedTools": ["app.unsupported"],
+    "expectedTools": ["flower.getBasicInfo"],
     "forbiddenActions": ["*"]
-  },
-  {
-    "id": "069",
-    "message": "퀘스트 인증해줘",
-    "expectedRoutes": ["QUEST"],
-    "expectedActions": [],
-    "expectedTools": ["app.unsupported"],
-    "forbiddenActions": ["*"]
-  },
-  {
-    "id": "029",
-    "message": "분홍색 꽃인데 이름이 뭘까?",
-    "expectedRoutes": ["FLOWER"],
-    "expectedActions": [],
-    "expectedTools": ["flower.lookupDescriptionSource"]
-  },
-  {
-    "id": "040",
-    "message": "장미 도감에서 찾아줘",
-    "expectedRoutes": ["FLOWER"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "FLOWER_BOOK", "params": { "query": "장미" } }
-    ],
-    "expectedTools": []
   },
   {
     "id": "004",
-    "message": "근처 꽃 명소 추천해줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
-    "expectedActions": [
-      { "type": "NAVIGATE", "target": "MAP" }
-    ],
-    "expectedTools": ["flower.searchFlowerSpots"]
+    "message": "수국 꽃말 알려줘",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.getMeaningAndBloom"],
+    "forbiddenActions": ["*"],
+    "forbiddenTools": ["flower.searchFlowerSpots"]
   },
   {
-    "id": "076",
+    "id": "005",
+    "message": "매화는 언제 피어?",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.getMeaningAndBloom"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "006",
+    "message": "동백 개화시기 알려줘",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.getMeaningAndBloom"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "007",
+    "message": "장미 키우는 법 알려줘",
+    "expectedRoutes": ["FLOWER_GROW"],
+    "expectedActions": [],
+    "expectedTools": ["flower.getGrowGuide"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "008",
+    "message": "수국 물주기 알려줘",
+    "expectedRoutes": ["FLOWER_GROW"],
+    "expectedActions": [],
+    "expectedTools": ["flower.getGrowGuide"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "009",
+    "message": "라벤더 햇빛 관리 방법 알려줘",
+    "expectedRoutes": ["FLOWER_GROW"],
+    "expectedActions": [],
+    "expectedTools": ["flower.getGrowGuide"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "010",
+    "message": "이번 달에 피는 꽃 추천해줘",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.recommendByMonth"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "011",
+    "message": "4월에 피는 꽃 추천해줘",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.recommendByMonth"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "012",
+    "message": "분홍색 꽃인데 이름이 뭘까?",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.inferCandidates"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "013",
+    "message": "이름 모르는 하얀 꽃이 있어",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.inferCandidates"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "014",
     "message": "안녕",
     "expectedRoutes": ["GENERAL"],
     "expectedActions": [],
     "expectedTools": []
   },
   {
-    "id": "080",
-    "message": "첫 번째 장소 지도에서 열어줘",
-    "expectedRoutes": ["GENERAL"],
+    "id": "015",
+    "message": "상점에서 아이템 사줘",
+    "expectedRoutes": ["SHOP"],
     "expectedActions": [],
-    "expectedTools": []
+    "expectedTools": ["app.unsupported"],
+    "forbiddenActions": ["*"]
   }
 ]

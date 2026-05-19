@@ -33,6 +33,10 @@ public interface FlowerBookRepository extends JpaRepository<FlowerBook, Long> {
                f.name AS name,
                f.scientificName AS scientificName,
                f.description AS description,
+               f.flowerLanguage AS flowerLanguage,
+               f.bloomMonth AS bloomMonth,
+               f.bloomDay AS bloomDay,
+               f.imageUrl AS imageUrl,
                f.source AS source
         FROM FlowerBook f LEFT JOIN f.category c
         WHERE f.name LIKE %:keyword%
@@ -73,6 +77,14 @@ public interface FlowerBookRepository extends JpaRepository<FlowerBook, Long> {
         String getScientificName();
 
         String getDescription();
+
+        String getFlowerLanguage();
+
+        Integer getBloomMonth();
+
+        Integer getBloomDay();
+
+        String getImageUrl();
 
         String getSource();
     }

@@ -56,6 +56,10 @@ public class FlowerToolService {
     }
 
     public ToolResult lookupFlowerDescriptionSourceResult(String query, boolean allowCandidateExpansion) {
+        return getBasicInfoResult(query, allowCandidateExpansion);
+    }
+
+    public ToolResult getBasicInfoResult(String query, boolean allowCandidateExpansion) {
         BookLookup<FlowerBookRepository.DescriptionSourceView> lookup =
                 searchFlowerDescriptionSource(query, allowCandidateExpansion);
         List<Map<String, Object>> items = lookup.items().stream()
@@ -63,9 +67,25 @@ public class FlowerToolService {
                 .toList();
 
         return ToolResult.builder()
-                .tool("flower.lookupDescriptionSource")
+                .tool("flower.getBasicInfo")
                 .status("SUCCESS")
-                .summary("'" + displayQuery(query) + "' 꽃 설명 조회 결과 "
+                .summary("'" + displayQuery(query) + "' 꽃 기본 정보 조회 결과 "
+                        + lookup.items().size() + "건을 찾았습니다.")
+                .data(bookLookupData(items, lookup))
+                .build();
+    }
+
+    public ToolResult getMeaningAndBloomResult(String query, boolean allowCandidateExpansion) {
+        BookLookup<FlowerBookRepository.DescriptionSourceView> lookup =
+                searchFlowerDescriptionSource(query, allowCandidateExpansion);
+        List<Map<String, Object>> items = lookup.items().stream()
+                .map(this::toMeaningAndBloomItem)
+                .toList();
+
+        return ToolResult.builder()
+                .tool("flower.getMeaningAndBloom")
+                .status("SUCCESS")
+                .summary("'" + displayQuery(query) + "' 꽃말/개화 정보 조회 결과 "
                         + lookup.items().size() + "건을 찾았습니다.")
                 .data(bookLookupData(items, lookup))
                 .build();
@@ -77,6 +97,10 @@ public class FlowerToolService {
     }
 
     public ToolResult lookupFlowerGrowTipsSourceResult(String query, boolean allowCandidateExpansion) {
+        return getGrowGuideResult(query, allowCandidateExpansion);
+    }
+
+    public ToolResult getGrowGuideResult(String query, boolean allowCandidateExpansion) {
         BookLookup<FlowerBookRepository.GrowTipsSourceView> lookup =
                 searchFlowerGrowTipsSource(query, allowCandidateExpansion);
         List<Map<String, Object>> items = lookup.items().stream()
@@ -84,9 +108,9 @@ public class FlowerToolService {
                 .toList();
 
         return ToolResult.builder()
-                .tool("flower.lookupGrowTipsSource")
+                .tool("flower.getGrowGuide")
                 .status("SUCCESS")
-                .summary("'" + displayQuery(query) + "' 꽃 재배 팁 조회 결과 "
+                .summary("'" + displayQuery(query) + "' 꽃 재배 가이드 조회 결과 "
                         + lookup.items().size() + "건을 찾았습니다.")
                 .data(bookLookupData(items, lookup))
                 .build();
@@ -94,6 +118,10 @@ public class FlowerToolService {
 
     // 월별 꽃 도감 데이터와 승인 꽃 명소를 조합한 추천 결과입니다.
     public ToolResult recommendSeasonalFlowersResult(Integer month) {
+        return recommendByMonthResult(month);
+    }
+
+    public ToolResult recommendByMonthResult(Integer month) {
         int normalizedMonth = normalizeMonth(month);
         List<FlowerBook> flowers = flowerBookRepository.findByBloomMonthOrderByBloomDay(normalizedMonth)
                 .stream()
@@ -106,12 +134,42 @@ public class FlowerToolService {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("month", normalizedMonth);
         data.put("items", items);
-        data.put("source", "flower_book monthly bloom data + approved flower spots");
+        data.put("source", "flower_book monthly bloom data");
 
         return ToolResult.builder()
-                .tool("flower.recommendSeasonalFlowers")
+                .tool("flower.recommendByMonth")
                 .status("SUCCESS")
                 .summary(normalizedMonth + "월 꽃 추천 결과 " + flowers.size() + "건을 찾았습니다.")
+                .data(data)
+                .build();
+    }
+
+    public ToolResult inferCandidatesResult(String description) {
+        String sanitized = sanitizeQuery(description);
+        List<String> candidates = inferFlowerCandidates(sanitized);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (String candidate : candidates.stream().limit(SEASONAL_RECOMMEND_LIMIT).toList()) {
+            List<FlowerBookRepository.DescriptionSourceView> matches = flowerBookRepository.findDescriptionSourceByKeyword(
+                    candidate,
+                    PageRequest.of(0, 1)
+            );
+            if (matches.isEmpty()) {
+                rows.add(candidateItem(candidate, sanitized, null));
+            } else {
+                rows.add(candidateItem(candidate, sanitized, matches.get(0)));
+            }
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("description", sanitized);
+        data.put("candidates", rows);
+        data.put("queryExpanded", true);
+        data.put("candidateKeywords", candidates);
+
+        return ToolResult.builder()
+                .tool("flower.inferCandidates")
+                .status("SUCCESS")
+                .summary("'" + displayQuery(description) + "' 설명에서 꽃 후보 " + rows.size() + "건을 추정했습니다.")
                 .data(data)
                 .build();
     }
@@ -155,7 +213,29 @@ public class FlowerToolService {
         for (FlowerBookRepository.DescriptionSourceView flower : lookup.items()) {
             result.append("- 이름=").append(nullToDash(flower.getName()))
                     .append(", 학명=").append(nullToDash(flower.getScientificName()))
+                    .append(", 꽃말=").append(nullToDash(flower.getFlowerLanguage()))
+                    .append(", 개화=").append(bloomDate(flower.getBloomMonth(), flower.getBloomDay()))
                     .append(", 설명=").append(nullToDash(flower.getDescription()))
+                    .append(", 출처=").append(nullToDash(flower.getSource()))
+                    .append("\n");
+        }
+        return result.toString();
+    }
+
+    // Spring AI 도구 직접 호출 시 사용할 꽃말/개화 정보 텍스트입니다.
+    public String formatMeaningAndBloomForAnswer(String query) {
+        BookLookup<FlowerBookRepository.DescriptionSourceView> lookup = searchFlowerDescriptionSource(query, false);
+        if (lookup.items().isEmpty()) {
+            return "'" + displayQuery(query) + "' 꽃말/개화 정보 조회 결과가 없습니다.";
+        }
+
+        StringBuilder result = new StringBuilder();
+        result.append("'").append(displayQuery(query)).append("' 꽃말/개화 정보:\n");
+        appendExpandedCandidateNote(result, lookup);
+        for (FlowerBookRepository.DescriptionSourceView flower : lookup.items()) {
+            result.append("- 이름=").append(nullToDash(flower.getName()))
+                    .append(", 꽃말=").append(nullToDash(flower.getFlowerLanguage()))
+                    .append(", 개화=").append(bloomDate(flower.getBloomMonth(), flower.getBloomDay()))
                     .append(", 출처=").append(nullToDash(flower.getSource()))
                     .append("\n");
         }
@@ -197,12 +277,40 @@ public class FlowerToolService {
                 text.append("- 이름=").append(row.get("name"))
                         .append(", 개화=").append(row.get("bloomDate"))
                         .append(", 꽃말=").append(nullToDash((String) row.get("flowerLanguage")))
-                        .append(", 승인 명소 수=").append(row.get("spotCount"));
+                        .append(", 설명=").append(nullToDash((String) row.get("shortDescription")));
                 if (row.get("representativeSpotName") != null) {
                     text.append(", 대표 명소=").append(row.get("representativeSpotName"))
                             .append(", 주소=").append(row.get("address"));
                 }
                 text.append(", 출처=").append(row.get("source")).append("\n");
+            }
+        }
+        return text.toString();
+    }
+
+    // Spring AI 도구 직접 호출 시 사용할 후보 추정 텍스트입니다.
+    public String formatCandidateInferenceForAnswer(String description) {
+        ToolResult result = inferCandidatesResult(description);
+        List<?> candidates = result.getData() == null
+                ? List.of()
+                : (List<?>) result.getData().getOrDefault("candidates", List.of());
+        if (candidates.isEmpty()) {
+            return "'" + displayQuery(description) + "' 설명으로 추정한 꽃 후보가 없습니다.";
+        }
+
+        StringBuilder text = new StringBuilder();
+        text.append("'").append(displayQuery(description)).append("' 설명으로 추정한 꽃 후보입니다. 확정 식별은 아닙니다:\n");
+        for (Object item : candidates) {
+            if (item instanceof Map<?, ?> row) {
+                text.append("- 후보=").append(row.get("name"))
+                        .append(", 이유=").append(row.get("reason"));
+                if (row.get("description") != null) {
+                    text.append(", 설명=").append(row.get("description"));
+                }
+                if (row.get("source") != null) {
+                    text.append(", 출처=").append(row.get("source"));
+                }
+                text.append("\n");
             }
         }
         return text.toString();
@@ -231,6 +339,7 @@ public class FlowerToolService {
         item.put("bloomDay", flower.getBloomDay());
         item.put("bloomDate", bloomDate(flower.getBloomMonth(), flower.getBloomDay()));
         item.put("flowerLanguage", nullToDash(flower.getFlowerLanguage()));
+        item.put("shortDescription", truncate(nullToDash(flower.getDescription()), 120));
         item.put("source", nullToDash(flower.getSource()));
 
         List<Flower> spots = searchFlowerSpots(flower.getName());
@@ -386,7 +495,43 @@ public class FlowerToolService {
     private Map<String, Object> toDescriptionSourceItem(FlowerBookRepository.DescriptionSourceView flower) {
         Map<String, Object> item = baseFlowerBookItem(flower);
         item.put("description", nullToDash(flower.getDescription()));
+        item.put("flowerLanguage", nullToDash(flower.getFlowerLanguage()));
+        item.put("bloomMonth", flower.getBloomMonth());
+        item.put("bloomDay", flower.getBloomDay());
+        item.put("bloomDate", bloomDate(flower.getBloomMonth(), flower.getBloomDay()));
+        item.put("imageUrl", nullToDash(flower.getImageUrl()));
         item.put("source", nullToDash(flower.getSource()));
+        return item;
+    }
+
+    private Map<String, Object> toMeaningAndBloomItem(FlowerBookRepository.DescriptionSourceView flower) {
+        Map<String, Object> item = baseFlowerBookItem(flower);
+        item.put("flowerLanguage", nullToDash(flower.getFlowerLanguage()));
+        item.put("bloomMonth", flower.getBloomMonth());
+        item.put("bloomDay", flower.getBloomDay());
+        item.put("bloomDate", bloomDate(flower.getBloomMonth(), flower.getBloomDay()));
+        item.put("source", nullToDash(flower.getSource()));
+        return item;
+    }
+
+    private Map<String, Object> candidateItem(
+            String candidate,
+            String description,
+            FlowerBookRepository.DescriptionSourceView flower
+    ) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("name", flower == null ? candidate : nullToDash(flower.getName()));
+        item.put("reason", candidateReason(candidate, description));
+        item.put("matchedFields", List.of("description"));
+        item.put("confidenceHint", "색상/표현 기반 후보입니다. 사진이나 상세 특징 없이는 확정할 수 없습니다.");
+        if (flower != null) {
+            item.put("flowerBookId", flower.getId());
+            item.put("scientificName", nullToDash(flower.getScientificName()));
+            item.put("description", nullToDash(flower.getDescription()));
+            item.put("flowerLanguage", nullToDash(flower.getFlowerLanguage()));
+            item.put("bloomDate", bloomDate(flower.getBloomMonth(), flower.getBloomDay()));
+            item.put("source", nullToDash(flower.getSource()));
+        }
         return item;
     }
 
@@ -447,6 +592,30 @@ public class FlowerToolService {
 
     private String nullToDash(String value) {
         return value == null || value.isBlank() ? "-" : value;
+    }
+
+    private String truncate(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value;
+        }
+        return value.substring(0, maxLength).trim() + "...";
+    }
+
+    private String candidateReason(String candidate, String description) {
+        String lower = description == null ? "" : description.toLowerCase();
+        if (containsAny(lower, "분홍", "핑크", "pink")) {
+            return "분홍색 꽃 설명과 자주 연결되는 후보입니다.";
+        }
+        if (containsAny(lower, "하얀", "흰", "흰색", "white")) {
+            return "흰색 꽃 설명과 자주 연결되는 후보입니다.";
+        }
+        if (containsAny(lower, "노란", "노랑", "yellow")) {
+            return "노란색 꽃 설명과 자주 연결되는 후보입니다.";
+        }
+        if (containsAny(lower, "보라", "purple", "violet")) {
+            return "보라색 꽃 설명과 자주 연결되는 후보입니다.";
+        }
+        return "이름을 특정하기 어려운 설명에서 비교할 만한 대표 후보입니다.";
     }
 
     private record BookLookup<T>(List<T> items, List<String> candidateKeywords) {
