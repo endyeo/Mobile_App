@@ -151,14 +151,14 @@ public class ChatbotService {
         int step = 1;
 
         steps.add(stepTrace(step++, "RouterAgent", "routeAndPlan", "SUCCESS",
-                plan.source() + "가 필요한 검색 도구와 내부 앱 액션을 선택했습니다."));
+                plan.source() + "가 " + displayPlannerChoice(plan) + " 실행 계획을 선택했습니다."));
         sendStreamEvent(streamSender, "CONTEXT_PLANNED", Map.of(
                 "route", route,
                 "message", "요청 맥락과 필요한 작업 계획을 확인했습니다."
         ));
 
-        if (hasUnsupportedIntent(intents) || wantsUnsupportedFeature(message)) {
-            ToolResult unsupportedResult = unsupportedToolResult(message);
+        if (isUnsupportedPlan(plan, informationTask, intents, message)) {
+            ToolResult unsupportedResult = unsupportedToolResult(message, plan);
             toolResults.add(unsupportedResult);
             sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", unsupportedResult));
             steps.add(stepTrace(step++, "RouterAgent", "app.unsupported", "READY",
@@ -198,7 +198,7 @@ public class ChatbotService {
             addRepresentativeMapAction(actions, flowerResult);
         }
 
-        if (intents.contains(RouteIntent.COMMUNITY) && !actionsContainTarget(actions, "COMMUNITY_COMPOSE")) {
+        if (shouldSearchCommunity(plan, intents, actions)) {
             sendStatus(streamSender, "SEARCH", "커뮤니티 글을 검색하고 있어요.");
             ToolResult communityResult = communityTools.searchPosts(keyword);
             toolResults.add(communityResult);
@@ -346,9 +346,42 @@ public class ChatbotService {
         return intents.contains(RouteIntent.QUEST) || intents.contains(RouteIntent.SHOP);
     }
 
-    private ToolResult unsupportedToolResult(String message) {
+    private boolean isUnsupportedPlan(
+            AgentPlan plan,
+            String informationTask,
+            List<RouteIntent> intents,
+            String message
+    ) {
+        return "unsupported".equals(plan.domain())
+                || "unsupported".equals(informationTask)
+                || hasUnsupportedIntent(intents)
+                || wantsUnsupportedFeature(message);
+    }
+
+    private boolean shouldSearchCommunity(AgentPlan plan, List<RouteIntent> intents, List<ChatAction> actions) {
+        if (actionsContainTarget(actions, "COMMUNITY_COMPOSE")) {
+            return false;
+        }
+        if ("community".equals(plan.domain())) {
+            return "search_posts".equals(plan.task());
+        }
+        return plan.domain().isBlank() && intents.contains(RouteIntent.COMMUNITY);
+    }
+
+    private String displayPlannerChoice(AgentPlan plan) {
+        if (plan.domain().isBlank() && plan.task().isBlank()) {
+            return "기존 route 기반";
+        }
+        return "domain=" + plan.domain() + ", task=" + plan.task();
+    }
+
+    private ToolResult unsupportedToolResult(String message, AgentPlan plan) {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
-        String feature = containsAny(lower, "shop", "store", "buy", "purchase", "상점", "상품", "아이템", "구매", "사줘")
+        String feature = "community_mutation".equals(plan.task())
+                ? "커뮤니티 쓰기/수정"
+                : "private_or_admin".equals(plan.task())
+                ? "개인정보/관리자"
+                : containsAny(lower, "shop", "store", "buy", "purchase", "상점", "상품", "아이템", "구매", "사줘")
                 ? "상점/구매"
                 : "퀘스트/인증";
         Map<String, Object> data = new LinkedHashMap<>();
@@ -540,9 +573,14 @@ public class ChatbotService {
                         .user(message == null ? "" : message)
                         .call()
                         .content();
-                AgentPlan plan = parseAgentPlan(content);
-                if (!plan.intents().isEmpty() || !plan.actions().isEmpty()) {
-                    return plan;
+                PlannerDecision decision = parsePlannerDecision(content, "AIPlanner");
+                PlannerValidation validation = validatePlannerDecision(decision);
+                if (!validation.valid()) {
+                    decision = repairPlannerDecision(message, content, validation);
+                    validation = validatePlannerDecision(decision);
+                }
+                if (validation.valid()) {
+                    return toAgentPlan(decision);
                 }
             } catch (Exception e) {
                 log.warn("AI 계획 JSON 생성 실패. 로컬 플래너로 전환합니다: {}", e.getMessage());
@@ -553,57 +591,251 @@ public class ChatbotService {
 
     private String planningSystemPrompt() {
         // 이 프롬프트는 AIPlanner가 사용자 말을 JSON 계획으로만 바꾸게 하는 지시문이다.
-        // GENERAL은 인사/감사/잡담/일반 질문처럼 앱 화면을 움직일 필요가 없는 대화를 뜻한다.
-        // action은 실제 Flutter 앱 제어 명령이므로, 실행할 도구가 없으면 반드시 빈 배열을 반환해야 한다.
-        // MAP intent는 지도 관련 의도 분류이고, NAVIGATE/MAP action은 실제 지도 화면 이동 명령이다.
-        // 프롬프트는 AI의 계획 생성을 유도하고, 서버 validator는 최종 안전장치 역할을 한다.
+        // domain/task는 서버가 허용된 도구와 액션으로 변환하는 실행 계약이다.
+        // planner는 도구명과 action명을 직접 고르지 않고 사용자 목적만 구조화한다.
         return """
                 You are FLOWER's RouterAI and specialist planner.
                 Return only valid JSON. Do not wrap it in markdown.
                 Schema:
                 {
-                  "intents": ["GENERAL" | "MAP" | "FLOWER" | "FLOWER_GROW" | "COMMUNITY" | "WALK" | "SAVED" | "QUEST" | "SHOP"],
-                  "information_task": "basic_info" | "meaning_bloom" | "grow_guide" | "monthly_recommendation" | "candidate_inference" | "place_search" | "app_navigation" | "unsupported" | "general",
-                  "searchKeyword": "optional keyword, empty string if the user only wants screen navigation",
-                  "actions": [
-                    {"type":"NAVIGATE","target":"MAP|COMMUNITY|COMMUNITY_COMPOSE|WALK|FLOWER_BOOK|SAVED","params":{}},
-                    {"type":"MAP_SET_SEARCH_QUERY","target":"MAP","params":{"query":"flower name only"}},
-                    {"type":"NAVIGATE","target":"COMMUNITY_COMPOSE","params":{}}
-                  ]
+                  "domain": "flower_info | community | map_place | app_navigation | unsupported | general",
+                  "task": "basic_info | meaning_bloom | grow_guide | monthly_recommendation | candidate_inference | search_posts | open_community | open_composer | place_search | open_map | open_flower_book | open_walk | open_saved | shop_purchase | quest_verification | community_mutation | private_or_admin | general_chat",
+                  "keyword": "optional flower, place, or topic keyword",
+                  "needs_screen": true,
+                  "confidence": "high | medium | low",
+                  "reason": "short Korean reason"
                 }
                 Rules:
-                - For greetings, thanks, small talk, capability questions, and general conversation, return intents ["GENERAL"], searchKeyword "", and actions [].
-                - Your primary job is classifying what information the user wants. Do not answer in this planner.
-                - For flower information questions, set information_task and keep actions [].
-                - basic_info: flower description, features, general information, scientific name.
-                - meaning_bloom: flower language, bloom month/day, when it blooms, flowering season.
-                - grow_guide: care, growing, watering, sunlight, soil, management.
-                - monthly_recommendation: this month, a specific month, season, or monthly flower recommendation.
-                - candidate_inference: the user does not know the flower name, gives color/shape clues, or asks "what flower is this".
-                - place_search: flower place, festival, nearby spot, route, location, or map search.
-                - app_navigation: the user explicitly wants to open an app screen such as flower book, map, community, walk, or saved.
-                - unsupported: shop, purchase, quest, mission, verification, point grant, admin, private data, or direct community write/mutate requests.
-                - If there is no appropriate app-control action to run, return actions [].
-                - If the user asks for flower facts, descriptions, features, flower language, bloom timing, or identification, use intent FLOWER, no navigation action, and searchKeyword should be the flower name.
-                - If the user asks for flower care, growing, watering, sunlight, soil, or grow tips, use intent FLOWER_GROW, information_task grow_guide, no navigation action, and searchKeyword should be the flower name.
-                - If the user asks for seasonal or monthly flower recommendations, use intent FLOWER, information_task monthly_recommendation, and searchKeyword "" unless a flower name is specified.
-                - If the user describes a flower but says they do not know its name, use intent FLOWER, information_task candidate_inference, no navigation action, and keep the descriptive phrase as searchKeyword.
-                - If a message contains map/place words but mainly asks what the flower is, what it means, when it blooms, or how to grow it, choose the information task first and keep actions [].
-                - If the user asks about a flower festival, event, spot, place, nearby area, route, location, or map as the main goal, use information_task place_search.
-                - Do not create any NAVIGATE action unless the user explicitly asks to open, show, move to, or view a screen.
-                - Do not create NAVIGATE MAP unless the user explicitly asks for a map, location, nearby places, route, directions, or path.
-                - If the user only asks to open or view the map, use NAVIGATE MAP only and searchKeyword must be "".
-                - Use MAP_SET_SEARCH_QUERY only when the user names a flower or flower place to find on the map.
-                - If the user wants to write or create a community post, use NAVIGATE COMMUNITY_COMPOSE only.
-                - Do not generate community post content or drafts.
-                - If the user asks to like, comment, delete, edit, automatically save, or publish a community post for them, use unsupported with actions [].
-                - If the user only asks to open the community screen, use NAVIGATE COMMUNITY and do not search posts.
-                - If the user asks to find, search, show, or read reviews/posts, use intent COMMUNITY and searchKeyword from the flower/place/topic.
-                - If the user asks to open saved/bookmarked items, use NAVIGATE SAVED.
-                - Shop, purchase, quest, mission, point grant, and verification actions are not supported in v1. Return intent SHOP or QUEST with actions [].
-                - For Korean flower names, preserve the full name such as "벚꽃"; remove particles such as "에서".
-                - Do not invent actions outside the schema.
+                - Choose only domain and task. Do not choose tool names or action names.
+                - Community writing takes priority over community search. If the user says "글 써줘", "글 올릴래", or "작성", choose community/open_composer even if the message contains "후기".
+                - Community mutation requests such as like, comment, delete, edit, auto-save, or publish-for-me are unsupported/community_mutation.
+                - "커뮤니티 열어줘" is community/open_community and must not search posts.
+                - Flower information is more important than screen navigation unless the user explicitly asks for a screen.
+                - General greetings and small talk are general/general_chat.
+                - Preserve Korean flower/topic keywords such as "수국", "벚꽃", "장미", "라벤더".
+
+                Examples:
+                User: 수국 후기 찾아줘
+                JSON: {"domain":"community","task":"search_posts","keyword":"수국","needs_screen":false,"confidence":"high","reason":"수국 후기 검색 요청"}
+                User: 벚꽃 커뮤니티 글 보여줘
+                JSON: {"domain":"community","task":"search_posts","keyword":"벚꽃","needs_screen":true,"confidence":"high","reason":"커뮤니티 글 조회 요청"}
+                User: 장미 게시글 검색해줘
+                JSON: {"domain":"community","task":"search_posts","keyword":"장미","needs_screen":false,"confidence":"high","reason":"게시글 검색 요청"}
+                User: 라벤더 본 사람 후기 있어?
+                JSON: {"domain":"community","task":"search_posts","keyword":"라벤더","needs_screen":false,"confidence":"high","reason":"후기 존재 확인"}
+                User: 커뮤니티 열어줘
+                JSON: {"domain":"community","task":"open_community","keyword":"","needs_screen":true,"confidence":"high","reason":"커뮤니티 화면 이동"}
+                User: 꽃 후기 보고 싶어
+                JSON: {"domain":"community","task":"search_posts","keyword":"꽃","needs_screen":true,"confidence":"high","reason":"꽃 후기 조회"}
+                User: 수국 후기 글 써줘
+                JSON: {"domain":"community","task":"open_composer","keyword":"수국","needs_screen":true,"confidence":"high","reason":"후기 글 작성 화면 요청"}
+                User: 커뮤니티에 글 올릴래
+                JSON: {"domain":"community","task":"open_composer","keyword":"","needs_screen":true,"confidence":"high","reason":"커뮤니티 글 작성 화면 요청"}
+                User: 글 내용까지 대신 저장해줘
+                JSON: {"domain":"unsupported","task":"community_mutation","keyword":"","needs_screen":false,"confidence":"high","reason":"자동 저장은 지원하지 않음"}
+                User: 이 게시글 좋아요 눌러줘
+                JSON: {"domain":"unsupported","task":"community_mutation","keyword":"","needs_screen":false,"confidence":"high","reason":"좋아요 직접 실행은 지원하지 않음"}
+                User: 댓글 대신 달아줘
+                JSON: {"domain":"unsupported","task":"community_mutation","keyword":"","needs_screen":false,"confidence":"high","reason":"댓글 직접 작성은 지원하지 않음"}
+                User: 게시글 삭제해줘
+                JSON: {"domain":"unsupported","task":"community_mutation","keyword":"","needs_screen":false,"confidence":"high","reason":"게시글 삭제는 지원하지 않음"}
+                User: 장미가 어떤 꽃이야?
+                JSON: {"domain":"flower_info","task":"basic_info","keyword":"장미","needs_screen":false,"confidence":"high","reason":"꽃 기본 정보 질문"}
+                User: 수국 꽃말 알려줘
+                JSON: {"domain":"flower_info","task":"meaning_bloom","keyword":"수국","needs_screen":false,"confidence":"high","reason":"꽃말 질문"}
+                User: 장미 키우는 법 알려줘
+                JSON: {"domain":"flower_info","task":"grow_guide","keyword":"장미","needs_screen":false,"confidence":"high","reason":"재배 정보 질문"}
+                User: 이번 달에 피는 꽃 추천해줘
+                JSON: {"domain":"flower_info","task":"monthly_recommendation","keyword":"","needs_screen":false,"confidence":"high","reason":"월별 꽃 추천"}
+                User: 분홍색 꽃인데 이름이 뭘까?
+                JSON: {"domain":"flower_info","task":"candidate_inference","keyword":"분홍색 꽃","needs_screen":false,"confidence":"medium","reason":"꽃 이름 후보 추정"}
+                User: 벚꽃 지도에서 보여줘
+                JSON: {"domain":"map_place","task":"place_search","keyword":"벚꽃","needs_screen":true,"confidence":"high","reason":"지도에서 장소 확인"}
+                User: 장미 도감에서 찾아줘
+                JSON: {"domain":"app_navigation","task":"open_flower_book","keyword":"장미","needs_screen":true,"confidence":"high","reason":"도감 화면 이동"}
+                User: 안녕
+                JSON: {"domain":"general","task":"general_chat","keyword":"","needs_screen":false,"confidence":"high","reason":"인사"}
                 """;
+    }
+
+    private PlannerDecision repairPlannerDecision(String message, String invalidContent, PlannerValidation validation)
+            throws Exception {
+        String repairUserPrompt = """
+                Original user message:
+                %s
+
+                Invalid planner JSON:
+                %s
+
+                Contract errors:
+                %s
+
+                Return corrected JSON only, using the same schema. Do not answer the user.
+                """.formatted(
+                message == null ? "" : message,
+                invalidContent == null ? "" : invalidContent,
+                String.join("; ", validation.errors())
+        );
+
+        String repaired = chatClient.prompt()
+                .system(planningRepairSystemPrompt())
+                .user(repairUserPrompt)
+                .call()
+                .content();
+        return parsePlannerDecision(repaired, "AIPlannerRepair");
+    }
+
+    private String planningRepairSystemPrompt() {
+        return """
+                You repair FLOWER planner JSON.
+                Return only valid JSON with this schema:
+                {"domain":"flower_info|community|map_place|app_navigation|unsupported|general","task":"string","keyword":"string","needs_screen":true,"confidence":"high|medium|low","reason":"short Korean reason"}
+                Do not add actions, tool names, markdown, or prose.
+                Domain/task must be a valid pair.
+                """;
+    }
+
+    private PlannerDecision parsePlannerDecision(String content, String source) throws Exception {
+        if (content == null || content.isBlank()) {
+            return new PlannerDecision("", "", "", false, "low", "empty planner response", source);
+        }
+        JsonNode root = JSON_MAPPER.readTree(content.trim());
+        String domain = root.path("domain").asText("").trim().toLowerCase(Locale.ROOT);
+        String task = root.path("task").asText("").trim().toLowerCase(Locale.ROOT);
+        String keyword = root.path("keyword").asText(root.path("searchKeyword").asText("")).trim();
+        boolean needsScreen = root.path("needs_screen").asBoolean(root.path("needsScreen").asBoolean(false));
+        String confidence = root.path("confidence").asText("medium").trim().toLowerCase(Locale.ROOT);
+        String reason = root.path("reason").asText("").trim();
+        return new PlannerDecision(
+                domain,
+                task,
+                sanitizePlannerKeyword(keyword),
+                needsScreen,
+                confidence,
+                reason,
+                source
+        );
+    }
+
+    private PlannerValidation validatePlannerDecision(PlannerDecision decision) {
+        List<String> errors = new ArrayList<>();
+        String domain = decision.domain();
+        String task = decision.task();
+        if (!List.of("flower_info", "community", "map_place", "app_navigation", "unsupported", "general")
+                .contains(domain)) {
+            errors.add("unknown domain: " + domain);
+        }
+
+        Map<String, List<String>> allowedTasks = Map.of(
+                "flower_info", List.of("basic_info", "meaning_bloom", "grow_guide", "monthly_recommendation", "candidate_inference"),
+                "community", List.of("search_posts", "open_community", "open_composer"),
+                "map_place", List.of("place_search"),
+                "app_navigation", List.of("open_map", "open_flower_book", "open_walk", "open_saved"),
+                "unsupported", List.of("shop_purchase", "quest_verification", "community_mutation", "private_or_admin"),
+                "general", List.of("general_chat")
+        );
+        if (!allowedTasks.getOrDefault(domain, List.of()).contains(task)) {
+            errors.add("invalid task for domain: " + domain + "/" + task);
+        }
+        if ("unsupported".equals(domain) && decision.needsScreen()) {
+            errors.add("unsupported requests must not need a screen");
+        }
+        if ("general".equals(domain) && decision.needsScreen()) {
+            errors.add("general chat must not need a screen");
+        }
+        return new PlannerValidation(errors.isEmpty(), errors);
+    }
+
+    private AgentPlan toAgentPlan(PlannerDecision decision) {
+        String keyword = sanitizePlannerKeyword(decision.keyword());
+        List<RouteIntent> intents = new ArrayList<>();
+        List<ChatAction> actions = new ArrayList<>();
+        String informationTask = "general";
+
+        switch (decision.domain()) {
+            case "flower_info" -> {
+                if ("grow_guide".equals(decision.task())) {
+                    intents.add(RouteIntent.FLOWER_GROW);
+                } else {
+                    intents.add(RouteIntent.FLOWER);
+                }
+                informationTask = decision.task();
+            }
+            case "community" -> {
+                intents.add(RouteIntent.COMMUNITY);
+                informationTask = "app_navigation";
+                if ("open_community".equals(decision.task())
+                        || ("search_posts".equals(decision.task()) && decision.needsScreen())) {
+                    actions.add(navigateAction("COMMUNITY", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
+                } else if ("open_composer".equals(decision.task())) {
+                    actions.add(navigateAction("COMMUNITY_COMPOSE", Map.of()));
+                }
+            }
+            case "map_place" -> {
+                intents.add(RouteIntent.MAP);
+                intents.add(RouteIntent.FLOWER);
+                informationTask = "place_search";
+                actions.add(navigateAction("MAP", Map.of()));
+                if (!keyword.isBlank()) {
+                    actions.add(ChatAction.builder()
+                            .type("MAP_SET_SEARCH_QUERY")
+                            .target("MAP")
+                            .params(Map.of("query", keyword))
+                            .build());
+                }
+            }
+            case "app_navigation" -> {
+                informationTask = "app_navigation";
+                switch (decision.task()) {
+                    case "open_map" -> {
+                        intents.add(RouteIntent.MAP);
+                        actions.add(navigateAction("MAP", Map.of()));
+                    }
+                    case "open_flower_book" -> {
+                        intents.add(RouteIntent.FLOWER);
+                        actions.add(navigateAction("FLOWER_BOOK", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
+                    }
+                    case "open_walk" -> {
+                        intents.add(RouteIntent.WALK);
+                        actions.add(navigateAction("WALK", Map.of()));
+                    }
+                    case "open_saved" -> {
+                        intents.add(RouteIntent.SAVED);
+                        actions.add(navigateAction("SAVED", Map.of()));
+                    }
+                    default -> intents.add(RouteIntent.GENERAL);
+                }
+            }
+            case "unsupported" -> {
+                informationTask = "unsupported";
+                if ("shop_purchase".equals(decision.task())) {
+                    intents.add(RouteIntent.SHOP);
+                } else if ("quest_verification".equals(decision.task())) {
+                    intents.add(RouteIntent.QUEST);
+                } else if ("community_mutation".equals(decision.task())) {
+                    intents.add(RouteIntent.COMMUNITY);
+                } else {
+                    intents.add(RouteIntent.GENERAL);
+                }
+            }
+            default -> {
+                intents.add(RouteIntent.GENERAL);
+                informationTask = "general";
+            }
+        }
+
+        return new AgentPlan(
+                intents.stream().distinct().toList(),
+                informationTask,
+                keyword,
+                actions,
+                decision.source(),
+                decision.domain(),
+                decision.task(),
+                decision.needsScreen(),
+                decision.confidence(),
+                decision.reason()
+        );
     }
 
     private AgentPlan parseAgentPlan(String content) throws Exception {
@@ -961,7 +1193,38 @@ public class ChatbotService {
             String informationTask,
             String searchKeyword,
             List<ChatAction> actions,
+            String source,
+            String domain,
+            String task,
+            boolean needsScreen,
+            String confidence,
+            String reason
+    ) {
+        private AgentPlan(
+                List<RouteIntent> intents,
+                String informationTask,
+                String searchKeyword,
+                List<ChatAction> actions,
+                String source
+        ) {
+            this(intents, informationTask, searchKeyword, actions, source, "", "", false, "", "");
+        }
+    }
+
+    private record PlannerDecision(
+            String domain,
+            String task,
+            String keyword,
+            boolean needsScreen,
+            String confidence,
+            String reason,
             String source
+    ) {
+    }
+
+    private record PlannerValidation(
+            boolean valid,
+            List<String> errors
     ) {
     }
 

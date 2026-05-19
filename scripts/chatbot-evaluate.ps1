@@ -159,6 +159,23 @@ function Get-ToolNames($ToolResults) {
     return $names
 }
 
+function Get-PlannerSummary($AgentRun) {
+    $steps = Convert-ToArray (Get-PropertyValue $AgentRun "steps")
+    if ($steps.Count -eq 0) {
+        return ""
+    }
+    $first = $steps[0]
+    $tool = [string](Get-PropertyValue $first "tool")
+    $message = [string](Get-PropertyValue $first "message")
+    if ([string]::IsNullOrWhiteSpace($message)) {
+        return $tool
+    }
+    if ([string]::IsNullOrWhiteSpace($tool)) {
+        return $message
+    }
+    return "$tool - $message"
+}
+
 function Get-ResponseData($Response) {
     $data = Get-PropertyValue $Response "data"
     if ($null -eq $data) {
@@ -251,6 +268,7 @@ foreach ($case in $cases) {
     $data = Get-ResponseData $response
     $agentRun = Get-PropertyValue $data "agentRun"
     $route = [string](Get-PropertyValue $agentRun "route")
+    $plannerSummary = Get-PlannerSummary $agentRun
     $actions = Convert-ToArray (Get-PropertyValue $data "actions")
     $singleAction = Get-PropertyValue $data "action"
     if ($actions.Count -eq 0 -and $null -ne $singleAction) {
@@ -311,6 +329,7 @@ foreach ($case in $cases) {
     $actualActionText = ($actions | ForEach-Object { ConvertTo-ActionText $_ }) -join ", "
     if ($ShowDetails) {
         Write-Host ("  actual: route {0} / actions [{1}] / tools [{2}] / latency {3}ms" -f $route, $actualActionText, ($tools -join ","), [math]::Round($stopwatch.Elapsed.TotalMilliseconds))
+        Write-Host ("  planner: {0}" -f $plannerSummary)
         Write-Host ("  reply: {0}" -f (Shorten-Text $reply 180))
     }
     if (-not $passed) {
@@ -337,6 +356,7 @@ foreach ($case in $cases) {
         }
         actual = [pscustomobject]@{
             route = $route
+            planner = $plannerSummary
             actions = $actions
             tools = $tools
             reply = $reply
