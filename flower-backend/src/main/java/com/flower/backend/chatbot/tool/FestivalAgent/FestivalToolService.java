@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flower.backend.chatbot.dto.ChatMessageRequest;
 import com.flower.backend.chatbot.dto.ToolResult;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
+import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -28,6 +31,7 @@ public class FestivalToolService {
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
     private static final String BASE_URL = "https://apis.data.go.kr/B551011/KorService2";
     private static final DateTimeFormatter TOUR_DATE = DateTimeFormatter.BASIC_ISO_DATE;
+    private static final ZoneId KOREA_ZONE = ZoneId.of("Asia/Seoul");
     private static final List<String> FLOWER_KEYWORDS = List.of(
             "꽃", "벚꽃", "진달래", "매화", "수국", "장미", "개나리", "철쭉", "국화",
             "해바라기", "코스모스", "동백", "유채", "flower"
@@ -43,18 +47,41 @@ public class FestivalToolService {
             ChatMessageRequest.LocationContext location,
             boolean nearby
     ) {
+        return searchFlowerFestivalsResult(keyword, location, nearby, "none");
+    }
+
+    public ToolResult searchFlowerFestivalsResult(
+            String keyword,
+            ChatMessageRequest.LocationContext location,
+            boolean nearby,
+            String dateFilter
+    ) {
         String sanitized = sanitizeKeyword(keyword);
         if (sanitized.isBlank()) {
             sanitized = "꽃";
         }
+        String effectiveDateFilter = normalizeDateFilter(dateFilter);
+        LocalDate today = LocalDate.now(KOREA_ZONE);
+        DateRange dateRange = resolveDateRange(effectiveDateFilter, today);
 
         if (tourApiKey == null || tourApiKey.isBlank()) {
+            Map<String, Object> data = diagnosticData(
+                    sanitized,
+                    nearby,
+                    location,
+                    effectiveDateFilter,
+                    dateRange,
+                    today,
+                    0,
+                    0,
+                    0
+            );
             return ToolResult.builder()
                     .tool("festival.searchFlowerFestivals")
                     .status("ERROR")
                     .summary("Tour API 키가 없어 축제 정보를 조회할 수 없습니다.")
                     .error("TOUR_API_KEY is not configured.")
-                    .data(Map.of("items", List.of(), "source", "Tour API"))
+                    .data(data)
                     .build();
         }
 
@@ -64,14 +91,31 @@ public class FestivalToolService {
                 items = fetchByKeyword("꽃");
             }
             if (items.isEmpty()) {
-                items = fetchUpcomingFestivals();
+                items = fetchUpcomingFestivals(dateRange.start());
             }
 
-            List<FestivalItem> filtered = dedupe(items).stream()
-                    .filter(FestivalItem::hasLocation)
-                    .filter(FestivalItem::isFlowerFestival)
-                    .filter(festival -> !festival.isPast(LocalDate.now()))
-                    .toList();
+            int excludedPastCount = 0;
+            int excludedDateCount = 0;
+            int excludedUnknownDateCount = 0;
+            List<FestivalItem> filtered = new ArrayList<>();
+            for (FestivalItem festival : dedupe(items)) {
+                if (!festival.hasLocation() || !festival.isFlowerFestival()) {
+                    continue;
+                }
+                if (festival.isPast(today)) {
+                    excludedPastCount++;
+                    continue;
+                }
+                if (!festival.hasUsableDate()) {
+                    excludedUnknownDateCount++;
+                    continue;
+                }
+                if (!festival.matchesDateRange(dateRange, today)) {
+                    excludedDateCount++;
+                    continue;
+                }
+                filtered.add(festival);
+            }
 
             if (nearby && location != null && location.getLat() != null && location.getLng() != null) {
                 filtered = filtered.stream()
@@ -89,30 +133,45 @@ public class FestivalToolService {
                     .map(festival -> festival.toItem(location))
                     .toList();
 
-            Map<String, Object> data = new LinkedHashMap<>();
+            Map<String, Object> data = diagnosticData(
+                    sanitized,
+                    nearby,
+                    location,
+                    effectiveDateFilter,
+                    dateRange,
+                    today,
+                    excludedPastCount,
+                    excludedDateCount,
+                    excludedUnknownDateCount
+            );
             data.put("items", rows);
-            data.put("source", "Tour API");
-            data.put("keyword", sanitized);
-            data.put("nearby", nearby);
-            if (location != null && location.getLat() != null && location.getLng() != null) {
-                data.put("lat", location.getLat());
-                data.put("lng", location.getLng());
-            }
 
             return ToolResult.builder()
                     .tool("festival.searchFlowerFestivals")
                     .status("SUCCESS")
-                    .summary("'" + sanitized + "' 꽃 축제 검색 결과 " + rows.size() + "건을 찾았습니다.")
+                    .summary(dateRange.label() + " 기준 '" + sanitized + "' 꽃 축제 검색 결과 "
+                            + rows.size() + "건을 찾았습니다.")
                     .data(data)
                     .build();
         } catch (Exception e) {
             log.warn("[Tool:festival] Tour API 축제 조회 실패: {}", e.getMessage());
+            Map<String, Object> data = diagnosticData(
+                    sanitized,
+                    nearby,
+                    location,
+                    effectiveDateFilter,
+                    dateRange,
+                    today,
+                    0,
+                    0,
+                    0
+            );
             return ToolResult.builder()
                     .tool("festival.searchFlowerFestivals")
                     .status("ERROR")
                     .summary("축제 정보 조회에 실패했습니다.")
                     .error("Tour API 축제 조회 중 오류가 발생했습니다.")
-                    .data(Map.of("items", List.of(), "source", "Tour API", "keyword", sanitized))
+                    .data(data)
                     .build();
         }
     }
@@ -132,8 +191,8 @@ public class FestivalToolService {
         return parseFestivalList(restTemplate.getForObject(uri, String.class));
     }
 
-    private List<FestivalItem> fetchUpcomingFestivals() throws Exception {
-        String eventStartDate = LocalDate.now().minusMonths(3).format(TOUR_DATE);
+    private List<FestivalItem> fetchUpcomingFestivals(LocalDate rangeStart) throws Exception {
+        String eventStartDate = rangeStart.minusMonths(3).format(TOUR_DATE);
         String uri = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/searchFestival2")
                 .queryParam("serviceKey", tourApiKey)
                 .queryParam("numOfRows", 60)
@@ -146,6 +205,85 @@ public class FestivalToolService {
                 .build(false)
                 .toUriString();
         return parseFestivalList(restTemplate.getForObject(uri, String.class));
+    }
+
+    static String normalizeDateFilter(String dateFilter) {
+        String normalized = dateFilter == null ? "" : dateFilter.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "today", "this_week", "this_month", "upcoming" -> normalized;
+            default -> "upcoming";
+        };
+    }
+
+    static DateRange resolveDateRange(String dateFilter, LocalDate today) {
+        String normalized = normalizeDateFilter(dateFilter);
+        return switch (normalized) {
+            case "today" -> new DateRange("today", today, today, "오늘");
+            case "this_week" -> new DateRange(
+                    "this_week",
+                    today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)),
+                    today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY)),
+                    "이번 주"
+            );
+            case "this_month" -> new DateRange(
+                    "this_month",
+                    today.withDayOfMonth(1),
+                    today.withDayOfMonth(today.lengthOfMonth()),
+                    "이번 달"
+            );
+            default -> new DateRange("upcoming", today, null, "다가오는 일정");
+        };
+    }
+
+    static boolean matchesFestivalDateRange(String eventStartDate, String eventEndDate, DateRange dateRange, LocalDate today) {
+        LocalDate startDate = parseTourDate(eventStartDate);
+        LocalDate endDate = parseTourDate(eventEndDate);
+        if (startDate == null && endDate == null) {
+            return false;
+        }
+        if (startDate == null) {
+            startDate = endDate;
+        }
+        if (endDate == null) {
+            endDate = startDate;
+        }
+        if (endDate.isBefore(today)) {
+            return false;
+        }
+        if (dateRange.end() == null) {
+            return !endDate.isBefore(dateRange.start());
+        }
+        return !startDate.isAfter(dateRange.end()) && !endDate.isBefore(dateRange.start());
+    }
+
+    private Map<String, Object> diagnosticData(
+            String keyword,
+            boolean nearby,
+            ChatMessageRequest.LocationContext location,
+            String dateFilter,
+            DateRange dateRange,
+            LocalDate today,
+            int excludedPastCount,
+            int excludedDateCount,
+            int excludedUnknownDateCount
+    ) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("items", List.of());
+        data.put("source", "Tour API");
+        data.put("keyword", keyword);
+        data.put("nearby", nearby);
+        data.put("dateFilter", dateFilter);
+        data.put("rangeStart", dateRange.start().toString());
+        data.put("rangeEnd", dateRange.end() == null ? "" : dateRange.end().toString());
+        data.put("today", today.toString());
+        data.put("excludedPastCount", excludedPastCount);
+        data.put("excludedDateCount", excludedDateCount);
+        data.put("excludedUnknownDateCount", excludedUnknownDateCount);
+        if (location != null && location.getLat() != null && location.getLng() != null) {
+            data.put("lat", location.getLat());
+            data.put("lng", location.getLng());
+        }
+        return data;
     }
 
     private List<FestivalItem> parseFestivalList(String responseBody) throws Exception {
@@ -228,8 +366,20 @@ public class FestivalToolService {
         }
 
         boolean isPast(LocalDate today) {
+            LocalDate startDate = parseDate(eventStartDate);
             LocalDate endDate = parseDate(eventEndDate);
-            return endDate != null && endDate.isBefore(today);
+            if (endDate != null) {
+                return endDate.isBefore(today);
+            }
+            return startDate != null && startDate.isBefore(today);
+        }
+
+        boolean hasUsableDate() {
+            return parseDate(eventStartDate) != null || parseDate(eventEndDate) != null;
+        }
+
+        boolean matchesDateRange(DateRange dateRange, LocalDate today) {
+            return matchesFestivalDateRange(eventStartDate, eventEndDate, dateRange, today);
         }
 
         Map<String, Object> toItem(ChatMessageRequest.LocationContext location) {
@@ -318,5 +468,24 @@ public class FestivalToolService {
             }
             return value.substring(0, 4) + "." + value.substring(4, 6) + "." + value.substring(6, 8);
         }
+    }
+
+    private static LocalDate parseTourDate(String value) {
+        if (value == null || value.length() != 8) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value, TOUR_DATE);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
+    }
+
+    record DateRange(
+            String filter,
+            LocalDate start,
+            LocalDate end,
+            String label
+    ) {
     }
 }

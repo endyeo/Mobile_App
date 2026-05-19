@@ -3,7 +3,12 @@
     "id": "F001",
     "message": "이번 주 꽃 축제 알려줘",
     "expectedRoutes": ["FESTIVAL"],
-    "expectedTools": ["festival.searchFlowerFestivals"]
+    "expectedTools": ["festival.searchFlowerFestivals"],
+    "expectedToolData": {
+      "festival.searchFlowerFestivals": {
+        "dateFilter": "this_week"
+      }
+    }
   },
   {
     "id": "F002",
@@ -51,7 +56,12 @@
     "id": "F007",
     "message": "이번 달 갈 만한 꽃 행사 추천해줘",
     "expectedRoutes": ["FESTIVAL"],
-    "expectedTools": ["festival.searchFlowerFestivals"]
+    "expectedTools": ["festival.searchFlowerFestivals"],
+    "expectedToolData": {
+      "festival.searchFlowerFestivals": {
+        "dateFilter": "this_month"
+      }
+    }
   },
   {
     "id": "F008",
@@ -71,5 +81,27 @@
     "expectedRoutes": ["GENERAL"],
     "expectedTools": [],
     "expectedActions": []
+  },
+  {
+    "id": "F011",
+    "message": "이번 달 꽃 행사 추천해줘",
+    "expectedRoutes": ["FESTIVAL"],
+    "expectedTools": ["festival.searchFlowerFestivals"],
+    "expectedToolData": {
+      "festival.searchFlowerFestivals": {
+        "dateFilter": "this_month"
+      }
+    }
+  },
+  {
+    "id": "F012",
+    "message": "다가오는 꽃 축제 알려줘",
+    "expectedRoutes": ["FESTIVAL"],
+    "expectedTools": ["festival.searchFlowerFestivals"],
+    "expectedToolData": {
+      "festival.searchFlowerFestivals": {
+        "dateFilter": "upcoming"
+      }
+    }
   }
 ]

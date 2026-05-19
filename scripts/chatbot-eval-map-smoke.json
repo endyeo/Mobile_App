@@ -1,0 +1,236 @@
+[
+  {
+    "id": "M001",
+    "message": "꽃 지도 열어줘",
+    "expectedRoutes": ["MAP"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": [],
+    "forbiddenTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M002",
+    "message": "벚꽃 지도에서 보여줘",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      },
+      {
+        "type": "MAP_SET_SEARCH_QUERY",
+        "target": "MAP",
+        "params": {
+          "query": "벚꽃"
+        }
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M003",
+    "message": "수국 명소 어디 있어?",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.searchFlowerSpots"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "M004",
+    "message": "근처 꽃 명소 추천해줘",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"],
+    "expectedToolData": {
+      "flower.searchFlowerSpots": {
+        "nearby": "True",
+        "locationUsed": "True"
+      }
+    }
+  },
+  {
+    "id": "M005",
+    "message": "주변 꽃길 찾아줘",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"],
+    "expectedToolData": {
+      "flower.searchFlowerSpots": {
+        "nearby": "True",
+        "locationUsed": "True"
+      }
+    }
+  },
+  {
+    "id": "M006",
+    "message": "라벤더 볼 수 있는 곳 알려줘",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.searchFlowerSpots"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "M007",
+    "message": "장미 정보 알려줘",
+    "expectedRoutes": ["FLOWER"],
+    "expectedActions": [],
+    "expectedTools": ["flower.getBasicInfo"],
+    "forbiddenActions": ["*"],
+    "forbiddenTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M008",
+    "message": "장미 가는 길 알려줘",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      },
+      {
+        "type": "MAP_SET_SEARCH_QUERY",
+        "target": "MAP",
+        "params": {
+          "query": "장미"
+        }
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M009",
+    "message": "장미까지 대중교통 길찾기",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      },
+      {
+        "type": "MAP_SET_SEARCH_QUERY",
+        "target": "MAP",
+        "params": {
+          "query": "장미"
+        }
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M010",
+    "message": "벚꽃 도보 길찾기",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      },
+      {
+        "type": "MAP_SET_SEARCH_QUERY",
+        "target": "MAP",
+        "params": {
+          "query": "벚꽃"
+        }
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M011",
+    "message": "수국 자동차 길찾기",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      },
+      {
+        "type": "MAP_SET_SEARCH_QUERY",
+        "target": "MAP",
+        "params": {
+          "query": "수국"
+        }
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M012",
+    "message": "장미 지도에서 보여줘",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      },
+      {
+        "type": "MAP_SET_SEARCH_QUERY",
+        "target": "MAP",
+        "params": {
+          "query": "장미"
+        }
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"],
+    "forbiddenActions": ["MAP_OPEN_ROUTE_CHOOSER", "MAP_START_ROUTE"]
+  },
+  {
+    "id": "M013",
+    "message": "축제 지도에서 보여줘",
+    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "M014",
+    "message": "상점에서 지도 아이템 사줘",
+    "expectedTools": ["app.unsupported"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "M015",
+    "message": "수국 위치 지도 열어줘",
+    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      },
+      {
+        "type": "MAP_SET_SEARCH_QUERY",
+        "target": "MAP",
+        "params": {
+          "query": "수국"
+        }
+      }
+    ],
+    "expectedTools": ["flower.searchFlowerSpots"]
+  },
+  {
+    "id": "M016",
+    "message": "안녕",
+    "expectedRoutes": ["GENERAL"],
+    "expectedTools": [],
+    "expectedActions": [],
+    "forbiddenActions": ["*"]
+  }
+]

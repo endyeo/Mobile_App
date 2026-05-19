@@ -192,13 +192,13 @@ public class ChatbotService {
                     festivalResult.getSummary()));
         }
 
-        ToolResult informationResult = executeInformationTask(informationTask, keyword, message, streamSender);
+        ToolResult informationResult = executeInformationTask(informationTask, keyword, message, plan, location, streamSender);
         if (informationResult != null) {
             toolResults.add(informationResult);
             sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", informationResult));
             steps.add(stepTrace(step++, "FlowerAgent", informationResult.getTool(), "SUCCESS",
                     informationResult.getSummary()));
-            addRepresentativeMapAction(actions, informationResult);
+            addRepresentativeMapAction(actions, informationResult, plan);
         } else if (flowerIntent && !flowerBookRequested) {
             sendStatus(streamSender, "SEARCH", "꽃 정보를 검색하고 있어요.");
             flowerResults = searchFlowers(keyword);
@@ -207,7 +207,7 @@ public class ChatbotService {
             sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", flowerResult));
             steps.add(stepTrace(step++, "FlowerAgent", "searchFlowerSpots", "SUCCESS",
                     "승인된 꽃 명소 후보 " + flowerResults.size() + "개를 확인했습니다."));
-            addRepresentativeMapAction(actions, flowerResult);
+            addRepresentativeMapAction(actions, flowerResult, plan);
         }
 
         if (shouldSearchCommunity(plan, intents, actions)) {
@@ -248,6 +248,8 @@ public class ChatbotService {
             String informationTask,
             String keyword,
             String message,
+            AgentPlan plan,
+            ChatMessageRequest.LocationContext location,
             StreamSender streamSender
     ) {
         return switch (informationTask) {
@@ -273,7 +275,7 @@ public class ChatbotService {
             }
             case "place_search" -> {
                 sendStatus(streamSender, "SEARCH", "등록된 꽃 장소를 찾고 있어요.");
-                yield flowerToolService.searchFlowerSpotsResult(keyword);
+                yield flowerToolService.searchFlowerSpotsResult(keyword, location, plan.nearby());
             }
             default -> null;
         };
@@ -290,7 +292,7 @@ public class ChatbotService {
         }
         sendStatus(streamSender, "SEARCH", "꽃 축제 정보를 찾고 있어요.");
         boolean nearby = "recommend_nearby".equals(plan.task()) || "open_festival_map".equals(plan.task());
-        return festivalToolService.searchFlowerFestivalsResult(keyword, location, nearby);
+        return festivalToolService.searchFlowerFestivalsResult(keyword, location, nearby, plan.dateFilter());
     }
 
     private String normalizeInformationTask(
@@ -398,7 +400,16 @@ public class ChatbotService {
         if (plan.domain().isBlank() && plan.task().isBlank()) {
             return "기존 route 기반";
         }
-        return "domain=" + plan.domain() + ", task=" + plan.task();
+        String dateFilter = plan.dateFilter() == null
+                || plan.dateFilter().isBlank()
+                || "none".equals(plan.dateFilter())
+                ? ""
+                : ", dateFilter=" + plan.dateFilter();
+        String nearby = plan.nearby() ? ", nearby=true" : "";
+        String route = plan.routeRequest()
+                ? ", routeRequest=true, routeMode=" + normalizeRouteMode(plan.routeMode())
+                : "";
+        return "domain=" + plan.domain() + ", task=" + plan.task() + dateFilter + nearby + route;
     }
 
     private ToolResult unsupportedToolResult(String message, AgentPlan plan) {
@@ -421,7 +432,7 @@ public class ChatbotService {
                 .build();
     }
 
-    private void addRepresentativeMapAction(List<ChatAction> actions, ToolResult result) {
+    private void addRepresentativeMapAction(List<ChatAction> actions, ToolResult result, AgentPlan plan) {
         if (actions.stream().noneMatch(action -> "MAP".equals(action.getTarget()))) {
             return;
         }
@@ -435,10 +446,17 @@ public class ChatbotService {
         }
         Object flowerId = row.get("flowerId");
         if (flowerId instanceof Number || (flowerId instanceof String text && text.matches("\\d+"))) {
+            String actionType = mapFocusActionType(result, plan);
+            Map<String, Object> params = new LinkedHashMap<>();
+            params.put("flowerId", flowerId);
+            String routeMode = normalizeRouteMode(plan.routeMode());
+            if ("MAP_START_ROUTE".equals(actionType)) {
+                params.put("mode", routeMode);
+            }
             ChatAction action = ChatAction.builder()
-                    .type("MAP_SHOW_FLOWER")
+                    .type(actionType)
                     .target("MAP")
-                    .params(Map.of("flowerId", flowerId))
+                    .params(params)
                     .build();
             if (!containsAction(actions, action)) {
                 actions.add(action);
@@ -628,6 +646,10 @@ public class ChatbotService {
                   "domain": "flower_info | festival_info | community | map_place | app_navigation | unsupported | general",
                   "task": "basic_info | meaning_bloom | grow_guide | monthly_recommendation | candidate_inference | search_festivals | recommend_nearby | open_festival_map | search_posts | open_community | open_composer | place_search | open_map | open_flower_book | open_walk | open_saved | shop_purchase | quest_verification | community_mutation | private_or_admin | general_chat",
                   "keyword": "optional flower, place, or topic keyword",
+                  "date_filter": "today | this_week | this_month | upcoming | none",
+                  "nearby": true,
+                  "route_request": true,
+                  "route_mode": "walk | car | transit | none",
                   "needs_screen": true,
                   "confidence": "high | medium | low",
                   "reason": "short Korean reason"
@@ -638,6 +660,14 @@ public class ChatbotService {
                 - Community mutation requests such as like, comment, delete, edit, auto-save, or publish-for-me are unsupported/community_mutation.
                 - "커뮤니티 열어줘" is community/open_community and must not search posts.
                 - If festival, event, or 행사 is the main topic, choose festival_info instead of flower_info.
+                - For festival_info, set date_filter from the user's time expression: "이번 주" => this_week, "이번 달" or "이달" => this_month, "오늘" => today, "다가오는" or no explicit period => upcoming.
+                - For map_place, set nearby=true only when the user asks "근처", "주변", "near", or "nearby".
+                - "꽃 지도 열어줘" is app_navigation/open_map and must not search places.
+                - Flower place requests such as 명소, 위치, 지도, 가는 길, 볼 수 있는 곳 are map_place/place_search.
+                - A map request with a specific flower/place keyword such as "벚꽃 지도에서 보여줘" or "수국 위치 지도 열어줘" is map_place/place_search, not app_navigation/open_map.
+                - Route requests such as "가는 길", "길찾기", "까지 가는 법" are map_place/place_search with route_request=true and needs_screen=true.
+                - If the user names a route mode, set route_mode to walk, car, or transit. If no mode is named, set route_mode to none.
+                - Do not set route_request=true for "지도에서 보여줘" unless the user asks for route/directions.
                 - Festival booking, reservation, ticket purchase, or payment requests are unsupported/private_or_admin.
                 - Festival map requests are festival_info/open_festival_map.
                 - Flower information is more important than screen navigation unless the user explicitly asks for a screen.
@@ -680,21 +710,45 @@ public class ChatbotService {
                 User: 분홍색 꽃인데 이름이 뭘까?
                 JSON: {"domain":"flower_info","task":"candidate_inference","keyword":"분홍색 꽃","needs_screen":false,"confidence":"medium","reason":"꽃 이름 후보 추정"}
                 User: 벚꽃 지도에서 보여줘
-                JSON: {"domain":"map_place","task":"place_search","keyword":"벚꽃","needs_screen":true,"confidence":"high","reason":"지도에서 장소 확인"}
+                JSON: {"domain":"map_place","task":"place_search","keyword":"벚꽃","nearby":false,"route_request":false,"route_mode":"none","needs_screen":true,"confidence":"high","reason":"지도에서 장소 확인"}
+                User: 수국 명소 어디 있어?
+                JSON: {"domain":"map_place","task":"place_search","keyword":"수국","nearby":false,"route_request":false,"route_mode":"none","needs_screen":false,"confidence":"high","reason":"꽃 명소 위치 질문"}
+                User: 근처 꽃 명소 추천해줘
+                JSON: {"domain":"map_place","task":"place_search","keyword":"꽃","nearby":true,"route_request":false,"route_mode":"none","needs_screen":true,"confidence":"high","reason":"근처 꽃 명소 추천"}
+                User: 라벤더 볼 수 있는 곳 알려줘
+                JSON: {"domain":"map_place","task":"place_search","keyword":"라벤더","nearby":false,"route_request":false,"route_mode":"none","needs_screen":false,"confidence":"high","reason":"꽃을 볼 수 있는 장소 질문"}
+                User: 수국 위치 지도 열어줘
+                JSON: {"domain":"map_place","task":"place_search","keyword":"수국","nearby":false,"route_request":false,"route_mode":"none","needs_screen":true,"confidence":"high","reason":"수국 위치를 지도에서 확인"}
+                User: 장미 가는 길 알려줘
+                JSON: {"domain":"map_place","task":"place_search","keyword":"장미","nearby":false,"route_request":true,"route_mode":"none","needs_screen":true,"confidence":"high","reason":"장미 장소 길찾기 요청"}
+                User: 장미까지 도보 길찾기
+                JSON: {"domain":"map_place","task":"place_search","keyword":"장미","nearby":false,"route_request":true,"route_mode":"walk","needs_screen":true,"confidence":"high","reason":"도보 길찾기 요청"}
+                User: 수국 명소 자동차 길찾기
+                JSON: {"domain":"map_place","task":"place_search","keyword":"수국","nearby":false,"route_request":true,"route_mode":"car","needs_screen":true,"confidence":"high","reason":"자동차 길찾기 요청"}
+                User: 벚꽃 명소 대중교통으로 가는 길
+                JSON: {"domain":"map_place","task":"place_search","keyword":"벚꽃","nearby":false,"route_request":true,"route_mode":"transit","needs_screen":true,"confidence":"high","reason":"대중교통 길찾기 요청"}
+                User: 꽃 지도 열어줘
+                JSON: {"domain":"app_navigation","task":"open_map","keyword":"","nearby":false,"needs_screen":true,"confidence":"high","reason":"지도 화면 이동"}
+                User: 장미 정보 알려줘
+                JSON: {"domain":"flower_info","task":"basic_info","keyword":"장미","nearby":false,"needs_screen":false,"confidence":"high","reason":"꽃 정보 질문"}
                 User: 장미 도감에서 찾아줘
                 JSON: {"domain":"app_navigation","task":"open_flower_book","keyword":"장미","needs_screen":true,"confidence":"high","reason":"도감 화면 이동"}
                 User: 안녕
                 JSON: {"domain":"general","task":"general_chat","keyword":"","needs_screen":false,"confidence":"high","reason":"인사"}
                 User: 이번 주 꽃 축제 알려줘
-                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"꽃","needs_screen":false,"confidence":"high","reason":"꽃 축제 정보 조회"}
+                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"꽃","date_filter":"this_week","needs_screen":false,"confidence":"high","reason":"이번 주 꽃 축제 정보 조회"}
                 User: 서울 근처 꽃 축제 있어?
-                JSON: {"domain":"festival_info","task":"recommend_nearby","keyword":"꽃","needs_screen":false,"confidence":"high","reason":"근처 꽃 축제 추천"}
+                JSON: {"domain":"festival_info","task":"recommend_nearby","keyword":"꽃","date_filter":"upcoming","needs_screen":false,"confidence":"high","reason":"근처 꽃 축제 추천"}
                 User: 벚꽃 축제 찾아줘
-                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"벚꽃","needs_screen":false,"confidence":"high","reason":"벚꽃 축제 검색"}
+                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"벚꽃","date_filter":"upcoming","needs_screen":false,"confidence":"high","reason":"벚꽃 축제 검색"}
+                User: 이번 달 갈 만한 꽃 행사 추천해줘
+                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"꽃","date_filter":"this_month","needs_screen":false,"confidence":"high","reason":"이번 달 꽃 행사 추천"}
+                User: 다가오는 꽃 축제 알려줘
+                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"꽃","date_filter":"upcoming","needs_screen":false,"confidence":"high","reason":"다가오는 꽃 축제 조회"}
                 User: 꽃 축제 지도에서 보여줘
-                JSON: {"domain":"festival_info","task":"open_festival_map","keyword":"축제","needs_screen":true,"confidence":"high","reason":"꽃 축제 지도 확인"}
+                JSON: {"domain":"festival_info","task":"open_festival_map","keyword":"축제","date_filter":"upcoming","needs_screen":true,"confidence":"high","reason":"꽃 축제 지도 확인"}
                 User: 축제 티켓 예매해줘
-                JSON: {"domain":"unsupported","task":"private_or_admin","keyword":"","needs_screen":false,"confidence":"high","reason":"축제 예매는 지원하지 않음"}
+                JSON: {"domain":"unsupported","task":"private_or_admin","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"축제 예매는 지원하지 않음"}
                 """;
     }
 
@@ -729,7 +783,7 @@ public class ChatbotService {
         return """
                 You repair FLOWER planner JSON.
                 Return only valid JSON with this schema:
-                {"domain":"flower_info|festival_info|community|map_place|app_navigation|unsupported|general","task":"string","keyword":"string","needs_screen":true,"confidence":"high|medium|low","reason":"short Korean reason"}
+                {"domain":"flower_info|festival_info|community|map_place|app_navigation|unsupported|general","task":"string","keyword":"string","date_filter":"today|this_week|this_month|upcoming|none","nearby":true,"route_request":true,"route_mode":"walk|car|transit|none","needs_screen":true,"confidence":"high|medium|low","reason":"short Korean reason"}
                 Do not add actions, tool names, markdown, or prose.
                 Domain/task must be a valid pair.
                 """;
@@ -737,12 +791,16 @@ public class ChatbotService {
 
     private PlannerDecision parsePlannerDecision(String content, String source) throws Exception {
         if (content == null || content.isBlank()) {
-            return new PlannerDecision("", "", "", false, "low", "empty planner response", source);
+            return new PlannerDecision("", "", "", "none", false, false, "none", false, "low", "empty planner response", source);
         }
         JsonNode root = JSON_MAPPER.readTree(content.trim());
         String domain = root.path("domain").asText("").trim().toLowerCase(Locale.ROOT);
         String task = root.path("task").asText("").trim().toLowerCase(Locale.ROOT);
         String keyword = root.path("keyword").asText(root.path("searchKeyword").asText("")).trim();
+        String dateFilter = root.path("date_filter").asText(root.path("dateFilter").asText("none")).trim().toLowerCase(Locale.ROOT);
+        boolean nearby = root.path("nearby").asBoolean(false);
+        boolean routeRequest = root.path("route_request").asBoolean(root.path("routeRequest").asBoolean(false));
+        String routeMode = root.path("route_mode").asText(root.path("routeMode").asText("none")).trim().toLowerCase(Locale.ROOT);
         boolean needsScreen = root.path("needs_screen").asBoolean(root.path("needsScreen").asBoolean(false));
         String confidence = root.path("confidence").asText("medium").trim().toLowerCase(Locale.ROOT);
         String reason = root.path("reason").asText("").trim();
@@ -750,6 +808,10 @@ public class ChatbotService {
                 domain,
                 task,
                 sanitizePlannerKeyword(keyword),
+                normalizePlannerDateFilter(dateFilter),
+                nearby,
+                routeRequest,
+                normalizeRouteMode(routeMode),
                 needsScreen,
                 confidence,
                 reason,
@@ -783,6 +845,21 @@ public class ChatbotService {
         }
         if ("general".equals(domain) && decision.needsScreen()) {
             errors.add("general chat must not need a screen");
+        }
+        if (!List.of("today", "this_week", "this_month", "upcoming", "none").contains(decision.dateFilter())) {
+            errors.add("unknown date_filter: " + decision.dateFilter());
+        }
+        if (!List.of("walk", "car", "transit", "none").contains(decision.routeMode())) {
+            errors.add("unknown route_mode: " + decision.routeMode());
+        }
+        if (decision.routeRequest() && (!"map_place".equals(domain) || !"place_search".equals(task))) {
+            errors.add("route_request is only allowed for map_place/place_search");
+        }
+        if (decision.routeRequest() && !decision.needsScreen()) {
+            errors.add("route requests must need a screen");
+        }
+        if ("app_navigation".equals(domain) && "open_map".equals(task) && !decision.keyword().isBlank()) {
+            errors.add("open_map must not include a place keyword; use map_place/place_search");
         }
         return new PlannerValidation(errors.isEmpty(), errors);
     }
@@ -829,8 +906,10 @@ public class ChatbotService {
                 intents.add(RouteIntent.MAP);
                 intents.add(RouteIntent.FLOWER);
                 informationTask = "place_search";
-                actions.add(navigateAction("MAP", Map.of()));
-                if (!keyword.isBlank()) {
+                if (decision.needsScreen() || decision.routeRequest()) {
+                    actions.add(navigateAction("MAP", Map.of()));
+                }
+                if ((decision.needsScreen() || decision.routeRequest()) && !keyword.isBlank()) {
                     actions.add(ChatAction.builder()
                             .type("MAP_SET_SEARCH_QUERY")
                             .target("MAP")
@@ -886,10 +965,30 @@ public class ChatbotService {
                 decision.source(),
                 decision.domain(),
                 decision.task(),
+                decision.dateFilter(),
+                decision.nearby(),
+                decision.routeRequest(),
+                decision.routeMode(),
                 decision.needsScreen(),
                 decision.confidence(),
                 decision.reason()
         );
+    }
+
+    private String normalizePlannerDateFilter(String dateFilter) {
+        String normalized = dateFilter == null ? "" : dateFilter.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "today", "this_week", "this_month", "upcoming" -> normalized;
+            default -> "none";
+        };
+    }
+
+    private String normalizeRouteMode(String routeMode) {
+        String normalized = routeMode == null ? "" : routeMode.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "walk", "car", "transit" -> normalized;
+            default -> "none";
+        };
     }
 
     private AgentPlan parseAgentPlan(String content) throws Exception {
@@ -1112,6 +1211,8 @@ public class ChatbotService {
                 모호한 설명에서 꽃 후보를 추정한 경우 flower.inferCandidates 결과만 사용하고, 확정 식별이 아니라 가능성 있는 후보라고 말하세요.
                 꽃 축제 질문은 festival.searchFlowerFestivals 결과만 근거로 사용하고, 예매/예약/결제 가능 여부를 지어내지 마세요.
                 장소/지도 데이터는 꽃 정보보다 뒤에 보조로만 설명하세요. 장소 결과가 없더라도 꽃 정보가 있으면 정보부터 답하세요.
+                flower.searchFlowerSpots 결과가 비어 있으면 일반 지식으로 장소, 지역, 계절 정보를 만들어 말하지 말고 등록된 장소 데이터가 없다고만 말하세요.
+                길찾기 요청에서 장소 결과가 없으면 길찾기를 실행할 수 없다고 말하고 임의 목적지를 만들지 마세요.
                 커뮤니티 작성처럼 쓰기 성격의 작업에서 작성 화면을 여는 경우, 내용을 생성하거나 자동 저장하지 않고 글 작성 화면만 연다고 명확히 말하세요.
                 상점, 구매, 퀘스트, 미션, 인증, 포인트 지급 같은 미지원 요청은 실행하지 말고 아직 지원하지 않는다고 말하세요.
                 내부 route, action, tool 이름은 최종 답변에 노출하지 마세요.
@@ -1251,6 +1352,10 @@ public class ChatbotService {
             String source,
             String domain,
             String task,
+            String dateFilter,
+            boolean nearby,
+            boolean routeRequest,
+            String routeMode,
             boolean needsScreen,
             String confidence,
             String reason
@@ -1262,14 +1367,29 @@ public class ChatbotService {
                 List<ChatAction> actions,
                 String source
         ) {
-            this(intents, informationTask, searchKeyword, actions, source, "", "", false, "", "");
+            this(intents, informationTask, searchKeyword, actions, source, "", "", "none", false, false, "none", false, "", "");
         }
+    }
+
+    private String mapFocusActionType(ToolResult result, AgentPlan plan) {
+        if ("flower.searchFlowerSpots".equals(result.getTool()) && plan.routeRequest()) {
+            return "none".equals(normalizeRouteMode(plan.routeMode()))
+                    ? "MAP_OPEN_ROUTE_CHOOSER"
+                    : "MAP_START_ROUTE";
+        }
+        return "flower.searchFlowerSpots".equals(result.getTool())
+                ? "MAP_OPEN_FLOWER_PREVIEW"
+                : "MAP_SHOW_FLOWER";
     }
 
     private record PlannerDecision(
             String domain,
             String task,
             String keyword,
+            String dateFilter,
+            boolean nearby,
+            boolean routeRequest,
+            String routeMode,
             boolean needsScreen,
             String confidence,
             String reason,
@@ -1339,6 +1459,7 @@ public class ChatbotService {
             StringBuilder context = new StringBuilder();
             if (items.isEmpty()) {
                 context.append("- ").append(koreanToolLabel(tool)).append(": 조회된 데이터 없음.\n");
+                appendFestivalDateFilterContext(context, tool, data);
                 if (Boolean.TRUE.equals(data.get("queryExpanded")) && data.get("candidateKeywords") instanceof List<?> candidates) {
                     context.append("  - 사용자가 꽃 이름을 특정하지 않아 후보 꽃으로 확장 검색함: ")
                             .append(candidates)
@@ -1347,6 +1468,7 @@ public class ChatbotService {
                 return context.toString();
             }
             context.append("- ").append(koreanToolLabel(tool)).append(" 데이터:\n");
+            appendFestivalDateFilterContext(context, tool, data);
             if (Boolean.TRUE.equals(data.get("queryExpanded")) && data.get("candidateKeywords") instanceof List<?> candidates) {
                 context.append("  - 사용자가 꽃 이름을 특정하지 않아 후보 꽃으로 확장 검색함: ")
                         .append(candidates)
@@ -1379,6 +1501,26 @@ public class ChatbotService {
                 }
             }
             return context.toString();
+        }
+
+        private void appendFestivalDateFilterContext(StringBuilder context, String tool, Map<String, Object> data) {
+            if (!"festival.searchFlowerFestivals".equals(tool)) {
+                return;
+            }
+            Object dateFilter = data.get("dateFilter");
+            Object rangeStart = data.get("rangeStart");
+            Object rangeEnd = data.get("rangeEnd");
+            if (dateFilter == null || rangeStart == null) {
+                return;
+            }
+            context.append("  - 조회 기간 기준=")
+                    .append(dateFilter)
+                    .append(", 시작=")
+                    .append(rangeStart);
+            if (rangeEnd != null && !rangeEnd.toString().isBlank()) {
+                context.append(", 종료=").append(rangeEnd);
+            }
+            context.append(", 이미 종료된 축제 제외\n");
         }
 
         private String formatCandidatesForAnswer(String tool, Map<String, Object> data, List<?> candidates) {
@@ -1443,6 +1585,8 @@ public class ChatbotService {
                 case "MAP_SET_SEARCH_QUERY" -> "지도 검색어 적용";
                 case "MAP_SHOW_FLOWER" -> "지도에서 꽃 위치 표시";
                 case "MAP_OPEN_FLOWER_PREVIEW" -> "지도에서 꽃 미리보기 열기";
+                case "MAP_OPEN_ROUTE_CHOOSER" -> "지도에서 길찾기 이동수단 선택 열기";
+                case "MAP_START_ROUTE" -> "지도에서 길찾기 실행";
                 case "PREPARE_DRAFT" -> "커뮤니티 글 작성 화면 열기";
                 default -> type + " / " + target;
             };

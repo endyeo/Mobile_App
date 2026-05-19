@@ -1,6 +1,6 @@
 param(
     [string]$BaseUrl = "http://localhost:8080",
-    [ValidateSet("smoke", "full", "community-smoke", "festival-smoke")]
+    [ValidateSet("smoke", "full", "community-smoke", "festival-smoke", "map-smoke")]
     [string]$Set = "smoke",
     [double]$Lat = 37.5665,
     [double]$Lng = 126.978,
@@ -56,7 +56,18 @@ function ConvertTo-ActionText($Action) {
     if ([string]::IsNullOrWhiteSpace($target)) {
         return $type
     }
-    return "$type $target"
+    $text = "$type $target"
+    $params = Get-PropertyValue $Action "params"
+    if ($null -ne $params) {
+        $pairs = @()
+        foreach ($param in $params.PSObject.Properties) {
+            $pairs += "$($param.Name)=$($param.Value)"
+        }
+        if ($pairs.Count -gt 0) {
+            $text = "$text {$($pairs -join ',')}"
+        }
+    }
+    return $text
 }
 
 function Test-RouteExpectation([string]$ActualRoute, $ExpectedRoutes) {
@@ -159,6 +170,65 @@ function Get-ToolNames($ToolResults) {
     return $names
 }
 
+function Find-ToolResult($ToolResults, [string]$ToolName) {
+    foreach ($toolResult in (Convert-ToArray $ToolResults)) {
+        $tool = Get-PropertyValue $toolResult "tool"
+        if ([string]::IsNullOrWhiteSpace([string]$tool)) {
+            $tool = Get-PropertyValue $toolResult "name"
+        }
+        if ([string]$tool -eq $ToolName) {
+            return $toolResult
+        }
+    }
+    return $null
+}
+
+function Test-ToolDataExpectation($ExpectedToolData, $ActualToolResults) {
+    $reasons = @()
+    if ($null -eq $ExpectedToolData) {
+        return $reasons
+    }
+
+    foreach ($toolExpectation in $ExpectedToolData.PSObject.Properties) {
+        $toolName = [string]$toolExpectation.Name
+        $toolResult = Find-ToolResult $ActualToolResults $toolName
+        if ($null -eq $toolResult) {
+            $reasons += "missing tool data target: $toolName"
+            continue
+        }
+
+        $data = Get-PropertyValue $toolResult "data"
+        foreach ($fieldExpectation in $toolExpectation.Value.PSObject.Properties) {
+            $actualValue = Get-PropertyValue $data $fieldExpectation.Name
+            if ([string]$actualValue -ne [string]$fieldExpectation.Value) {
+                $reasons += "tool data mismatch: $toolName.$($fieldExpectation.Name) expected $($fieldExpectation.Value) actual $actualValue"
+            }
+        }
+    }
+    return $reasons
+}
+
+function Get-ToolDataSummary($ToolResults) {
+    $summaries = @()
+    foreach ($toolResult in (Convert-ToArray $ToolResults)) {
+        $tool = Get-PropertyValue $toolResult "tool"
+        $data = Get-PropertyValue $toolResult "data"
+        $dateFilter = Get-PropertyValue $data "dateFilter"
+        if (-not [string]::IsNullOrWhiteSpace([string]$dateFilter)) {
+            $rangeStart = Get-PropertyValue $data "rangeStart"
+            $rangeEnd = Get-PropertyValue $data "rangeEnd"
+            $summaries += "$tool.dateFilter=$dateFilter($rangeStart~$rangeEnd)"
+        }
+        $nearby = Get-PropertyValue $data "nearby"
+        $locationUsed = Get-PropertyValue $data "locationUsed"
+        if ($null -ne $nearby -or $null -ne $locationUsed) {
+            $items = Convert-ToArray (Get-PropertyValue $data "items")
+            $summaries += "$tool.nearby=$nearby locationUsed=$locationUsed items=$($items.Count)"
+        }
+    }
+    return ($summaries -join ", ")
+}
+
 function Get-PlannerSummary($AgentRun) {
     $steps = Convert-ToArray (Get-PropertyValue $AgentRun "steps")
     if ($steps.Count -eq 0) {
@@ -229,7 +299,8 @@ $cases = Convert-ToArray (Get-Content -Raw -Encoding UTF8 -LiteralPath $caseFile
 $threshold = switch ($Set) {
     "smoke" { 13 }
     "community-smoke" { 10 }
-    "festival-smoke" { 8 }
+    "festival-smoke" { 10 }
+    "map-smoke" { 13 }
     default { 68 }
 }
 $endpoint = "{0}/chatbot/message" -f $BaseUrl.TrimEnd("/")
@@ -299,6 +370,8 @@ foreach ($case in $cases) {
             }
         }
 
+        $reasons += Test-ToolDataExpectation (Get-PropertyValue $case "expectedToolData") $toolResults
+
         foreach ($forbiddenAction in (Convert-ToArray (Get-PropertyValue $case "forbiddenActions"))) {
             if (Test-ForbiddenAction $forbiddenAction $actions) {
                 $reasons += "forbidden action used: $forbiddenAction"
@@ -330,6 +403,10 @@ foreach ($case in $cases) {
     $actualActionText = ($actions | ForEach-Object { ConvertTo-ActionText $_ }) -join ", "
     if ($ShowDetails) {
         Write-Host ("  actual: route {0} / actions [{1}] / tools [{2}] / latency {3}ms" -f $route, $actualActionText, ($tools -join ","), [math]::Round($stopwatch.Elapsed.TotalMilliseconds))
+        $toolDataSummary = Get-ToolDataSummary $toolResults
+        if (-not [string]::IsNullOrWhiteSpace($toolDataSummary)) {
+            Write-Host ("  toolData: {0}" -f $toolDataSummary)
+        }
         Write-Host ("  planner: {0}" -f $plannerSummary)
         Write-Host ("  reply: {0}" -f (Shorten-Text $reply 180))
     }
@@ -352,6 +429,7 @@ foreach ($case in $cases) {
             routes = Convert-ToArray (Get-PropertyValue $case "expectedRoutes")
             actions = Convert-ToArray (Get-PropertyValue $case "expectedActions")
             tools = Convert-ToArray (Get-PropertyValue $case "expectedTools")
+            toolData = Get-PropertyValue $case "expectedToolData"
             forbiddenActions = Convert-ToArray (Get-PropertyValue $case "forbiddenActions")
             forbiddenTools = Convert-ToArray (Get-PropertyValue $case "forbiddenTools")
         }

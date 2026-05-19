@@ -34,6 +34,10 @@ public class TransitRouteService {
     private String tmapTransitAppKey;
 
     public TransitRouteDto.TransitRouteResponse getTransitRoute(TransitRouteDto.TransitRouteRequest request) {
+        String mode = normalizeRouteMode(request.mode());
+        if (!"transit".equals(mode)) {
+            throw new IllegalStateException("Only transit route is supported in v1.");
+        }
         if (tmapTransitAppKey == null || tmapTransitAppKey.isBlank()) {
             throw new IllegalStateException("TMAP transit app key is not configured.");
         }
@@ -66,10 +70,10 @@ public class TransitRouteService {
         }
 
         String body = new String(response.getBody(), StandardCharsets.UTF_8);
-        return parseTransitRoute(body);
+        return parseTransitRoute(body, mode);
     }
 
-    private TransitRouteDto.TransitRouteResponse parseTransitRoute(String body) {
+    private TransitRouteDto.TransitRouteResponse parseTransitRoute(String body, String mode) {
         try {
             JsonNode root = OBJECT_MAPPER.readTree(body);
             JsonNode itinerary = root.path("metaData").path("plan").path("itineraries").path(0);
@@ -91,10 +95,18 @@ public class TransitRouteService {
                 legs.add(parseLeg(legNode));
             }
 
-            return new TransitRouteDto.TransitRouteResponse(summary, legs);
+            return new TransitRouteDto.TransitRouteResponse(mode, summary, legs);
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to parse TMAP transit response.", exception);
         }
+    }
+
+    private String normalizeRouteMode(String mode) {
+        String normalized = mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "walk", "car" -> normalized;
+            default -> "transit";
+        };
     }
 
     private TransitRouteDto.Leg parseLeg(JsonNode legNode) {

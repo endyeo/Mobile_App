@@ -21,4 +21,11 @@ public class TransitRouteController {
     ) {
         return ResponseEntity.ok(ApiResponse.ok(transitRouteService.getTransitRoute(request)));
     }
+
+    @PostMapping("/routes")
+    public ResponseEntity<ApiResponse<TransitRouteDto.TransitRouteResponse>> getRoute(
+            @RequestBody TransitRouteDto.TransitRouteRequest request
+    ) {
+        return ResponseEntity.ok(ApiResponse.ok(transitRouteService.getTransitRoute(request)));
+    }
 }

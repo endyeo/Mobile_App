@@ -1,6 +1,7 @@
 package com.flower.backend.chatbot.tool.FlowerAgent;
 
 import com.flower.backend.chatbot.dto.ToolResult;
+import com.flower.backend.chatbot.dto.ChatMessageRequest;
 import com.flower.backend.flower.Flower;
 import com.flower.backend.flower.FlowerBook;
 import com.flower.backend.flower.FlowerBookRepository;
@@ -12,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Comparator;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -37,16 +39,41 @@ public class FlowerToolService {
 
     // 승인된 꽃 명소 검색 결과를 답변 AI와 Flutter가 읽을 수 있는 ToolResult로 변환합니다.
     public ToolResult searchFlowerSpotsResult(String query) {
+        return searchFlowerSpotsResult(query, null, false);
+    }
+
+    public ToolResult searchFlowerSpotsResult(
+            String query,
+            ChatMessageRequest.LocationContext location,
+            boolean nearby
+    ) {
+        boolean locationUsed = location != null && location.getLat() != null && location.getLng() != null;
         List<Flower> flowers = searchFlowerSpots(query);
+        if (nearby && locationUsed) {
+            flowers = flowers.stream()
+                    .sorted(Comparator.comparingDouble(flower ->
+                            distanceMeters(location.getLat(), location.getLng(), flower.getLat(), flower.getLng())))
+                    .toList();
+        }
         List<Map<String, Object>> items = flowers.stream()
-                .map(this::toItem)
+                .map(flower -> toItem(flower, locationUsed ? location : null))
                 .toList();
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("items", items);
+        data.put("query", sanitizeQuery(query));
+        data.put("nearby", nearby);
+        data.put("locationUsed", locationUsed);
+        if (locationUsed) {
+            data.put("lat", location.getLat());
+            data.put("lng", location.getLng());
+        }
 
         return ToolResult.builder()
                 .tool("flower.searchFlowerSpots")
                 .status("SUCCESS")
                 .summary("'" + displayQuery(query) + "' 꽃 명소 검색 결과 " + flowers.size() + "건을 찾았습니다.")
-                .data(Map.of("items", items))
+                .data(data)
                 .build();
     }
 
@@ -317,6 +344,10 @@ public class FlowerToolService {
     }
 
     public Map<String, Object> toItem(Flower flower) {
+        return toItem(flower, null);
+    }
+
+    public Map<String, Object> toItem(Flower flower, ChatMessageRequest.LocationContext location) {
         Map<String, Object> item = new LinkedHashMap<>();
         item.put("flowerId", flower.getId());
         item.put("name", nullToDash(flower.getName()));
@@ -328,6 +359,14 @@ public class FlowerToolService {
         item.put("description", nullToDash(flower.getDescription()));
         item.put("lat", flower.getLat());
         item.put("lng", flower.getLng());
+        if (location != null && location.getLat() != null && location.getLng() != null) {
+            item.put("distanceKm", Math.round(distanceMeters(
+                    location.getLat(),
+                    location.getLng(),
+                    flower.getLat(),
+                    flower.getLng()
+            ) / 100.0) / 10.0);
+        }
         return item;
     }
 
@@ -599,6 +638,17 @@ public class FlowerToolService {
             return value;
         }
         return value.substring(0, maxLength).trim() + "...";
+    }
+
+    private double distanceMeters(double latitude, double longitude, double targetLatitude, double targetLongitude) {
+        double earthRadius = 6371000;
+        double dLat = Math.toRadians(targetLatitude - latitude);
+        double dLng = Math.toRadians(targetLongitude - longitude);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(latitude))
+                * Math.cos(Math.toRadians(targetLatitude))
+                * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+        return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     private String candidateReason(String candidate, String description) {

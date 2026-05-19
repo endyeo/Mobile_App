@@ -11,11 +11,13 @@ public final class TransitRouteDto {
             double startLat,
             double startLng,
             double endLat,
-            double endLng
+            double endLng,
+            String mode
     ) {
     }
 
     public record TransitRouteResponse(
+            String mode,
             Summary summary,
             List<Leg> legs
     ) {

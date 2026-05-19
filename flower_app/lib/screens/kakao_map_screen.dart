@@ -62,6 +62,10 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
   @override
   void initState() {
     super.initState();
+    final String? initialQuery = _initialSearchQuery();
+    if (initialQuery != null) {
+      _searchController.text = initialQuery;
+    }
     if (!kIsWeb) {
       _configureWebViewController();
     }
@@ -222,6 +226,24 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
         'embedded': widget.isEmbedded ? '1' : '0',
         'tourApiKey': ApiConfig.tourApiKey,
       };
+      final String? initialSearchQuery = _initialSearchQuery();
+      final int? initialFlowerId = _initialFlowerId();
+      if (initialSearchQuery != null) {
+        mapConfig['initialSearchQuery'] = initialSearchQuery;
+      }
+      if (initialFlowerId != null) {
+        mapConfig['initialFocusFlowerId'] = '$initialFlowerId';
+        mapConfig['initialOpenFlowerPreview'] =
+            _shouldOpenInitialFlowerPreview() ? '1' : '0';
+      }
+      final int? initialRouteFlowerId = _initialRouteFlowerId();
+      if (initialRouteFlowerId != null) {
+        mapConfig['initialRouteFlowerId'] = '$initialRouteFlowerId';
+        final String? initialRouteMode = _initialRouteMode();
+        if (initialRouteMode != null) {
+          mapConfig['initialRouteMode'] = initialRouteMode;
+        }
+      }
 
       if (kIsWeb) {
         setState(() {
@@ -274,6 +296,12 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
       'MAX_RADIUS': double.parse(mapConfig['maxRadius'] ?? '50000'),
       'DEFAULT_LIMIT': double.parse(mapConfig['limit'] ?? '50'),
       'EMBEDDED': mapConfig['embedded'] == '1',
+      'INITIAL_SEARCH_QUERY': mapConfig['initialSearchQuery'] ?? '',
+      'INITIAL_FOCUS_FLOWER_ID': mapConfig['initialFocusFlowerId'] ?? '',
+      'INITIAL_OPEN_FLOWER_PREVIEW':
+          mapConfig['initialOpenFlowerPreview'] == '1',
+      'INITIAL_ROUTE_FLOWER_ID': mapConfig['initialRouteFlowerId'] ?? '',
+      'INITIAL_ROUTE_MODE': mapConfig['initialRouteMode'] ?? '',
     };
     final String configJson = jsonEncode(config);
 
@@ -352,14 +380,32 @@ $app
     if (actions == null || actions.isEmpty) return;
 
     for (final ChatAction action in actions) {
-      if (action.type != 'MAP_SET_SEARCH_QUERY') continue;
-      final String query =
-          action.params?['query'] as String? ??
-          action.params?['q'] as String? ??
-          '';
-      if (query.isEmpty) continue;
-      _searchController.text = query;
-      await setSearchQuery(query);
+      if (action.type == 'MAP_SET_SEARCH_QUERY') {
+        final String query =
+            action.params?['query'] as String? ??
+            action.params?['q'] as String? ??
+            '';
+        if (query.isEmpty) continue;
+        _searchController.text = query;
+        await setSearchQuery(query);
+      } else if (action.type == 'MAP_SHOW_FLOWER' ||
+          action.type == 'MAP_OPEN_FLOWER_PREVIEW') {
+        final int? flowerId = _intParam(action, 'flowerId');
+        if (flowerId == null) continue;
+        await _focusFlowerById(
+          flowerId,
+          openPreview: action.type == 'MAP_OPEN_FLOWER_PREVIEW',
+        );
+      } else if (action.type == 'MAP_OPEN_ROUTE_CHOOSER') {
+        final int? flowerId = _intParam(action, 'flowerId');
+        if (flowerId == null) continue;
+        await _openRouteChooserByFlowerId(flowerId);
+      } else if (action.type == 'MAP_START_ROUTE') {
+        final int? flowerId = _intParam(action, 'flowerId');
+        final String? mode = action.params?['mode'] as String?;
+        if (flowerId == null || mode == null || mode.trim().isEmpty) continue;
+        await _startRouteToFlowerById(flowerId, mode.trim());
+      }
     }
   }
 
@@ -416,9 +462,40 @@ $app
   }
 
   Future<void> setSearchQuery(String query) async {
-    final String escaped = query.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+    final String escaped = query.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
     await _controller?.runJavaScript(
       "if(window.FlowerMap) window.FlowerMap.setSearchQuery('$escaped');",
+    );
+  }
+
+  Future<void> _focusFlowerById(
+    int flowerId, {
+    required bool openPreview,
+  }) async {
+    if (kIsWeb || _controller == null) return;
+    await _controller!.runJavaScript(
+      'if(window.FlowerMap && typeof window.FlowerMap.focusFlowerById === "function") {'
+      'window.FlowerMap.focusFlowerById($flowerId, ${openPreview ? 'true' : 'false'});'
+      '}',
+    );
+  }
+
+  Future<void> _openRouteChooserByFlowerId(int flowerId) async {
+    if (kIsWeb || _controller == null) return;
+    await _controller!.runJavaScript(
+      'if(window.FlowerMap && typeof window.FlowerMap.openRouteChooserByFlowerId === "function") {'
+      'window.FlowerMap.openRouteChooserByFlowerId($flowerId);'
+      '}',
+    );
+  }
+
+  Future<void> _startRouteToFlowerById(int flowerId, String mode) async {
+    if (kIsWeb || _controller == null) return;
+    final String escapedMode = mode.replaceAll('\\', '\\\\').replaceAll("'", "\\'");
+    await _controller!.runJavaScript(
+      'if(window.FlowerMap && typeof window.FlowerMap.startRouteToFlowerById === "function") {'
+      "window.FlowerMap.startRouteToFlowerById($flowerId, '$escapedMode');"
+      '}',
     );
   }
 
@@ -486,6 +563,77 @@ $app
       'window.FlowerMap.focusFestival($payload);'
       '}',
     );
+  }
+
+  String? _initialSearchQuery() {
+    final List<ChatAction>? actions = widget.initialActions;
+    if (actions == null) return null;
+    for (final ChatAction action in actions) {
+      if (action.type != 'MAP_SET_SEARCH_QUERY') continue;
+      final String query =
+          action.params?['query'] as String? ??
+          action.params?['q'] as String? ??
+          '';
+      final String trimmed = query.trim();
+      if (trimmed.isNotEmpty) return trimmed;
+    }
+    return null;
+  }
+
+  int? _initialFlowerId() {
+    final List<ChatAction>? actions = widget.initialActions;
+    if (actions == null) return null;
+    for (final ChatAction action in actions) {
+      if (action.type != 'MAP_SHOW_FLOWER' &&
+          action.type != 'MAP_OPEN_FLOWER_PREVIEW') {
+        continue;
+      }
+      final int? flowerId = _intParam(action, 'flowerId');
+      if (flowerId != null) return flowerId;
+    }
+    return null;
+  }
+
+  bool _shouldOpenInitialFlowerPreview() {
+    final List<ChatAction>? actions = widget.initialActions;
+    if (actions == null) return false;
+    return actions.any(
+      (ChatAction action) => action.type == 'MAP_OPEN_FLOWER_PREVIEW',
+    );
+  }
+
+  int? _initialRouteFlowerId() {
+    final List<ChatAction>? actions = widget.initialActions;
+    if (actions == null) return null;
+    for (final ChatAction action in actions) {
+      if (action.type != 'MAP_OPEN_ROUTE_CHOOSER' &&
+          action.type != 'MAP_START_ROUTE') {
+        continue;
+      }
+      final int? flowerId = _intParam(action, 'flowerId');
+      if (flowerId != null) return flowerId;
+    }
+    return null;
+  }
+
+  String? _initialRouteMode() {
+    final List<ChatAction>? actions = widget.initialActions;
+    if (actions == null) return null;
+    for (final ChatAction action in actions) {
+      if (action.type != 'MAP_START_ROUTE') continue;
+      final Object? value = action.params?['mode'];
+      final String mode = value is String ? value.trim() : '';
+      if (mode.isNotEmpty) return mode;
+    }
+    return null;
+  }
+
+  int? _intParam(ChatAction action, String key) {
+    final Object? value = action.params?[key];
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value);
+    return null;
   }
 
   bool _shouldOpenExternally(Uri uri) {

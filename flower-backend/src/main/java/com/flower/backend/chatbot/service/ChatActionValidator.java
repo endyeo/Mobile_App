@@ -64,6 +64,26 @@ class ChatActionValidator {
                 return ChatAction.builder().type(type).target(target).params(Map.of("flowerId", flowerId)).build();
             }
         }
+        if ("MAP_OPEN_ROUTE_CHOOSER".equals(type) && "MAP".equals(target)) {
+            Object flowerId = params.get("flowerId");
+            if (flowerId instanceof Number || (flowerId instanceof String text && text.matches("\\d+"))) {
+                return ChatAction.builder().type(type).target(target).params(Map.of("flowerId", flowerId)).build();
+            }
+        }
+        if ("MAP_START_ROUTE".equals(type) && "MAP".equals(target)) {
+            Object flowerId = params.get("flowerId");
+            String mode = params.get("mode") == null
+                    ? ""
+                    : params.get("mode").toString().trim().toLowerCase(Locale.ROOT);
+            if ((flowerId instanceof Number || (flowerId instanceof String text && text.matches("\\d+")))
+                    && List.of("walk", "car", "transit").contains(mode)) {
+                return ChatAction.builder()
+                        .type(type)
+                        .target(target)
+                        .params(Map.of("flowerId", flowerId, "mode", mode))
+                        .build();
+            }
+        }
         return null;
     }
 
