@@ -669,7 +669,7 @@ public class ChatbotService {
                 - If the user names a route mode, set route_mode to walk, car, or transit. If no mode is named, set route_mode to none.
                 - Do not set route_request=true for "지도에서 보여줘" unless the user asks for route/directions.
                 - Festival booking, reservation, ticket purchase, or payment requests are unsupported/private_or_admin.
-                - Festival map requests are festival_info/open_festival_map.
+                - Festival map requests such as "꽃 축제 지도에서 보여줘", "축제 지도에서 보여줘", or "행사 지도 열어줘" are festival_info/open_festival_map.
                 - Flower information is more important than screen navigation unless the user explicitly asks for a screen.
                 - General greetings and small talk are general/general_chat.
                 - Preserve Korean flower/topic keywords such as "수국", "벚꽃", "장미", "라벤더".
@@ -747,6 +747,10 @@ public class ChatbotService {
                 JSON: {"domain":"festival_info","task":"search_festivals","keyword":"꽃","date_filter":"upcoming","needs_screen":false,"confidence":"high","reason":"다가오는 꽃 축제 조회"}
                 User: 꽃 축제 지도에서 보여줘
                 JSON: {"domain":"festival_info","task":"open_festival_map","keyword":"축제","date_filter":"upcoming","needs_screen":true,"confidence":"high","reason":"꽃 축제 지도 확인"}
+                User: 축제 지도에서 보여줘
+                JSON: {"domain":"festival_info","task":"open_festival_map","keyword":"축제","date_filter":"upcoming","needs_screen":true,"confidence":"high","reason":"축제 지도 확인"}
+                User: 행사 지도 열어줘
+                JSON: {"domain":"festival_info","task":"open_festival_map","keyword":"행사","date_filter":"upcoming","needs_screen":true,"confidence":"high","reason":"행사 지도 확인"}
                 User: 축제 티켓 예매해줘
                 JSON: {"domain":"unsupported","task":"private_or_admin","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"축제 예매는 지원하지 않음"}
                 """;

@@ -36,6 +36,9 @@ public class FestivalToolService {
             "꽃", "벚꽃", "진달래", "매화", "수국", "장미", "개나리", "철쭉", "국화",
             "해바라기", "코스모스", "동백", "유채", "flower"
     );
+    private static final List<String> PRIORITY_FESTIVAL_KEYWORDS = List.of(
+            "꽃", "벚꽃", "매화", "유채", "장미", "국화"
+    );
 
     private final RestTemplate restTemplate;
 
@@ -72,6 +75,9 @@ public class FestivalToolService {
                     effectiveDateFilter,
                     dateRange,
                     today,
+                    false,
+                    0,
+                    0,
                     0,
                     0,
                     0
@@ -86,49 +92,17 @@ public class FestivalToolService {
         }
 
         try {
-            List<FestivalItem> items = fetchByKeyword(sanitized);
-            if (items.isEmpty() && !"꽃".equals(sanitized)) {
-                items = fetchByKeyword("꽃");
-            }
-            if (items.isEmpty()) {
-                items = fetchUpcomingFestivals(dateRange.start());
+            List<FestivalItem> rawItems = fetchUpcomingFestivals(today.minusMonths(3));
+            FestivalSelection selection = selectFestivals(rawItems, dateRange, today, location, nearby);
+            boolean keywordFallbackUsed = false;
+
+            if (selection.flowerFilteredCount() == 0) {
+                keywordFallbackUsed = true;
+                rawItems = fetchPriorityKeywordFestivals();
+                selection = selectFestivals(rawItems, dateRange, today, location, nearby);
             }
 
-            int excludedPastCount = 0;
-            int excludedDateCount = 0;
-            int excludedUnknownDateCount = 0;
-            List<FestivalItem> filtered = new ArrayList<>();
-            for (FestivalItem festival : dedupe(items)) {
-                if (!festival.hasLocation() || !festival.isFlowerFestival()) {
-                    continue;
-                }
-                if (festival.isPast(today)) {
-                    excludedPastCount++;
-                    continue;
-                }
-                if (!festival.hasUsableDate()) {
-                    excludedUnknownDateCount++;
-                    continue;
-                }
-                if (!festival.matchesDateRange(dateRange, today)) {
-                    excludedDateCount++;
-                    continue;
-                }
-                filtered.add(festival);
-            }
-
-            if (nearby && location != null && location.getLat() != null && location.getLng() != null) {
-                filtered = filtered.stream()
-                        .sorted(Comparator.comparingDouble(festival ->
-                                festival.distanceMeters(location.getLat(), location.getLng())))
-                        .toList();
-            } else {
-                filtered = filtered.stream()
-                        .sorted(Comparator.comparing(FestivalItem::eventStartDate, Comparator.nullsLast(String::compareTo)))
-                        .toList();
-            }
-
-            List<Map<String, Object>> rows = filtered.stream()
+            List<Map<String, Object>> rows = selection.items().stream()
                     .limit(5)
                     .map(festival -> festival.toItem(location))
                     .toList();
@@ -140,9 +114,12 @@ public class FestivalToolService {
                     effectiveDateFilter,
                     dateRange,
                     today,
-                    excludedPastCount,
-                    excludedDateCount,
-                    excludedUnknownDateCount
+                    keywordFallbackUsed,
+                    selection.rawFestivalCount(),
+                    selection.flowerFilteredCount(),
+                    selection.excludedPastCount(),
+                    selection.excludedDateCount(),
+                    selection.excludedUnknownDateCount()
             );
             data.put("items", rows);
 
@@ -162,6 +139,9 @@ public class FestivalToolService {
                     effectiveDateFilter,
                     dateRange,
                     today,
+                    false,
+                    0,
+                    0,
                     0,
                     0,
                     0
@@ -191,8 +171,20 @@ public class FestivalToolService {
         return parseFestivalList(restTemplate.getForObject(uri, String.class));
     }
 
-    private List<FestivalItem> fetchUpcomingFestivals(LocalDate rangeStart) throws Exception {
-        String eventStartDate = rangeStart.minusMonths(3).format(TOUR_DATE);
+    private List<FestivalItem> fetchPriorityKeywordFestivals() {
+        List<FestivalItem> merged = new ArrayList<>();
+        for (String keyword : PRIORITY_FESTIVAL_KEYWORDS) {
+            try {
+                merged.addAll(fetchByKeyword(keyword));
+            } catch (Exception e) {
+                log.warn("[Tool:festival] Tour API 키워드 축제 조회 실패(keyword={}): {}", keyword, e.getMessage());
+            }
+        }
+        return merged;
+    }
+
+    private List<FestivalItem> fetchUpcomingFestivals(LocalDate eventStartDateValue) throws Exception {
+        String eventStartDate = eventStartDateValue.format(TOUR_DATE);
         String uri = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/searchFestival2")
                 .queryParam("serviceKey", tourApiKey)
                 .queryParam("numOfRows", 60)
@@ -213,6 +205,68 @@ public class FestivalToolService {
             case "today", "this_week", "this_month", "upcoming" -> normalized;
             default -> "upcoming";
         };
+    }
+
+    private FestivalSelection selectFestivals(
+            List<FestivalItem> rawItems,
+            DateRange dateRange,
+            LocalDate today,
+            ChatMessageRequest.LocationContext location,
+            boolean nearby
+    ) {
+        int excludedPastCount = 0;
+        int excludedDateCount = 0;
+        int excludedUnknownDateCount = 0;
+        int flowerFilteredCount = 0;
+        List<FestivalItem> filtered = new ArrayList<>();
+
+        for (FestivalItem festival : dedupe(rawItems)) {
+            if (!festival.hasLocation() || !festival.isFlowerFestival()) {
+                continue;
+            }
+            if (festival.isPast(today)) {
+                excludedPastCount++;
+                continue;
+            }
+            flowerFilteredCount++;
+            if (!festival.hasUsableDate()) {
+                excludedUnknownDateCount++;
+                continue;
+            }
+            if (!festival.matchesDateRange(dateRange, today)) {
+                excludedDateCount++;
+                continue;
+            }
+            filtered.add(festival);
+        }
+
+        List<FestivalItem> sorted = sortFestivals(filtered, location, nearby);
+        return new FestivalSelection(
+                sorted,
+                dedupe(rawItems).size(),
+                flowerFilteredCount,
+                excludedPastCount,
+                excludedDateCount,
+                excludedUnknownDateCount
+        );
+    }
+
+    private List<FestivalItem> sortFestivals(
+            List<FestivalItem> festivals,
+            ChatMessageRequest.LocationContext location,
+            boolean nearby
+    ) {
+        if (nearby && location != null && location.getLat() != null && location.getLng() != null) {
+            return festivals.stream()
+                    .sorted(Comparator.comparingDouble(festival ->
+                            festival.distanceMeters(location.getLat(), location.getLng())))
+                    .toList();
+        }
+        return festivals.stream()
+                .sorted(Comparator
+                        .comparing(FestivalItem::eventStartDate, Comparator.nullsLast(String::compareTo))
+                        .thenComparing(FestivalItem::title))
+                .toList();
     }
 
     static DateRange resolveDateRange(String dateFilter, LocalDate today) {
@@ -263,6 +317,9 @@ public class FestivalToolService {
             String dateFilter,
             DateRange dateRange,
             LocalDate today,
+            boolean keywordFallbackUsed,
+            int rawFestivalCount,
+            int flowerFilteredCount,
             int excludedPastCount,
             int excludedDateCount,
             int excludedUnknownDateCount
@@ -276,6 +333,11 @@ public class FestivalToolService {
         data.put("rangeStart", dateRange.start().toString());
         data.put("rangeEnd", dateRange.end() == null ? "" : dateRange.end().toString());
         data.put("today", today.toString());
+        data.put("primaryEndpoint", "searchFestival2");
+        data.put("fallbackEndpoint", "searchKeyword2");
+        data.put("keywordFallbackUsed", keywordFallbackUsed);
+        data.put("rawFestivalCount", rawFestivalCount);
+        data.put("flowerFilteredCount", flowerFilteredCount);
         data.put("excludedPastCount", excludedPastCount);
         data.put("excludedDateCount", excludedDateCount);
         data.put("excludedUnknownDateCount", excludedUnknownDateCount);
@@ -479,6 +541,16 @@ public class FestivalToolService {
         } catch (DateTimeParseException e) {
             return null;
         }
+    }
+
+    record FestivalSelection(
+            List<FestivalItem> items,
+            int rawFestivalCount,
+            int flowerFilteredCount,
+            int excludedPastCount,
+            int excludedDateCount,
+            int excludedUnknownDateCount
+    ) {
     }
 
     record DateRange(

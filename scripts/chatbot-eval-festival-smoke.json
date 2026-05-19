@@ -6,7 +6,9 @@
     "expectedTools": ["festival.searchFlowerFestivals"],
     "expectedToolData": {
       "festival.searchFlowerFestivals": {
-        "dateFilter": "this_week"
+        "dateFilter": "this_week",
+        "primaryEndpoint": "searchFestival2",
+        "fallbackEndpoint": "searchKeyword2"
       }
     }
   },

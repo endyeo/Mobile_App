@@ -219,6 +219,15 @@ function Get-ToolDataSummary($ToolResults) {
             $rangeEnd = Get-PropertyValue $data "rangeEnd"
             $summaries += "$tool.dateFilter=$dateFilter($rangeStart~$rangeEnd)"
         }
+        $primaryEndpoint = Get-PropertyValue $data "primaryEndpoint"
+        if (-not [string]::IsNullOrWhiteSpace([string]$primaryEndpoint)) {
+            $fallbackUsed = Get-PropertyValue $data "keywordFallbackUsed"
+            $rawCount = Get-PropertyValue $data "rawFestivalCount"
+            $flowerCount = Get-PropertyValue $data "flowerFilteredCount"
+            $excludedPastCount = Get-PropertyValue $data "excludedPastCount"
+            $excludedDateCount = Get-PropertyValue $data "excludedDateCount"
+            $summaries += "$tool.endpoint=$primaryEndpoint fallbackUsed=$fallbackUsed raw=$rawCount flower=$flowerCount excludedPast=$excludedPastCount excludedDate=$excludedDateCount"
+        }
         $nearby = Get-PropertyValue $data "nearby"
         $locationUsed = Get-PropertyValue $data "locationUsed"
         if ($null -ne $nearby -or $null -ne $locationUsed) {

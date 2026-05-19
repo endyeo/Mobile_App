@@ -202,12 +202,24 @@
   },
   {
     "id": "M014",
+    "message": "행사 지도 열어줘",
+    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "M015",
     "message": "상점에서 지도 아이템 사줘",
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
-    "id": "M015",
+    "id": "M016",
     "message": "수국 위치 지도 열어줘",
     "expectedRoutes": ["MAP", "FLOWER"],
     "expectedActions": [
@@ -226,7 +238,7 @@
     "expectedTools": ["flower.searchFlowerSpots"]
   },
   {
-    "id": "M016",
+    "id": "M017",
     "message": "안녕",
     "expectedRoutes": ["GENERAL"],
     "expectedTools": [],
