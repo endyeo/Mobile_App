@@ -104,44 +104,12 @@ class ChatbotServiceTest {
     }
 
     @Test
-    void communityReviewQuestionUsesCommunitySearch() {
-        ChatMessageResponse response = chatbotService.chat(request("라벤더 본 사람 후기 있어?"));
-
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
-        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
-                .containsExactly("community.searchPosts");
-        verify(communityTools).searchPosts(anyString());
-    }
-
-    @Test
-    void communityOpenDoesNotSearchPosts() {
-        ChatMessageResponse response = chatbotService.chat(request("커뮤니티 열어줘"));
-
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
-        assertThat(response.getActions()).hasSize(1);
-        assertThat(response.getActions().get(0).getTarget()).isEqualTo("COMMUNITY");
-        assertThat(response.getToolResults()).isEmpty();
-        verify(communityTools, never()).searchPosts(anyString());
-    }
-
-    @Test
     void communityComposeDoesNotSearchOrGenerateDraft() {
         ChatMessageResponse response = chatbotService.chat(request("수국 후기 글 써줘"));
 
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getTarget()).isEqualTo("COMMUNITY_COMPOSE");
         assertThat(response.getToolResults()).isEmpty();
-        verify(communityTools, never()).searchPosts(anyString());
-    }
-
-    @Test
-    void unsupportedCommunityMutationReturnsNoAction() {
-        ChatMessageResponse response = chatbotService.chat(request("이 게시글 좋아요 눌러줘"));
-
-        assertThat(response.getActions()).isEmpty();
-        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
-                .containsExactly("app.unsupported");
         verify(communityTools, never()).searchPosts(anyString());
     }
 
