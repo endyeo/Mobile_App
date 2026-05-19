@@ -1,10 +1,11 @@
 param(
     [string]$BaseUrl = "http://localhost:8080",
-    [ValidateSet("smoke", "full")]
+    [ValidateSet("smoke", "full", "community-smoke")]
     [string]$Set = "smoke",
     [double]$Lat = 37.5665,
     [double]$Lng = 126.978,
-    [int]$TimeoutSec = 60
+    [int]$TimeoutSec = 60,
+    [switch]$ShowDetails
 )
 
 $ErrorActionPreference = "Stop"
@@ -191,13 +192,28 @@ function Invoke-JsonPostUtf8($Uri, $BodyObject, [int]$TimeoutSeconds) {
     }
 }
 
+function Shorten-Text([string]$Text, [int]$MaxLength) {
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return ""
+    }
+    $singleLine = $Text.Replace("`r", " ").Replace("`n", " ").Trim()
+    if ($singleLine.Length -le $MaxLength) {
+        return $singleLine
+    }
+    return $singleLine.Substring(0, $MaxLength) + "..."
+}
+
 $caseFile = Join-Path $PSScriptRoot ("chatbot-eval-{0}.json" -f $Set)
 if (-not (Test-Path -LiteralPath $caseFile)) {
     throw "Evaluation set not found: $caseFile"
 }
 
 $cases = Convert-ToArray (Get-Content -Raw -Encoding UTF8 -LiteralPath $caseFile | ConvertFrom-Json)
-$threshold = if ($Set -eq "smoke") { 13 } else { 68 }
+$threshold = switch ($Set) {
+    "smoke" { 13 }
+    "community-smoke" { 10 }
+    default { 68 }
+}
 $endpoint = "{0}/chatbot/message" -f $BaseUrl.TrimEnd("/")
 $runId = Get-Date -Format "yyyyMMdd-HHmmss"
 $results = @()
@@ -292,11 +308,15 @@ foreach ($case in $cases) {
     $passed = ($reasons.Count -eq 0)
     $status = if ($passed) { "PASS" } else { "FAIL" }
     Write-Host ("[{0}] {1} {2}" -f $status, $id, $message)
+    $actualActionText = ($actions | ForEach-Object { ConvertTo-ActionText $_ }) -join ", "
+    if ($ShowDetails) {
+        Write-Host ("  actual: route {0} / actions [{1}] / tools [{2}] / latency {3}ms" -f $route, $actualActionText, ($tools -join ","), [math]::Round($stopwatch.Elapsed.TotalMilliseconds))
+        Write-Host ("  reply: {0}" -f (Shorten-Text $reply 180))
+    }
     if (-not $passed) {
         $expectedRouteText = (Convert-ToArray (Get-PropertyValue $case "expectedRoutes")) -join ","
         $expectedActionText = ((Convert-ToArray (Get-PropertyValue $case "expectedActions")) | ForEach-Object { ConvertTo-ActionText $_ }) -join ", "
         $expectedToolText = (Convert-ToArray (Get-PropertyValue $case "expectedTools")) -join ","
-        $actualActionText = ($actions | ForEach-Object { ConvertTo-ActionText $_ }) -join ", "
         Write-Host ("  expected: route {0} / action {1} / tool {2}" -f $expectedRouteText, $expectedActionText, $expectedToolText)
         Write-Host ("  actual: route {0} / actions [{1}] / tools [{2}]" -f $route, $actualActionText, ($tools -join ","))
         Write-Host ("  reasons: {0}" -f ($reasons -join "; "))

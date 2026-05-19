@@ -135,7 +135,7 @@ public class ChatbotService {
             StreamSender streamSender
     ) {
         sendStatus(streamSender, "CONTEXT", "AI가 맥락을 파악하고 있어요.");
-        AgentPlan plan = createAgentPlan(message);
+        AgentPlan plan = reinforcePlanWithLocalSignals(message, createAgentPlan(message));
         List<RouteIntent> intents = plan.intents() == null ? List.of() : plan.intents();
         String informationTask = normalizeInformationTask(plan.informationTask(), message, intents, plan.actions());
         boolean flowerBookRequested = actionsContainTarget(plan.actions(), "FLOWER_BOOK");
@@ -198,7 +198,9 @@ public class ChatbotService {
             addRepresentativeMapAction(actions, flowerResult);
         }
 
-        if (intents.contains(RouteIntent.COMMUNITY) && !actionsContainTarget(actions, "COMMUNITY_COMPOSE")) {
+        if (intents.contains(RouteIntent.COMMUNITY)
+                && !actionsContainTarget(actions, "COMMUNITY_COMPOSE")
+                && wantsCommunitySearch(message)) {
             sendStatus(streamSender, "SEARCH", "커뮤니티 글을 검색하고 있어요.");
             ToolResult communityResult = communityTools.searchPosts(keyword);
             toolResults.add(communityResult);
@@ -334,6 +336,64 @@ public class ChatbotService {
         ).contains(informationTask);
     }
 
+    private AgentPlan reinforcePlanWithLocalSignals(String message, AgentPlan plan) {
+        List<RouteIntent> intents = new ArrayList<>(plan.intents() == null ? List.of() : plan.intents());
+        List<ChatAction> actions = new ArrayList<>(plan.actions() == null ? List.of() : plan.actions());
+        String keyword = plan.searchKeyword();
+        if (keyword == null || keyword.isBlank()) {
+            keyword = sanitizePlannerKeyword(extractKeyword(message));
+        }
+
+        if (wantsUnsupportedFeature(message)) {
+            return new AgentPlan(
+                    intents.isEmpty() ? List.of(RouteIntent.GENERAL) : intents.stream().distinct().toList(),
+                    "unsupported",
+                    keyword,
+                    List.of(),
+                    plan.source()
+            );
+        }
+
+        if (wantsCommunityCompose(message)) {
+            intents.removeIf(intent -> intent == RouteIntent.FLOWER || intent == RouteIntent.FLOWER_GROW);
+            if (!intents.contains(RouteIntent.COMMUNITY)) {
+                intents.add(RouteIntent.COMMUNITY);
+            }
+            actions.removeIf(action -> "COMMUNITY".equals(action.getTarget()));
+            if (!actionsContainTarget(actions, "COMMUNITY_COMPOSE")) {
+                actions.add(navigateAction("COMMUNITY_COMPOSE", Map.of()));
+            }
+            return new AgentPlan(intents.stream().distinct().toList(), "app_navigation", keyword, actions, plan.source());
+        }
+
+        if (wantsCommunitySearch(message)) {
+            intents.removeIf(intent -> intent == RouteIntent.FLOWER || intent == RouteIntent.FLOWER_GROW);
+            if (!intents.contains(RouteIntent.COMMUNITY)) {
+                intents.add(RouteIntent.COMMUNITY);
+            }
+            if (containsAny(message == null ? "" : message.toLowerCase(Locale.ROOT), "show", "view", "open", "보여", "보고 싶", "열어")) {
+                actions.removeIf(action -> "COMMUNITY_COMPOSE".equals(action.getTarget()));
+                if (!actionsContainTarget(actions, "COMMUNITY")) {
+                    actions.add(navigateAction("COMMUNITY", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
+                }
+            }
+            return new AgentPlan(intents.stream().distinct().toList(), "app_navigation", keyword, actions, plan.source());
+        }
+
+        if (wantsCommunity(message)) {
+            intents.removeIf(intent -> intent == RouteIntent.FLOWER || intent == RouteIntent.FLOWER_GROW);
+            if (!intents.contains(RouteIntent.COMMUNITY)) {
+                intents.add(RouteIntent.COMMUNITY);
+            }
+            if (!actionsContainTarget(actions, "COMMUNITY")) {
+                actions.add(navigateAction("COMMUNITY", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
+            }
+            return new AgentPlan(intents.stream().distinct().toList(), "app_navigation", keyword, actions, plan.source());
+        }
+
+        return plan;
+    }
+
     private boolean wantsExplicitAppNavigation(String message) {
         return wantsMap(message)
                 || wantsFlowerBookOpen(message)
@@ -348,7 +408,9 @@ public class ChatbotService {
 
     private ToolResult unsupportedToolResult(String message) {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
-        String feature = containsAny(lower, "shop", "store", "buy", "purchase", "상점", "상품", "아이템", "구매", "사줘")
+        String feature = wantsUnsupportedCommunityMutation(lower)
+                ? "커뮤니티 쓰기/수정"
+                : containsAny(lower, "shop", "store", "buy", "purchase", "상점", "상품", "아이템", "구매", "사줘")
                 ? "상점/구매"
                 : "퀘스트/인증";
         Map<String, Object> data = new LinkedHashMap<>();
@@ -503,6 +565,24 @@ public class ChatbotService {
         return containsAny(lower, "write", "create post", "compose", "작성", "써줘", "글쓰기", "올리고");
     }
 
+    private boolean wantsCommunitySearch(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return wantsCommunity(lower)
+                && !wantsCommunityCompose(lower)
+                && containsAny(lower,
+                "review", "post", "search", "show", "find", "seen",
+                "후기", "게시글", "검색", "찾아", "보여", "보고 싶", "본 사람", "있어");
+    }
+
+    private boolean wantsUnsupportedCommunityMutation(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        boolean directCommunityMutation = containsAny(lower,
+                "좋아요", "댓글", "게시글 삭제", "글 삭제", "delete post", "like this", "comment for me");
+        return directCommunityMutation || wantsCommunity(lower) && containsAny(lower,
+                "like", "comment", "delete", "edit", "save for me", "auto save", "publish for me",
+                "좋아요", "댓글", "삭제", "수정", "대신 저장", "저장해", "자동 저장", "대신 올려", "자동 게시", "게시해줘");
+    }
+
     private boolean wantsWalk(String message) {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
         return containsAny(lower, "walk", "step", "pedometer", "산책", "걸음", "만보기", "포인트");
@@ -520,6 +600,9 @@ public class ChatbotService {
 
     private boolean wantsUnsupportedFeature(String message) {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        if (wantsUnsupportedCommunityMutation(lower)) {
+            return true;
+        }
         return containsAny(lower,
                 "shop", "store", "buy", "purchase", "quest", "mission",
                 "상점", "상품", "아이템", "구매", "사줘", "퀘스트", "미션", "인증", "포인트 지급");
@@ -582,7 +665,7 @@ public class ChatbotService {
                 - candidate_inference: the user does not know the flower name, gives color/shape clues, or asks "what flower is this".
                 - place_search: flower place, festival, nearby spot, route, location, or map search.
                 - app_navigation: the user explicitly wants to open an app screen such as flower book, map, community, walk, or saved.
-                - unsupported: shop, purchase, quest, mission, verification, point grant, admin, or private data requests.
+                - unsupported: shop, purchase, quest, mission, verification, point grant, admin, private data, or direct community write/mutate requests.
                 - If there is no appropriate app-control action to run, return actions [].
                 - If the user asks for flower facts, descriptions, features, flower language, bloom timing, or identification, use intent FLOWER, no navigation action, and searchKeyword should be the flower name.
                 - If the user asks for flower care, growing, watering, sunlight, soil, or grow tips, use intent FLOWER_GROW, information_task grow_guide, no navigation action, and searchKeyword should be the flower name.
@@ -596,6 +679,9 @@ public class ChatbotService {
                 - Use MAP_SET_SEARCH_QUERY only when the user names a flower or flower place to find on the map.
                 - If the user wants to write or create a community post, use NAVIGATE COMMUNITY_COMPOSE only.
                 - Do not generate community post content or drafts.
+                - If the user asks to like, comment, delete, edit, automatically save, or publish a community post for them, use unsupported with actions [].
+                - If the user only asks to open the community screen, use NAVIGATE COMMUNITY and do not search posts.
+                - If the user asks to find, search, show, or read reviews/posts, use intent COMMUNITY and searchKeyword from the flower/place/topic.
                 - If the user asks to open saved/bookmarked items, use NAVIGATE SAVED.
                 - Shop, purchase, quest, mission, point grant, and verification actions are not supported in v1. Return intent SHOP or QUEST with actions [].
                 - For Korean flower names, preserve the full name such as "벚꽃"; remove particles such as "에서".
