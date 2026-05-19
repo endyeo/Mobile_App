@@ -16,10 +16,26 @@ public interface CommunityPostRepository extends JpaRepository<CommunityPost, Lo
     @Query("SELECT p FROM CommunityPost p WHERE p.id < :cursor ORDER BY p.createdAt DESC")
     List<CommunityPost> findFeedByCursor(@Param("cursor") Long cursor, Pageable pageable);
 
-    @Query("SELECT p FROM CommunityPost p WHERE p.postType = 'FLOWER_SPOT' AND p.createdAt >= :since ORDER BY p.createdAt DESC")
+    // 지도용: GPS가 있는 FLOWER_SPOT 게시글만 조회
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE p.postType = 'FLOWER_SPOT'
+          AND p.createdAt >= :since
+          AND p.latitude IS NOT NULL
+          AND p.longitude IS NOT NULL
+        ORDER BY p.createdAt DESC
+    """)
     List<CommunityPost> findFlowerSpots(@Param("since") LocalDateTime since, Pageable pageable);
 
-    @Query("SELECT p FROM CommunityPost p WHERE p.postType = 'FLOWER_SPOT' AND p.id < :cursor AND p.createdAt >= :since ORDER BY p.createdAt DESC")
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE p.postType = 'FLOWER_SPOT'
+          AND p.id < :cursor
+          AND p.createdAt >= :since
+          AND p.latitude IS NOT NULL
+          AND p.longitude IS NOT NULL
+        ORDER BY p.createdAt DESC
+    """)
     List<CommunityPost> findFlowerSpotsByCursor(@Param("cursor") Long cursor, @Param("since") LocalDateTime since, Pageable pageable);
 
     // PostGIS 반경 기반 꽃 게시글 조회 (지도용)

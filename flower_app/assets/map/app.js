@@ -265,10 +265,6 @@
   async function loadFlowers() {
     const apiFlowers = await fetchFlowersFromApi();
     state.flowers = apiFlowers;
-    console.log('[FlowerMap] loadFlowers: received', apiFlowers.length, 'flowers');
-    if (apiFlowers.length > 0) {
-      console.log('[FlowerMap] first flower:', JSON.stringify(apiFlowers[0]));
-    }
     applyFilters();
     applyPendingFlowerFocus();
     applyPendingRouteAction();
@@ -276,33 +272,17 @@
 
   async function fetchFlowersFromApi() {
     const baseUrl = config.API_BASE_URL;
-    console.log('[FlowerMap] fetchFlowersFromApi baseUrl=', baseUrl);
-    if (!baseUrl) {
-      console.warn('[FlowerMap] API_BASE_URL is empty');
-      return [];
-    }
+    if (!baseUrl) return [];
 
-    const url = `${baseUrl}/flower-spots`;
-    console.log('[FlowerMap] fetching:', url);
     try {
       // 지도 전체 뷰: 위치 필터 없이 최근 게시글 전부 표시
-      // (반경 검색은 백엔드 근처 알림 등에서만 사용)
-      const response = await fetch(url);
-      console.log('[FlowerMap] response status:', response.status);
-      if (!response.ok) {
-        console.warn('[FlowerMap] response not ok:', response.status);
-        return [];
-      }
-      const text = await response.text();
-      console.log('[FlowerMap] response body length:', text.length);
-      const body = JSON.parse(text);
+      const response = await fetch(`${baseUrl}/flower-spots`);
+      if (!response.ok) return [];
+      const body = await response.json();
       const posts = body.data?.posts ?? (Array.isArray(body) ? body : []);
-      console.log('[FlowerMap] parsed posts count:', posts.length);
-      const normalized = normalizeFlowers(posts);
-      console.log('[FlowerMap] after normalize:', normalized.length);
-      return normalized;
+      return normalizeFlowers(posts);
     } catch (error) {
-      console.warn('Flower API is unavailable.', String(error));
+      console.warn('Flower API is unavailable.', error);
       return [];
     }
   }
@@ -310,13 +290,15 @@
   function normalizeFlowers(flowers) {
     return flowers
       .map(function (flower) {
-        const lat = flower.location?.lat ?? flower.lat ?? flower.mapY;
-        const lng = flower.location?.lng ?? flower.lng ?? flower.mapX;
+        // 백엔드 응답 필드는 latitude/longitude — 그 외 클라이언트 호환 키도 보존
+        const lat = flower.latitude ?? flower.location?.lat ?? flower.lat ?? flower.mapY;
+        const lng = flower.longitude ?? flower.location?.lng ?? flower.lng ?? flower.mapX;
         return {
-          flower_id: flower.flower_id ?? flower.flowerId ?? flower.id,
-          name: flower.name || '',
-          species: flower.species || '',
+          flower_id: flower.id ?? flower.flower_id ?? flower.flowerId,
+          name: flower.plantName || flower.name || flower.nickname || '',
+          species: flower.flowerSpecies || flower.species || '',
           address: flower.address || '',
+          imageUrl: flower.imageUrl || '',
           location: { lat: Number(lat), lng: Number(lng) },
           distance_m: flower.distance_m ?? flower.distanceM,
         };
@@ -699,17 +681,12 @@
   }
 
   function renderMapMarkers() {
-    if (!state.map || !window.kakao?.maps) {
-      console.warn('[FlowerMap] renderMapMarkers skipped: map=', !!state.map, 'kakao=', !!window.kakao?.maps);
-      return;
-    }
+    if (!state.map || !window.kakao?.maps) return;
     clearKakaoMarkers();
 
     const items = state.filteredMapItems.length || state.search
       ? state.filteredMapItems
       : buildVisibleMapItems();
-    console.log('[FlowerMap] renderMapMarkers:', items.length, 'items (flowers:',
-      state.filteredFlowers.length, 'showFlowers:', state.showFlowers, ')');
     const groups = clusterMapItems(items);
 
     groups.forEach(function (group) {
@@ -2029,7 +2006,8 @@
     panel.id = 'route-panel';
     panel.className = 'map-panel route-panel route-panel-top';
 
-    let html = [
+    // 헤더만 먼저 렌더
+    panel.innerHTML = [
       '<div class="panel-row">',
       '<span class="panel-icon">도보</span>',
       '<div class="panel-info">',
@@ -2039,41 +2017,50 @@
       steps && steps.length
         ? '<button class="panel-close" data-role="toggle">경로</button>'
         : '',
+      '<button class="panel-close-x" data-role="close" aria-label="닫기">×</button>',
       '</div>',
     ].join('');
 
+    // 구간 HTML은 변수로 보관, 토글 시 동적 추가/제거
+    let stepsHtml = '';
     if (steps && steps.length) {
-      html += '<div id="route-steps" class="route-steps" style="display:none;">';
-      steps.forEach(function (step) {
+      stepsHtml = steps.map(function (step) {
         const stepDistance = step.distance >= 1000
           ? `${(step.distance / 1000).toFixed(1)}km`
           : `${Math.round(step.distance)}m`;
-        html += [
+        return [
           '<div class="route-step">',
           `<span class="step-num">${escapeHtml(getStepIcon(step.instruction))}</span>`,
           `<span class="step-text">${escapeHtml(step.instruction)}</span>`,
           `<span class="step-dist">${escapeHtml(stepDistance)}</span>`,
           '</div>',
         ].join('');
-      });
-      html += '</div>';
+      }).join('');
     }
 
-    panel.innerHTML = html;
     $('#map-shell').appendChild(panel);
     refitVisibleRoute();
 
     const toggleButton = panel.querySelector('[data-role="toggle"]');
     if (toggleButton) {
       toggleButton.addEventListener('click', function () {
-        const stepElement = $('#route-steps');
-        if (!stepElement) return;
-        const hidden = stepElement.style.display === 'none';
-        stepElement.style.display = hidden ? 'block' : 'none';
-        toggleButton.textContent = hidden ? '접기' : '경로';
+        const existing = panel.querySelector('#route-steps');
+        if (existing) {
+          existing.remove();
+          toggleButton.textContent = '경로';
+        } else {
+          const stepsDiv = document.createElement('div');
+          stepsDiv.id = 'route-steps';
+          stepsDiv.className = 'route-steps';
+          stepsDiv.innerHTML = stepsHtml;
+          panel.appendChild(stepsDiv);
+          toggleButton.textContent = '접기';
+        }
         refitVisibleRoute();
       });
     }
+
+    attachRoutePanelCloseHandler(panel);
   }
 
   function showTransitRoutePanel(route, destName) {
@@ -2096,8 +2083,9 @@
     panel.id = 'route-panel';
     panel.className = 'map-panel route-panel route-panel-top transit-route-panel';
 
-    let html = [
-      '<div class="panel-row panel-row-start">',
+    // 헤더만 먼저 렌더 — 구간 토글 시 steps div를 동적 추가/제거
+    panel.innerHTML = [
+      '<div class="panel-row">',
       `<span class="panel-icon">${escapeHtml(routeMode === 'car' ? '차' : routeMode === 'walk' ? '도보' : '교통')}</span>`,
       '<div class="panel-info">',
       `<strong>${escapeHtml(destName || '')}</strong>`,
@@ -2106,30 +2094,36 @@
         : `<span>${escapeHtml(routeLabel)} ${escapeHtml(totalTime)} · 거리 ${escapeHtml(totalDistance)}</span>`,
       '</div>',
       '<button class="panel-close" data-role="toggle">구간</button>',
+      '<button class="panel-close-x" data-role="close" aria-label="닫기">×</button>',
       '</div>',
-      '<div id="route-steps" class="route-steps transit-steps" style="display:none;">',
     ].join('');
 
-    (route.legs || []).forEach(function (leg) {
-      html += buildTransitLegHtml(leg);
-    });
-    html += '</div>';
+    // 구간 HTML은 변수로 보관, DOM에는 토글 시 추가
+    const stepsHtml = (route.legs || []).map(buildTransitLegHtml).join('');
 
-    panel.innerHTML = html;
     $('#map-shell').appendChild(panel);
     refitVisibleRoute();
 
     const toggleButton = panel.querySelector('[data-role="toggle"]');
     if (toggleButton) {
       toggleButton.addEventListener('click', function () {
-        const stepElement = $('#route-steps');
-        if (!stepElement) return;
-        const hidden = stepElement.style.display === 'none';
-        stepElement.style.display = hidden ? 'block' : 'none';
-        toggleButton.textContent = hidden ? '접기' : '구간';
+        const existing = panel.querySelector('#route-steps');
+        if (existing) {
+          existing.remove();
+          toggleButton.textContent = '구간';
+        } else {
+          const stepsDiv = document.createElement('div');
+          stepsDiv.id = 'route-steps';
+          stepsDiv.className = 'route-steps transit-steps';
+          stepsDiv.innerHTML = stepsHtml;
+          panel.appendChild(stepsDiv);
+          toggleButton.textContent = '접기';
+        }
         refitVisibleRoute();
       });
     }
+
+    attachRoutePanelCloseHandler(panel);
   }
 
   function buildTransitLegHtml(leg) {
@@ -2237,9 +2231,11 @@
       `<strong>${escapeHtml(destName || '')}</strong>`,
       `<span>${escapeHtml(label)} 경로를 찾는 중입니다.</span>`,
       '</div>',
+      '<button class="panel-close-x" data-role="close" aria-label="닫기">×</button>',
       '</div>',
     ].join('');
     $('#map-shell').appendChild(panel);
+    attachRoutePanelCloseHandler(panel);
   }
 
   function showRouteError(message) {
@@ -2252,10 +2248,21 @@
       '<div class="panel-row">',
       '<span class="panel-icon">...</span>',
       `<div class="panel-info"><span>${escapeHtml(message)}</span></div>`,
+      '<button class="panel-close-x" data-role="close" aria-label="닫기">×</button>',
       '</div>',
     ].join('');
 
     $('#map-shell').appendChild(panel);
+    attachRoutePanelCloseHandler(panel);
+  }
+
+  function attachRoutePanelCloseHandler(panel) {
+    const closeButton = panel.querySelector('[data-role="close"]');
+    if (!closeButton) return;
+    closeButton.addEventListener('click', function () {
+      clearRoute();
+      removePanel('route-panel');
+    });
   }
 
   function showMapStatus(message) {

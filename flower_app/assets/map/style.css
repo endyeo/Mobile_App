@@ -71,18 +71,75 @@ body {
   animation: panelSlideIn 220ms ease;
 }
 
-.marker-panel,
-.route-panel {
-  padding: 14px 16px;
-}
-
 .route-panel {
   top: var(--route-panel-top, 150px);
-  bottom: auto;
+  bottom: auto !important;
+  height: auto !important;
+  min-height: 0;
   z-index: 44;
   max-height: calc(100vh - var(--route-panel-top, 150px) - 20px);
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: 14px;
+  padding: 6px 10px;
+}
+
+/* 경로 패널: 컴팩트 row + 한 줄 텍스트 강제 */
+.route-panel .panel-row {
+  gap: 8px;
+}
+
+.route-panel .panel-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.route-panel .panel-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: nowrap;
+}
+
+.route-panel .panel-info strong {
+  display: inline;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 40%;
+}
+
+.route-panel .panel-info span {
+  display: inline;
+  margin-top: 0;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.route-panel .panel-close-x {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #f2f4f3;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 0;
+  cursor: pointer;
 }
 
 .marker-panel {
@@ -90,6 +147,7 @@ body {
   right: 16px;
   bottom: 162px;
   width: min(280px, calc(100vw - 32px));
+  padding: 14px 16px;
 }
 
 .marker-panel-floating {
@@ -232,12 +290,12 @@ body {
 
 .route-panel .panel-close {
   width: auto;
-  min-width: 52px;
-  height: 32px;
-  padding: 0 12px;
+  min-width: 40px;
+  height: 26px;
+  padding: 0 10px;
   border-radius: 999px;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 800;
 }
 
