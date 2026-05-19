@@ -9,6 +9,7 @@ import com.flower.backend.chatbot.dto.ChatMessageRequest;
 import com.flower.backend.chatbot.dto.ChatMessageResponse;
 import com.flower.backend.chatbot.dto.ToolResult;
 import com.flower.backend.chatbot.tool.CommunityAgent.CommunityTools;
+import com.flower.backend.chatbot.tool.FestivalAgent.FestivalToolService;
 import com.flower.backend.chatbot.tool.FlowerAgent.FlowerToolService;
 import com.flower.backend.flower.Flower;
 import java.time.LocalDate;
@@ -36,6 +37,7 @@ public class ChatbotService {
 
     private final FlowerToolService flowerToolService;
     private final CommunityTools communityTools;
+    private final FestivalToolService festivalToolService;
     private final ChatActionValidator chatActionValidator = new ChatActionValidator();
     private final ChatClient chatClient;
     private final String openAiApiKey;
@@ -57,11 +59,13 @@ public class ChatbotService {
     public ChatbotService(
             FlowerToolService flowerToolService,
             CommunityTools communityTools,
+            FestivalToolService festivalToolService,
             ObjectProvider<ChatClient.Builder> chatClientBuilderProvider,
             @Value("${chatbot.openai.api-key:}") String openAiApiKey
     ) {
         this.flowerToolService = flowerToolService;
         this.communityTools = communityTools;
+        this.festivalToolService = festivalToolService;
         ChatClient.Builder chatClientBuilder = chatClientBuilderProvider.getIfAvailable();
         this.chatClient = chatClientBuilder == null ? null : chatClientBuilder.build();
         this.openAiApiKey = openAiApiKey == null ? "" : openAiApiKey.trim();
@@ -180,6 +184,14 @@ public class ChatbotService {
         }
 
         boolean flowerIntent = hasFlowerIntent(intents);
+        ToolResult festivalResult = executeFestivalTask(plan, keyword, location, streamSender);
+        if (festivalResult != null) {
+            toolResults.add(festivalResult);
+            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", festivalResult));
+            steps.add(stepTrace(step++, "FestivalAgent", festivalResult.getTool(), "SUCCESS",
+                    festivalResult.getSummary()));
+        }
+
         ToolResult informationResult = executeInformationTask(informationTask, keyword, message, streamSender);
         if (informationResult != null) {
             toolResults.add(informationResult);
@@ -265,6 +277,20 @@ public class ChatbotService {
             }
             default -> null;
         };
+    }
+
+    private ToolResult executeFestivalTask(
+            AgentPlan plan,
+            String keyword,
+            ChatMessageRequest.LocationContext location,
+            StreamSender streamSender
+    ) {
+        if (!"festival_info".equals(plan.domain())) {
+            return null;
+        }
+        sendStatus(streamSender, "SEARCH", "꽃 축제 정보를 찾고 있어요.");
+        boolean nearby = "recommend_nearby".equals(plan.task()) || "open_festival_map".equals(plan.task());
+        return festivalToolService.searchFlowerFestivalsResult(keyword, location, nearby);
     }
 
     private String normalizeInformationTask(
@@ -555,7 +581,8 @@ public class ChatbotService {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
         return containsAny(lower,
                 "shop", "store", "buy", "purchase", "quest", "mission",
-                "상점", "상품", "아이템", "구매", "사줘", "퀘스트", "미션", "인증", "포인트 지급");
+                "상점", "상품", "아이템", "구매", "사줘", "퀘스트", "미션", "인증", "포인트 지급",
+                "예매", "예약", "티켓", "결제");
     }
 
     private boolean mentionsFlower(String message) {
@@ -598,8 +625,8 @@ public class ChatbotService {
                 Return only valid JSON. Do not wrap it in markdown.
                 Schema:
                 {
-                  "domain": "flower_info | community | map_place | app_navigation | unsupported | general",
-                  "task": "basic_info | meaning_bloom | grow_guide | monthly_recommendation | candidate_inference | search_posts | open_community | open_composer | place_search | open_map | open_flower_book | open_walk | open_saved | shop_purchase | quest_verification | community_mutation | private_or_admin | general_chat",
+                  "domain": "flower_info | festival_info | community | map_place | app_navigation | unsupported | general",
+                  "task": "basic_info | meaning_bloom | grow_guide | monthly_recommendation | candidate_inference | search_festivals | recommend_nearby | open_festival_map | search_posts | open_community | open_composer | place_search | open_map | open_flower_book | open_walk | open_saved | shop_purchase | quest_verification | community_mutation | private_or_admin | general_chat",
                   "keyword": "optional flower, place, or topic keyword",
                   "needs_screen": true,
                   "confidence": "high | medium | low",
@@ -610,6 +637,9 @@ public class ChatbotService {
                 - Community writing takes priority over community search. If the user says "글 써줘", "글 올릴래", or "작성", choose community/open_composer even if the message contains "후기".
                 - Community mutation requests such as like, comment, delete, edit, auto-save, or publish-for-me are unsupported/community_mutation.
                 - "커뮤니티 열어줘" is community/open_community and must not search posts.
+                - If festival, event, or 행사 is the main topic, choose festival_info instead of flower_info.
+                - Festival booking, reservation, ticket purchase, or payment requests are unsupported/private_or_admin.
+                - Festival map requests are festival_info/open_festival_map.
                 - Flower information is more important than screen navigation unless the user explicitly asks for a screen.
                 - General greetings and small talk are general/general_chat.
                 - Preserve Korean flower/topic keywords such as "수국", "벚꽃", "장미", "라벤더".
@@ -655,6 +685,16 @@ public class ChatbotService {
                 JSON: {"domain":"app_navigation","task":"open_flower_book","keyword":"장미","needs_screen":true,"confidence":"high","reason":"도감 화면 이동"}
                 User: 안녕
                 JSON: {"domain":"general","task":"general_chat","keyword":"","needs_screen":false,"confidence":"high","reason":"인사"}
+                User: 이번 주 꽃 축제 알려줘
+                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"꽃","needs_screen":false,"confidence":"high","reason":"꽃 축제 정보 조회"}
+                User: 서울 근처 꽃 축제 있어?
+                JSON: {"domain":"festival_info","task":"recommend_nearby","keyword":"꽃","needs_screen":false,"confidence":"high","reason":"근처 꽃 축제 추천"}
+                User: 벚꽃 축제 찾아줘
+                JSON: {"domain":"festival_info","task":"search_festivals","keyword":"벚꽃","needs_screen":false,"confidence":"high","reason":"벚꽃 축제 검색"}
+                User: 꽃 축제 지도에서 보여줘
+                JSON: {"domain":"festival_info","task":"open_festival_map","keyword":"축제","needs_screen":true,"confidence":"high","reason":"꽃 축제 지도 확인"}
+                User: 축제 티켓 예매해줘
+                JSON: {"domain":"unsupported","task":"private_or_admin","keyword":"","needs_screen":false,"confidence":"high","reason":"축제 예매는 지원하지 않음"}
                 """;
     }
 
@@ -689,7 +729,7 @@ public class ChatbotService {
         return """
                 You repair FLOWER planner JSON.
                 Return only valid JSON with this schema:
-                {"domain":"flower_info|community|map_place|app_navigation|unsupported|general","task":"string","keyword":"string","needs_screen":true,"confidence":"high|medium|low","reason":"short Korean reason"}
+                {"domain":"flower_info|festival_info|community|map_place|app_navigation|unsupported|general","task":"string","keyword":"string","needs_screen":true,"confidence":"high|medium|low","reason":"short Korean reason"}
                 Do not add actions, tool names, markdown, or prose.
                 Domain/task must be a valid pair.
                 """;
@@ -721,13 +761,14 @@ public class ChatbotService {
         List<String> errors = new ArrayList<>();
         String domain = decision.domain();
         String task = decision.task();
-        if (!List.of("flower_info", "community", "map_place", "app_navigation", "unsupported", "general")
+        if (!List.of("flower_info", "festival_info", "community", "map_place", "app_navigation", "unsupported", "general")
                 .contains(domain)) {
             errors.add("unknown domain: " + domain);
         }
 
         Map<String, List<String>> allowedTasks = Map.of(
                 "flower_info", List.of("basic_info", "meaning_bloom", "grow_guide", "monthly_recommendation", "candidate_inference"),
+                "festival_info", List.of("search_festivals", "recommend_nearby", "open_festival_map"),
                 "community", List.of("search_posts", "open_community", "open_composer"),
                 "map_place", List.of("place_search"),
                 "app_navigation", List.of("open_map", "open_flower_book", "open_walk", "open_saved"),
@@ -769,6 +810,19 @@ public class ChatbotService {
                     actions.add(navigateAction("COMMUNITY", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
                 } else if ("open_composer".equals(decision.task())) {
                     actions.add(navigateAction("COMMUNITY_COMPOSE", Map.of()));
+                }
+            }
+            case "festival_info" -> {
+                intents.add(RouteIntent.FESTIVAL);
+                informationTask = "app_navigation";
+                if ("open_festival_map".equals(decision.task())) {
+                    intents.add(RouteIntent.MAP);
+                    actions.add(navigateAction("MAP", Map.of()));
+                    actions.add(ChatAction.builder()
+                            .type("MAP_SET_SEARCH_QUERY")
+                            .target("MAP")
+                            .params(Map.of("query", keyword.isBlank() ? "축제" : keyword))
+                            .build());
                 }
             }
             case "map_place" -> {
@@ -1056,6 +1110,7 @@ public class ChatbotService {
                 재배, 물주기, 햇빛, 토양, 관리 답변은 flower.getGrowGuide 결과만 근거로 사용하고 일반 원예 상식으로 보강하지 마세요.
                 월별/계절 추천은 flower.recommendByMonth 결과를 우선 사용하고 3~5개만 짧게 설명하세요.
                 모호한 설명에서 꽃 후보를 추정한 경우 flower.inferCandidates 결과만 사용하고, 확정 식별이 아니라 가능성 있는 후보라고 말하세요.
+                꽃 축제 질문은 festival.searchFlowerFestivals 결과만 근거로 사용하고, 예매/예약/결제 가능 여부를 지어내지 마세요.
                 장소/지도 데이터는 꽃 정보보다 뒤에 보조로만 설명하세요. 장소 결과가 없더라도 꽃 정보가 있으면 정보부터 답하세요.
                 커뮤니티 작성처럼 쓰기 성격의 작업에서 작성 화면을 여는 경우, 내용을 생성하거나 자동 저장하지 않고 글 작성 화면만 연다고 명확히 말하세요.
                 상점, 구매, 퀘스트, 미션, 인증, 포인트 지급 같은 미지원 요청은 실행하지 말고 아직 지원하지 않는다고 말하세요.
@@ -1301,6 +1356,7 @@ public class ChatbotService {
                 if (item instanceof Map<?, ?> row) {
                     context.append("  - ");
                     appendIfPresent(context, row, "name", "이름");
+                    appendIfPresent(context, row, "title", "축제명");
                     appendIfPresent(context, row, "scientificName", "학명");
                     appendIfPresent(context, row, "description", "설명");
                     appendIfPresent(context, row, "shortDescription", "요약");
@@ -1312,6 +1368,9 @@ public class ChatbotService {
                     appendIfPresent(context, row, "spotCount", "승인 명소 수");
                     appendIfPresent(context, row, "representativeSpotName", "대표 명소");
                     appendIfPresent(context, row, "address", "주소");
+                    appendIfPresent(context, row, "period", "기간");
+                    appendIfPresent(context, row, "tel", "문의");
+                    appendIfPresent(context, row, "distanceKm", "거리 km");
                     appendIfPresent(context, row, "bloomStart", "개화 시작");
                     appendIfPresent(context, row, "bloomEnd", "개화 종료");
                     context.append("\n");
@@ -1357,6 +1416,7 @@ public class ChatbotService {
                 case "flower.recommendByMonth", "flower.recommendSeasonalFlowers" -> "월별 꽃 추천";
                 case "flower.inferCandidates" -> "꽃 후보 추정";
                 case "flower.searchFlowerSpots" -> "꽃 명소 조회";
+                case "festival.searchFlowerFestivals" -> "꽃 축제 조회";
                 case "community.searchPosts", "searchCommunityPosts" -> "커뮤니티 글 조회";
                 case "app.unsupported" -> "지원하지 않는 요청";
                 default -> tool;

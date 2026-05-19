@@ -74,7 +74,9 @@ class ChatActionValidator {
 
     private boolean needsMapSearch(List<RouteIntent> intents, String keyword) {
         return intents.contains(RouteIntent.MAP)
-                && (intents.contains(RouteIntent.FLOWER) || intents.contains(RouteIntent.FLOWER_GROW))
+                && (intents.contains(RouteIntent.FLOWER)
+                || intents.contains(RouteIntent.FLOWER_GROW)
+                || intents.contains(RouteIntent.FESTIVAL))
                 && keyword != null
                 && !keyword.isBlank();
     }

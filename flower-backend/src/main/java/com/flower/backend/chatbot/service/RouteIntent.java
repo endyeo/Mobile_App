@@ -5,6 +5,7 @@ enum RouteIntent {
     MAP,
     FLOWER,
     FLOWER_GROW,
+    FESTIVAL,
     COMMUNITY,
     WALK,
     SAVED,

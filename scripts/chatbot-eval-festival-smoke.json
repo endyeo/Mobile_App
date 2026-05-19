@@ -1,0 +1,75 @@
+[
+  {
+    "id": "F001",
+    "message": "이번 주 꽃 축제 알려줘",
+    "expectedRoutes": ["FESTIVAL"],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "F002",
+    "message": "서울 근처 꽃 축제 있어?",
+    "expectedRoutes": ["FESTIVAL"],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "F003",
+    "message": "벚꽃 축제 찾아줘",
+    "expectedRoutes": ["FESTIVAL"],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "F004",
+    "message": "수국 축제 알려줘",
+    "expectedRoutes": ["FESTIVAL"],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "F005",
+    "message": "꽃 축제 지도에서 보여줘",
+    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "F006",
+    "message": "근처 축제 지도 열어줘",
+    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "F007",
+    "message": "이번 달 갈 만한 꽃 행사 추천해줘",
+    "expectedRoutes": ["FESTIVAL"],
+    "expectedTools": ["festival.searchFlowerFestivals"]
+  },
+  {
+    "id": "F008",
+    "message": "축제 티켓 예매해줘",
+    "expectedTools": ["app.unsupported"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "F009",
+    "message": "축제 대신 예약해줘",
+    "expectedTools": ["app.unsupported"],
+    "forbiddenActions": ["*"]
+  },
+  {
+    "id": "F010",
+    "message": "안녕",
+    "expectedRoutes": ["GENERAL"],
+    "expectedTools": [],
+    "expectedActions": []
+  }
+]

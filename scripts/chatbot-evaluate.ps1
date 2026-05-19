@@ -1,6 +1,6 @@
 param(
     [string]$BaseUrl = "http://localhost:8080",
-    [ValidateSet("smoke", "full", "community-smoke")]
+    [ValidateSet("smoke", "full", "community-smoke", "festival-smoke")]
     [string]$Set = "smoke",
     [double]$Lat = 37.5665,
     [double]$Lng = 126.978,
@@ -229,6 +229,7 @@ $cases = Convert-ToArray (Get-Content -Raw -Encoding UTF8 -LiteralPath $caseFile
 $threshold = switch ($Set) {
     "smoke" { 13 }
     "community-smoke" { 10 }
+    "festival-smoke" { 8 }
     default { 68 }
 }
 $endpoint = "{0}/chatbot/message" -f $BaseUrl.TrimEnd("/")

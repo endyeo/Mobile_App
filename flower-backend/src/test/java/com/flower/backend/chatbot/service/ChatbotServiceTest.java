@@ -5,6 +5,7 @@ import com.flower.backend.chatbot.dto.ChatMessageRequest;
 import com.flower.backend.chatbot.dto.ChatMessageResponse;
 import com.flower.backend.chatbot.dto.ToolResult;
 import com.flower.backend.chatbot.tool.CommunityAgent.CommunityTools;
+import com.flower.backend.chatbot.tool.FestivalAgent.FestivalToolService;
 import com.flower.backend.chatbot.tool.FlowerAgent.FlowerToolService;
 import java.util.Iterator;
 import java.util.List;
@@ -28,13 +29,15 @@ class ChatbotServiceTest {
 
     private FlowerToolService flowerToolService;
     private CommunityTools communityTools;
+    private FestivalToolService festivalToolService;
     private ChatbotService chatbotService;
 
     @BeforeEach
     void setUp() {
         flowerToolService = mock(FlowerToolService.class);
         communityTools = mock(CommunityTools.class);
-        chatbotService = new ChatbotService(flowerToolService, communityTools, noChatClient(), "");
+        festivalToolService = mock(FestivalToolService.class);
+        chatbotService = new ChatbotService(flowerToolService, communityTools, festivalToolService, noChatClient(), "");
 
         when(flowerToolService.searchFlowerSpots(anyString())).thenReturn(List.of());
         when(flowerToolService.lookupFlowerDescriptionSourceResult(anyString(), anyBoolean()))
