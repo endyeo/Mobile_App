@@ -3,8 +3,8 @@ package com.flower.backend.chatbot.tool.CommunityAgent;
 import com.flower.backend.chatbot.dto.ChatAction;
 import com.flower.backend.chatbot.dto.ToolResult;
 import com.flower.backend.chatbot.tool.ChatbotActionContext;
-import com.flower.backend.community.entity.Post;
-import com.flower.backend.community.repository.PostRepository;
+import com.flower.backend.community.CommunityPost;
+import com.flower.backend.community.CommunityPostRepository;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -12,18 +12,21 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class CommunityTools {
 
-    private final PostRepository postRepository;
+    private final CommunityPostRepository postRepository;
     private final ChatbotActionContext actionContext;
 
     // KO: 커뮤니티 게시글을 검색어 기준으로 조회합니다.
     @Tool(description = "Search FLOWER community posts by keyword.")
+    @Transactional(readOnly = true)
     public ToolResult searchPosts(
             // KO: 커뮤니티 게시글 검색어입니다.
             @ToolParam(description = "Search keyword for community posts.") String query
@@ -34,9 +37,9 @@ public class CommunityTools {
         String sanitized = sanitizeKeyword(query, 100);
 
         try {
-            List<Post> results = sanitized.isBlank()
-                    ? postRepository.findAll().stream().limit(5).toList()
-                    : postRepository.searchByKeyword(sanitized).stream().limit(5).toList();
+            List<CommunityPost> results = sanitized.isBlank()
+                    ? postRepository.findFeed(PageRequest.of(0, 5))
+                    : postRepository.searchByKeyword(sanitized, PageRequest.of(0, 5));
 
             return ToolResult.builder()
                     .tool("community.searchPosts")
@@ -98,14 +101,15 @@ public class CommunityTools {
         return action;
     }
 
-    private List<Map<String, Object>> toItems(List<Post> posts) {
+    private List<Map<String, Object>> toItems(List<CommunityPost> posts) {
         return posts.stream()
                 .map(post -> {
                     Map<String, Object> item = new LinkedHashMap<>();
-                    item.put("nickname", nullToDash(post.getNickname()));
+                    item.put("nickname", post.getUser() != null
+                            ? nullToDash(post.getUser().getNickname()) : "-");
                     item.put("content", nullToDash(post.getContent()));
-                    item.put("species", nullToDash(post.getSpecies()));
-                    item.put("likes", post.getLikesCount());
+                    item.put("species", nullToDash(post.getFlowerSpecies()));
+                    item.put("likes", post.getLikeCount());
                     return item;
                 })
                 .toList();

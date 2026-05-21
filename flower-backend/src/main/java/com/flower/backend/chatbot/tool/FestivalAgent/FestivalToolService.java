@@ -185,6 +185,8 @@ public class FestivalToolService {
 
     private List<FestivalItem> fetchUpcomingFestivals(LocalDate eventStartDateValue) throws Exception {
         String eventStartDate = eventStartDateValue.format(TOUR_DATE);
+        // searchFestival2는 축제 전용 엔드포인트라 contentTypeId 파라미터를 거부함.
+        // 검색 키워드 엔드포인트(searchKeyword2)에서만 contentTypeId를 사용한다.
         String uri = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/searchFestival2")
                 .queryParam("serviceKey", tourApiKey)
                 .queryParam("numOfRows", 60)
@@ -193,7 +195,6 @@ public class FestivalToolService {
                 .queryParam("MobileApp", "FlowerApp")
                 .queryParam("_type", "json")
                 .queryParam("eventStartDate", eventStartDate)
-                .queryParam("contentTypeId", "15")
                 .build(false)
                 .toUriString();
         return parseFestivalList(restTemplate.getForObject(uri, String.class));

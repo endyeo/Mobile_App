@@ -80,4 +80,12 @@ public interface CommunityPostRepository extends JpaRepository<CommunityPost, Lo
             @Param("radiusM") double radiusM,
             @Param("since") LocalDateTime since,
             @Param("limit") int limit);
+
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE LOWER(p.content) LIKE LOWER(CONCAT('%', :keyword, '%'))
+           OR LOWER(p.flowerSpecies) LIKE LOWER(CONCAT('%', :keyword, '%'))
+        ORDER BY p.createdAt DESC
+    """)
+    List<CommunityPost> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 }
