@@ -90,7 +90,14 @@ public class ChatbotService {
         AgentExecution execution = routeAndExecute(message, request.getContext(), null);
         ChatAction primaryAction = execution.primaryAction();
         String localContext = execution.toPromptContext();
-        String reply = callSpringAi(message, sessionId, localContext, primaryAction);
+        String reply = callSpringAi(
+                message,
+                sessionId,
+                localContext,
+                primaryAction,
+                execution.toolResults(),
+                execution.answerDomain(),
+                execution.answerTask());
 
         remember(sessionId, "user", message);
         remember(sessionId, "assistant", reply);
@@ -120,7 +127,14 @@ public class ChatbotService {
         String localContext = execution.toPromptContext();
 
         sendStatus(sender, "ANSWER", "답변을 종합하고 있어요.");
-        String reply = callSpringAi(message, sessionId, localContext, primaryAction);
+        String reply = callSpringAi(
+                message,
+                sessionId,
+                localContext,
+                primaryAction,
+                execution.toolResults(),
+                execution.answerDomain(),
+                execution.answerTask());
 
         remember(sessionId, "user", message);
         remember(sessionId, "assistant", reply);
@@ -182,7 +196,8 @@ public class ChatbotService {
                     .specialist("RouterAgent")
                     .steps(steps)
                     .build();
-            return new AgentExecution(List.of(), toolResults, trace);
+            AnswerStyle answerStyle = resolveAnswerStyle(plan, informationTask, toolResults, List.of());
+            return new AgentExecution(List.of(), toolResults, trace, answerStyle.domain(), answerStyle.task());
         }
 
         sendStatus(streamSender, "PLAN", "필요한 앱 도구를 고르고 있어요.");
@@ -239,13 +254,14 @@ public class ChatbotService {
             ));
         }
 
+        AnswerStyle answerStyle = resolveAnswerStyle(plan, informationTask, toolResults, actions);
         AgentRunTrace trace = AgentRunTrace.builder()
                 .mode("SPRING_AI_ROUTER_PLANNED_LIGHTWEIGHT_AGENTIC_RAG")
                 .route(route)
                 .specialist("RouterAgent")
                 .steps(steps)
                 .build();
-        return new AgentExecution(actions, toolResults, trace);
+        return new AgentExecution(actions, toolResults, trace, answerStyle.domain(), answerStyle.task());
     }
 
     private boolean hasFlowerIntent(List<RouteIntent> intents) {
@@ -697,7 +713,7 @@ public class ChatbotService {
                 {
                   "domain": "flower_info | festival_info | community | map_place | app_navigation | unsupported | general",
                   "task": "basic_info | meaning_bloom | grow_guide | monthly_recommendation | candidate_inference | search_festivals | recommend_nearby | open_festival_map | search_posts | latest_posts | popular_posts | open_community | open_composer | place_search | open_map | open_flower_book | open_walk | open_saved | shop_purchase | quest_verification | community_mutation | private_or_admin | general_chat",
-                  "keyword": "optional flower, place, or topic keyword",
+                  "keyword": "optional concrete topic keyword only",
                   "date_filter": "today | this_week | this_month | month | upcoming | none",
                   "month": 0,
                   "year": 0,
@@ -710,11 +726,15 @@ public class ChatbotService {
                 }
                 Rules:
                 - Choose only domain and task. Do not choose tool names or action names.
+                - keyword means only a concrete search topic such as a flower name, plant name, place name, or clearly named subject.
+                - Request style, sorting words, time expressions, and commands are not keywords. Do not put words such as 최신, 최근, 인기글, 오늘, 이번 주, 3월, 보여줘, 알려줘, 소개해 in keyword.
+                - If the user does not name a concrete topic, set keyword to an empty string.
                 - Community writing takes priority over community search. If the user says "글 써줘", "글 올릴래", or "작성", choose community/open_composer even if the message contains "후기".
                 - Community mutation requests such as like, comment, delete, edit, auto-save, or publish-for-me are unsupported/community_mutation.
                 - "커뮤니티 열어줘" is community/open_community and must not search posts.
                 - Community latest requests such as "최신 글", "최근 글", "새 글", or "새로 올라온 글" are community/latest_posts and must not use search_posts.
                 - Community popular requests such as "인기글", "좋아요 많은 글", "댓글 많은 글", "반응 좋은 글", or "많이 본 글" are community/popular_posts.
+                - For community/latest_posts and community/popular_posts, keyword is optional. Use keyword only when the user names a concrete topic like 장미, 수국, 벚꽃, or 라벤더. Whole-feed latest/popular requests and period-only requests must use keyword="".
                 - For community latest/popular period filters: "오늘" => today, "이번 주" => this_week, "이번 달" or "이달" => this_month, "3월" => month with month=3. If the user gives no period, use none.
                 - If festival, event, or 행사 is the main topic, choose festival_info instead of flower_info.
                 - For festival_info, set date_filter from the user's time expression: "이번 주" => this_week, "이번 달" or "이달" => this_month, "오늘" => today, "다가오는" or no explicit period => upcoming.
@@ -1228,20 +1248,41 @@ public class ChatbotService {
     }
 
     private String sanitizeCommunityReadKeyword(String keyword, CommunityPeriod period) {
-        String cleaned = keyword == null ? "" : keyword;
-        String[] noise = {
-                "최신", "최근", "새", "새로", "올라온", "요즘",
-                "인기", "인기글", "좋아요", "댓글", "많은", "반응", "좋은", "많이", "본",
-                "오늘", "이번", "번", "주", "달", "월", "들", "걸", "것", "어떤", "뭐", "소개", "해", "있어"
-        };
-        for (String word : noise) {
-            cleaned = cleaned.replace(word, " ");
-        }
-        cleaned = cleaned.replaceAll("\\s+", " ").trim();
-        if ("month".equals(period.dateFilter()) && cleaned.matches("\\d+")) {
+        String cleaned = sanitizePlannerKeyword(keyword).trim();
+        if (cleaned.isBlank() || cleaned.length() > 20 || cleaned.matches("\\d+")) {
             return "";
         }
-        return cleaned.length() > 30 ? "" : cleaned;
+        if (cleaned.matches(".*\\s+.*")) {
+            return "";
+        }
+        if (looksLikeCommunityReadControlKeyword(cleaned, period)) {
+            return "";
+        }
+        return cleaned;
+    }
+
+    private boolean looksLikeCommunityReadControlKeyword(String keyword, CommunityPeriod period) {
+        String compact = keyword.replaceAll("\\s+", "");
+        if (compact.isBlank()) {
+            return true;
+        }
+        if (compact.matches("\\d+월.*") || compact.matches("\\d+주.*")) {
+            return true;
+        }
+        String[] controlWords = {
+                "최신", "최신글", "최근", "최근글", "새글", "인기", "인기글",
+                "오늘", "이번주", "이번달", "이달", "조회", "검색", "보기", "보여줘", "알려줘", "소개"
+        };
+        for (String word : controlWords) {
+            if (compact.equals(word)) {
+                return true;
+            }
+        }
+        if (!"none".equals(period.dateFilter())
+                && containsAny(compact, "최신", "최근", "인기", "오늘", "이번", "월", "주")) {
+            return true;
+        }
+        return false;
     }
 
     private CommunityPeriod resolveCommunityPeriod(String message) {
@@ -1331,7 +1372,19 @@ public class ChatbotService {
         return actions != null && actions.stream().anyMatch(action -> target.equals(action.getTarget()));
     }
 
-    private String callSpringAi(String message, String sessionId, String localContext, ChatAction action) {
+    private String callSpringAi(
+            String message,
+            String sessionId,
+            String localContext,
+            ChatAction action,
+            List<ToolResult> toolResults,
+            String answerDomain,
+            String answerTask
+    ) {
+        String guardedAnswer = buildGuardedAnswer(message, toolResults, answerDomain, answerTask);
+        if (guardedAnswer != null) {
+            return guardedAnswer;
+        }
         if (openAiApiKey.isBlank() || chatClient == null) {
             return fallbackReply(message, localContext, action);
         }
@@ -1349,7 +1402,7 @@ public class ChatbotService {
                     .append(localContext);
 
             String content = chatClient.prompt()
-                    .system(systemPrompt(action))
+                    .system(buildAnswerSystemPrompt(answerDomain, answerTask, action))
                     .user(userPrompt.toString())
                     .call()
                     .content();
@@ -1363,21 +1416,198 @@ public class ChatbotService {
         }
     }
 
-    private String systemPrompt(ChatAction action) {
+    String buildGuardedAnswer(
+            String message,
+            List<ToolResult> toolResults,
+            String answerDomain,
+            String answerTask
+    ) {
+        if (toolResults == null || toolResults.isEmpty()) {
+            return null;
+        }
+        if ("flower_info".equals(answerDomain)) {
+            return buildFlowerGuardedAnswer(message, toolResults, answerTask);
+        }
+        if ("festival_info".equals(answerDomain)) {
+            return buildFestivalGuardedAnswer(toolResults);
+        }
+        return null;
+    }
+
+    private String buildFlowerGuardedAnswer(String message, List<ToolResult> toolResults, String answerTask) {
+        ToolResult flowerResult = findFirstToolResult(toolResults,
+                "flower.getBasicInfo",
+                "flower.lookupDescriptionSource",
+                "flower.getMeaningAndBloom",
+                "flower.getGrowGuide",
+                "flower.lookupGrowTipsSource",
+                "flower.recommendByMonth",
+                "flower.recommendSeasonalFlowers",
+                "flower.inferCandidates");
+        if (flowerResult == null) {
+            return null;
+        }
+        if (isErrorResult(flowerResult)) {
+            return buildFlowerErrorReply(message, answerTask, flowerResult);
+        }
+        if ("candidate_inference".equals(answerTask) && hasEmptyCandidates(flowerResult)) {
+            return """
+                    설명만으로는 지금 꽃 후보를 자연스럽게 좁혀 드리기 어려워요.
+                    확인 가능한 도감 후보를 찾지 못했습니다. 사진이나 모양, 크기, 핀 시기 같은 특징을 조금 더 알려주시면 다시 도와드릴게요.
+                    """.trim();
+        }
+        if (hasEmptyItems(flowerResult)) {
+            return buildFlowerNoDataReply(message, answerTask, flowerResult);
+        }
+        return null;
+    }
+
+    private String buildFestivalGuardedAnswer(List<ToolResult> toolResults) {
+        ToolResult festivalResult = findFirstToolResult(toolResults, "festival.searchFlowerFestivals");
+        if (festivalResult == null) {
+            return null;
+        }
+        if (isErrorResult(festivalResult)) {
+            return buildFestivalErrorReply(festivalResult);
+        }
+        if (hasEmptyItems(festivalResult)) {
+            return buildFestivalNoDataReply(festivalResult);
+        }
+        return null;
+    }
+
+    private ToolResult findFirstToolResult(List<ToolResult> toolResults, String... toolNames) {
+        List<String> candidates = List.of(toolNames);
+        return toolResults.stream()
+                .filter(result -> result != null && candidates.contains(result.getTool()))
+                .findFirst()
+                .orElse(null);
+    }
+
+    private boolean isErrorResult(ToolResult result) {
+        return result != null && "ERROR".equalsIgnoreCase(result.getStatus());
+    }
+
+    private boolean hasEmptyItems(ToolResult result) {
+        Map<String, Object> data = result == null ? null : result.getData();
+        return data != null && data.get("items") instanceof List<?> items && items.isEmpty();
+    }
+
+    private boolean hasEmptyCandidates(ToolResult result) {
+        Map<String, Object> data = result == null ? null : result.getData();
+        return data != null && data.get("candidates") instanceof List<?> candidates && candidates.isEmpty();
+    }
+
+    private String buildFlowerErrorReply(String message, String answerTask, ToolResult result) {
+        String subject = extractAnswerSubject(message);
+        String reason = humanizeFlowerFailureReason(result);
+        return switch (answerTask) {
+            case "grow_guide" -> (subject + " 재배 정보를 지금은 가져올 수 없어요. " + reason).trim();
+            case "meaning_bloom" -> (subject + " 꽃말이나 개화 정보를 지금은 가져올 수 없어요. " + reason).trim();
+            case "monthly_recommendation" -> {
+                String monthLabel = extractFlowerMonthLabel(result);
+                yield (monthLabel + " 기준으로 추천할 꽃 정보를 지금은 가져올 수 없어요. " + reason).trim();
+            }
+            case "candidate_inference" -> ("설명만으로 후보를 확인하는 중 문제가 있어 지금은 꽃 후보를 안내드리기 어려워요. " + reason).trim();
+            default -> (subject + " 꽃 정보를 지금은 가져올 수 없어요. " + reason).trim();
+        };
+    }
+
+    private String buildFlowerNoDataReply(String message, String answerTask, ToolResult result) {
+        String subject = extractAnswerSubject(message);
+        return switch (answerTask) {
+            case "grow_guide" -> (subject + " 재배 정보를 바로 안내드리기 어려워요. "
+                    + "등록된 꽃 도감 데이터에서 키우는 법 항목을 찾지 못했습니다.").trim();
+            case "meaning_bloom" -> (subject + " 꽃말이나 개화 정보를 확인하지 못했어요. "
+                    + "등록된 꽃 도감 데이터에서 관련 항목을 찾지 못했습니다.").trim();
+            case "monthly_recommendation" -> {
+                String monthLabel = extractFlowerMonthLabel(result);
+                yield (monthLabel + " 기준으로 바로 추천드릴 꽃 정보를 확인하지 못했어요. "
+                        + "등록된 개화 데이터에서 추천 후보를 찾지 못했습니다.").trim();
+            }
+            default -> (subject + "에 대해 바로 안내드릴 수 있는 꽃 정보를 확인하지 못했어요. "
+                    + "등록된 꽃 도감 데이터에서 일치하는 정보를 찾지 못했습니다.").trim();
+        };
+    }
+
+    private String buildFestivalErrorReply(ToolResult result) {
+        String periodPrefix = festivalPeriodPrefix(result);
+        return (periodPrefix + "꽃 축제 정보를 지금은 가져올 수 없어요. "
+                + humanizeFestivalFailureReason(result)).trim();
+    }
+
+    private String buildFestivalNoDataReply(ToolResult result) {
+        String periodPrefix = festivalPeriodPrefix(result);
+        return (periodPrefix + "현재 확인된 꽃 축제 정보는 없어요. "
+                + "조회된 축제 데이터에서 안내드릴 일정을 찾지 못했습니다.").trim();
+    }
+
+    private String extractAnswerSubject(String message) {
+        String keyword = sanitizePlannerKeyword(extractKeyword(message));
+        return keyword == null || keyword.isBlank() ? "요청하신 꽃" : "'" + keyword + "'";
+    }
+
+    private String extractFlowerMonthLabel(ToolResult result) {
+        Map<String, Object> data = result == null ? null : result.getData();
+        if (data != null && data.get("month") instanceof Number month) {
+            return month.intValue() + "월";
+        }
+        return "현재 시기";
+    }
+
+    private String festivalPeriodPrefix(ToolResult result) {
+        Map<String, Object> data = result == null ? null : result.getData();
+        String dateFilter = data == null || data.get("dateFilter") == null
+                ? ""
+                : data.get("dateFilter").toString();
+        return switch (dateFilter) {
+            case "today" -> "오늘 기준으로 ";
+            case "this_week" -> "이번 주 기준으로 ";
+            case "this_month" -> "이번 달 기준으로 ";
+            case "upcoming" -> "다가오는 일정 기준으로 ";
+            default -> "";
+        };
+    }
+
+    private String humanizeFlowerFailureReason(ToolResult result) {
+        String error = result == null || result.getError() == null ? "" : result.getError();
+        if (!error.isBlank()) {
+            return "정보를 확인하는 중 문제가 있어 잠시 후 다시 시도해 주세요.";
+        }
+        return "지금은 정보를 확인하지 못해 잠시 후 다시 시도해 주세요.";
+    }
+
+    private String humanizeFestivalFailureReason(ToolResult result) {
+        String error = result == null || result.getError() == null ? "" : result.getError();
+        if (error.contains("TOUR_API_KEY is not configured")) {
+            return "외부 연동 설정이 없어 축제 데이터를 확인하지 못했습니다.";
+        }
+        return "축제 정보를 확인하는 중 문제가 생겨 잠시 후 다시 시도해 주세요.";
+    }
+
+    String buildAnswerSystemPrompt(String answerDomain, String answerTask, ChatAction action) {
+        String basePrompt = buildBaseAnswerPrompt();
+        String formatPrompt = buildAnswerFormatPrompt(answerDomain, answerTask);
+        String domainStylePrompt = buildDomainStylePrompt(answerDomain, answerTask);
         String actionInstruction = action == null
                 ? "도구 결과에 별도 액션이 포함되지 않았다면 내부 앱 액션은 필요하지 않습니다."
                 : "클라이언트에 전달할 내부 앱 액션이 준비되었습니다: " + action.getType() + " / " + action.getTarget()
                 + ". 최종 답변에서는 내부 액션 이름을 말하지 말고, 정보 답변을 먼저 작성하세요.";
 
+        return basePrompt + "\n" + formatPrompt + "\n" + domainStylePrompt + "\n" + actionInstruction;
+    }
+
+    String buildBaseAnswerPrompt() {
         return """
                 당신은 FLOWER 앱 안에서 동작하는 경량 Agentic RAG 챗봇입니다.
                 사용자가 한국어로 쓰면 한국어로 답하고, 영어로 쓰면 영어로 답하세요.
                 사용자 언어는 도구 이름, 필드명, 데이터베이스 값, 내부 컨텍스트 라벨의 언어보다 우선합니다.
                 사용자가 한국어로 쓴 경우 최종 답변의 본문, 설명, 주의사항, 출처 언급을 모두 자연스러운 한국어로 작성하세요.
                 "description", "growTips", "source", "Tool results", "lookup returned" 같은 영어 도구 라벨을 최종 답변에 그대로 복사하지 마세요.
-                사실 근거는 제공된 도구 결과만 사용하세요.
+                사실 근거는 이번 턴에 제공된 도구 결과와 앱 액션만 사용하세요.
+                이전 assistant 답변이나 대화 기록이 이번 턴 도구 결과와 충돌하면 이번 턴 도구 결과를 우선하고 이전 내용은 무시하세요.
                 정확한 개화일, 위치, 게시글 내용, 구매, 작성 완료 여부를 지어내지 마세요.
-                답변은 1) 직접 답변, 2) 핵심 정보 2~4개, 3) 출처 또는 데이터 없음 안내, 4) 필요한 경우에만 다음 행동 제안 순서로 작성하세요.
+                조회 결과가 0건이면 활동량, 분위기, 경향, 원인, 인기 변화 같은 해석을 덧붙이지 말고 현재 확인된 정보가 없다고만 설명하세요.
                 꽃 기본 정보는 flower.getBasicInfo 결과만 근거로 사용하세요.
                 꽃말과 개화시기는 flower.getMeaningAndBloom 결과만 근거로 사용하세요.
                 재배, 물주기, 햇빛, 토양, 관리 답변은 flower.getGrowGuide 결과만 근거로 사용하고 일반 원예 상식으로 보강하지 마세요.
@@ -1393,7 +1623,192 @@ public class ChatbotService {
                 상점, 구매, 퀘스트, 미션, 인증, 포인트 지급 같은 미지원 요청은 실행하지 말고 아직 지원하지 않는다고 말하세요.
                 내부 route, action, tool 이름은 최종 답변에 노출하지 마세요.
                 화면 이동 액션이 있더라도 "화면을 열었습니다"를 정보 답변보다 먼저 말하지 마세요.
-                """ + "\n" + actionInstruction;
+                """;
+    }
+
+    String buildAnswerFormatPrompt(String answerDomain, String answerTask) {
+        if (isActionFirstAnswer(answerDomain, answerTask)) {
+            return """
+                    액션성 응답 형식:
+                    1) 어떤 화면이나 기능을 열어드리는지 짧게 안내
+                    2) 사용자가 직접 해야 하는 제한사항이 있으면 한 문장으로 명확히 안내
+                    3) 필요할 때만 짧은 다음 행동 한 줄 추가
+                    설명을 길게 늘리거나 핵심 정보 2~4개 형식을 억지로 맞추지 마세요.
+                    """;
+        }
+        return """
+                정보성 응답 형식:
+                1) 직접 답변
+                2) 핵심 정보 2~4개
+                3) 출처 또는 데이터 없음 안내
+                4) 필요한 경우에만 다음 행동 제안
+                """;
+    }
+
+    private boolean isActionFirstAnswer(String answerDomain, String answerTask) {
+        if ("community".equals(answerDomain) && "open_composer".equals(answerTask)) {
+            return true;
+        }
+        if ("festival_info".equals(answerDomain) && "open_festival_map".equals(answerTask)) {
+            return true;
+        }
+        return "app_navigation".equals(answerDomain);
+    }
+
+    String buildDomainStylePrompt(String answerDomain, String answerTask) {
+        if ("community".equals(answerDomain)) {
+            return buildCommunityStylePrompt(answerTask);
+        }
+        if ("festival_info".equals(answerDomain)) {
+            return buildFestivalStylePrompt(answerTask);
+        }
+        if ("flower_info".equals(answerDomain)) {
+            return buildFlowerStylePrompt(answerTask);
+        }
+        return "도메인 전용 문체 규칙이 없으면 공통 답변 골격만 유지하세요.";
+    }
+
+    private String buildCommunityStylePrompt(String answerTask) {
+        String taskRule = switch (answerTask) {
+            case "latest_posts" -> """
+                    최신글은 시간 흐름 중심으로 요약하세요.
+                    최근에 어떤 글이 올라왔는지 한눈에 들어오게 정리하고, 필요하면 기간 기준을 짧게 덧붙이세요.
+                    조회 결과가 없으면 최근 활동 상태를 추정하지 말고 현재 확인된 최신 글이 없다고만 답하세요.
+                    """;
+            case "popular_posts" -> """
+                    인기글은 좋아요와 댓글 기준으로 반응이 좋은 글처럼 설명하세요.
+                    조회수 정보는 없으므로 조회수 기준이라고 말하지 마세요.
+                    조회 결과가 없으면 반응이 적었다거나 잠잠하다는 해석을 붙이지 말고 현재 확인된 인기글이 없다고만 답하세요.
+                    """;
+            case "open_composer" -> """
+                    글 작성 요청은 글을 대신 써주거나 저장한 것처럼 말하지 말고, 작성 화면만 열어 주는 제한을 분명히 설명하세요.
+                    불필요하게 장황한 격려 문구를 붙이지 말고 짧고 분명하게 안내하세요.
+                    """;
+            default -> """
+                    커뮤니티 답변은 검색 결과 나열보다 게시글 요약 브리핑처럼 작성하세요.
+                    사용자가 어떤 후기나 게시글을 참고할 수 있는지 먼저 짧게 정리하세요.
+                    조회 결과가 없으면 요즘 분위기, 활동량, 반응 추세를 해석하지 말고 현재 확인된 글이 없다고만 답하세요.
+                    """;
+        };
+
+        return """
+                커뮤니티 도메인 답변 규칙:
+                첫 문장은 커뮤니티에서 확인된 흐름이나 게시글 성격을 바로 요약하세요.
+                본문은 게시글을 단순 열거하지 말고, 요즘 어떤 내용이 올라오는지 읽기 쉽게 정리하세요.
+                조회 결과가 비어 있으면 활발하다, 잠잠하다, 반응이 적었다 같은 추정 표현을 쓰지 마세요.
+                필요할 때만 커뮤니티 화면에서 더 확인할 수 있다고 한 줄 덧붙이세요.
+                """ + "\n" + taskRule;
+    }
+
+    private String buildFestivalStylePrompt(String answerTask) {
+        String taskRule = switch (answerTask) {
+            case "recommend_nearby" -> """
+                    근처 축제 추천은 현재 위치 기준으로 가까운 후보를 먼저 언급하세요.
+                    거리나 지역 비교가 가능할 때만 짧게 덧붙이세요.
+                    """;
+            case "open_festival_map" -> """
+                    축제를 지도에서 보려는 요청이라도 답변 첫머리는 일정과 장소 요약을 우선하세요.
+                    화면 이동 언급은 마지막에만 짧게 덧붙이세요.
+                    """;
+            default -> """
+                    축제 답변은 성공적으로 조회된 경우에만 일정과 장소 중심의 브리핑처럼 작성하세요.
+                    """;
+        };
+
+        return """
+                축제 도메인 답변 규칙:
+                첫 문장에서 언제 열리는 축제인지와 어디서 볼 수 있는지를 먼저 정리하세요.
+                본문은 장소, 일정, 문의처 순으로 묶어 설명하세요.
+                기간 필터가 있으면 이번 주, 이번 달, 다가오는 일정 같은 자연어 표현으로 풀어 쓰세요.
+                운영 여부, 예약, 현장 상황은 조회 결과에 없으면 추정하지 마세요.
+                조회 결과가 없으면 확인된 일정이 없다고만 말하고 분위기나 개최 가능성을 추정하지 마세요.
+                조회 실패는 정보 없음으로 바꾸지 말고 지금은 가져올 수 없다고 구분해서 설명하세요.
+                """ + "\n" + taskRule;
+    }
+
+    private String buildFlowerStylePrompt(String answerTask) {
+        String taskRule = switch (answerTask) {
+            case "meaning_bloom" -> """
+                    꽃말과 개화 질문은 첫 문장에서 꽃말 또는 피는 시기를 바로 답하세요.
+                    꽃 설명보다 꽃말과 개화 정보를 우선 배치하세요.
+                    조회 항목이 없으면 설명을 확장하지 말고 확인된 정보가 없다고만 답하세요.
+                    """;
+            case "grow_guide" -> """
+                    재배 질문은 관리 요점을 먼저 정리하고, 물주기·햇빛·토양 같은 실제 조회 항목만 이어서 설명하세요.
+                    조회 항목이 없으면 일반 원예 상식을 절대 보강하지 마세요.
+                    "보통", "일반적으로", "대체로" 같은 표현으로 외부 상식을 끼워 넣지 마세요.
+                    """;
+            case "monthly_recommendation" -> """
+                    월별 추천은 계절감 있는 안내처럼 쓰되 3~5개 안에서만 간결하게 추천하세요.
+                    각 꽃은 한 줄 정도의 짧은 이유만 붙이세요.
+                    추천 데이터가 없으면 감성 문장으로 메우지 말고 확인된 추천 후보가 없다고 답하세요.
+                    """;
+            case "candidate_inference" -> """
+                    후보 추정은 첫 문장에서 확정이 아니라 가능성 있는 후보라고 분명히 말하세요.
+                    후보마다 왜 그렇게 본 것인지 짧게 설명하되 단정하지 마세요.
+                    번호를 매겨 정답 목록처럼 보이게 하지 말고, 가능한 후보 몇 가지를 조심스럽게 제시하세요.
+                    대표 후보, 가장 가능성이 높다 같은 순위형 표현을 피하세요.
+                    """;
+            default -> """
+                    꽃 기본 정보는 도감형 설명처럼 쓰세요.
+                    첫 문장에서 꽃의 정체나 핵심 특징을 바로 설명하세요.
+                    조회된 항목이 없으면 설명을 확장하지 말고 확인된 정보가 없다고만 답하세요.
+                    """;
+        };
+
+        return """
+                꽃 정보 도메인 답변 규칙:
+                답변은 꽃 도감 문장처럼 정리하고, 조회된 정보만 자연스럽게 연결하세요.
+                설명, 꽃말, 개화, 재배 정보가 함께 있어도 질문 의도와 직접 맞는 정보를 먼저 배치하세요.
+                감상 위주의 문장이나 과장된 표현보다 정보 전달을 우선하세요.
+                """ + "\n" + taskRule;
+    }
+
+    private AnswerStyle resolveAnswerStyle(
+            AgentPlan plan,
+            String informationTask,
+            List<ToolResult> toolResults,
+            List<ChatAction> actions
+    ) {
+        for (ToolResult result : toolResults) {
+            AnswerStyle style = answerStyleForTool(result.getTool(), plan);
+            if (style != null) {
+                return style;
+            }
+        }
+        if (actionsContainTarget(actions, "COMMUNITY_COMPOSE")) {
+            return new AnswerStyle("community", "open_composer");
+        }
+        if (plan.domain() != null && !plan.domain().isBlank()) {
+            return new AnswerStyle(plan.domain(), plan.task());
+        }
+        return switch (informationTask) {
+            case "basic_info", "meaning_bloom", "grow_guide", "monthly_recommendation", "candidate_inference" ->
+                    new AnswerStyle("flower_info", informationTask);
+            case "unsupported" -> new AnswerStyle("unsupported", "");
+            default -> new AnswerStyle("", "");
+        };
+    }
+
+    private AnswerStyle answerStyleForTool(String toolName, AgentPlan plan) {
+        return switch (toolName) {
+            case "community.searchPosts" -> new AnswerStyle("community", "search_posts");
+            case "community.getLatestPosts" -> new AnswerStyle("community", "latest_posts");
+            case "community.getPopularPosts" -> new AnswerStyle("community", "popular_posts");
+            case "festival.searchFlowerFestivals" ->
+                    new AnswerStyle("festival_info", plan.task() == null || plan.task().isBlank()
+                            ? "search_festivals"
+                            : plan.task());
+            case "flower.getBasicInfo", "flower.lookupDescriptionSource" ->
+                    new AnswerStyle("flower_info", "basic_info");
+            case "flower.getMeaningAndBloom" -> new AnswerStyle("flower_info", "meaning_bloom");
+            case "flower.getGrowGuide", "flower.lookupGrowTipsSource" ->
+                    new AnswerStyle("flower_info", "grow_guide");
+            case "flower.recommendByMonth", "flower.recommendSeasonalFlowers" ->
+                    new AnswerStyle("flower_info", "monthly_recommendation");
+            case "flower.inferCandidates" -> new AnswerStyle("flower_info", "candidate_inference");
+            default -> null;
+        };
     }
 
     private String fallbackReply(String message, String localContext, ChatAction action) {
@@ -1590,10 +2005,18 @@ public class ChatbotService {
     ) {
     }
 
+    private record AnswerStyle(
+            String domain,
+            String task
+    ) {
+    }
+
     private record AgentExecution(
             List<ChatAction> actions,
             List<ToolResult> toolResults,
-            AgentRunTrace trace
+            AgentRunTrace trace,
+            String answerDomain,
+            String answerTask
     ) {
         private ChatAction primaryAction() {
             return actions.isEmpty() ? null : actions.get(0);

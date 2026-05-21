@@ -1,8 +1,9 @@
 # HAR_FLOWER 현재 프로젝트 명세
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 챗봇 SSE 스트림, 음성 입력, flower_book 조회 반영 상태를 갱신함. -->
+<!-- 반영: 2026-05-21 13:24 - 축제 도메인, 꽃 정보 도구 확장, 길찾기 액션, TransitRouteController, CommunityPostRepository, focusFlowerById, 위치 전달 반영 -->
 
-- 문서 버전: v1.2.0
-- 최종 반영일: 2026-05-15
+- 문서 버전: v1.3.0
+- 최종 반영일: 2026-05-21
 
 ## 1. 프로젝트 개요
 
@@ -52,7 +53,8 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 - `auth`: Kakao OAuth, JWT, refresh, profile setup, FCM token, logout
 - `flower`: 꽃 도감/꽃 위치 데이터, 카테고리, 월별 조회, 검색, 학명 매칭, 관리자 import
 - `community`: 커뮤니티 피드, 글 작성, 좋아요, 저장
-- `chatbot`: Spring AI 기반 챗봇, 라우팅, 도구 실행, 앱 액션 반환
+- `chatbot`: Spring AI 기반 챗봇, planner domain/task 라우팅, 도구 실행, 앱 액션 반환 <!-- 반영: 2026-05-21 13:24 -->
+- `map`: 지도 길찾기 API (`TransitRouteController`) <!-- 반영: 2026-05-21 13:24 -->
 - `storage`: 로컬 저장소와 Oracle Object Storage 추상화
 - `common`: 공통 API 응답, 예외 처리
 
@@ -65,23 +67,25 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 
 ### AI 챗봇
 
-챗봇은 사용자 메시지를 받아 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영한다. 상세 명세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`와 도구별 문서를 따른다.
+챗봇은 사용자 메시지를 받아 planner의 `domain/task` 계약으로 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영한다. 상세 명세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`와 도구별 문서를 따른다. <!-- 반영: 2026-05-21 13:24 -->
+
+planner domain은 `flower_info`, `festival_info`, `community`, `map_place`, `app_navigation`, `unsupported`, `general`이며, 꽃 정보 도구는 `flower.getBasicInfo`, `flower.getMeaningAndBloom`, `flower.getGrowGuide`, `flower.recommendByMonth`, `flower.inferCandidates`를 포함한다. 축제 도구는 Tour API 기반 `festival.searchFlowerFestivals`를 사용한다. <!-- 반영: 2026-05-21 13:24 -->
 
 Flutter의 플로팅 챗봇 입력창은 Android `flower_app/speech` MethodChannel로 음성 인식을 연결한다. 실행 순서는 마이크 권한 확인, 권한 요청, 음성 인식 시작이며, 응답 대기 중 전송 버튼은 정지 버튼으로 바뀌고 사용자가 중지하면 SSE 연결을 취소한다.
 
 ### 지도
 
-지도 화면은 Flutter의 `KakaoMapScreen`과 `assets/map/`의 WebView 기반 지도 자산으로 구성된다. 챗봇은 지도 내부 구현을 직접 수정하지 않고 `NAVIGATE MAP`, `MAP_SET_SEARCH_QUERY`, `MAP_SHOW_FLOWER`, `MAP_OPEN_FLOWER_PREVIEW` 같은 액션으로 지도 화면에 요청을 전달한다.
+지도 화면은 Flutter의 `KakaoMapScreen`과 `assets/map/`의 WebView 기반 지도 자산으로 구성된다. 챗봇은 지도 내부 구현을 직접 수정하지 않고 `NAVIGATE MAP`, `MAP_SET_SEARCH_QUERY`, `MAP_SHOW_FLOWER`, `MAP_OPEN_FLOWER_PREVIEW`, `MAP_OPEN_ROUTE_CHOOSER`, `MAP_START_ROUTE` 같은 액션으로 지도 화면에 요청을 전달한다. 지도 JS의 `FlowerMap.focusFlowerById`는 꽃 데이터 로딩 후 지도 중심 이동과 정보 패널 표시를 수행한다. <!-- 반영: 2026-05-21 13:24 -->
 
 ### 꽃 도감/꽃 데이터
 
 백엔드 `FlowerController`는 카테고리, 월별 꽃, 상세, 검색, 학명 매칭 API를 제공한다. Flutter의 `FlowerBookApiService`가 도감 화면에서 이를 호출한다. 별도로 `FlowerApiService`는 농사로 오늘의 꽃 API를 직접 호출하는 클라이언트 서비스이다.
 
-챗봇의 꽃 정보 질문은 승인 꽃 명소 검색과 별도로 `flower_book` 기반 설명/출처 조회, 재배 팁/출처 조회를 사용한다. 이 조회는 `FlowerBookRepository` projection과 `PageRequest` 제한으로 필요한 컬럼만 최대 3건까지 읽는다.
+챗봇의 꽃 정보 질문은 승인 꽃 명소 검색과 별도로 `flower_book` 기반 기본 정보(`getBasicInfo`), 꽃말/개화(`getMeaningAndBloom`), 재배 가이드(`getGrowGuide`), 월별 추천(`recommendByMonth`), 후보 추정(`inferCandidates`) 도구를 사용한다. 기존 `lookupDescriptionSource`, `lookupGrowTipsSource`, `recommendSeasonalFlowers`는 호환 wrapper로 유지된다. 조회 프로젝션에는 `flowerLanguage`, `bloomMonth`, `bloomDay`, `imageUrl`이 포함된다. <!-- 반영: 2026-05-21 13:24 -->
 
 ### 커뮤니티
 
-백엔드 `CommunityController`는 피드 조회, 게시글 작성, 좋아요, 저장 토글을 제공한다. Flutter의 `CommunityApiService`가 access token을 포함해 호출한다. 챗봇 커뮤니티 도구는 커뮤니티 글 검색과 화면 이동/작성 화면 이동 액션만 담당하며 실제 글 저장이나 초안 생성은 수행하지 않는다. 현재 글 작성 요청은 `NAVIGATE COMMUNITY_COMPOSE`로 `CreatePostScreen` 연결까지만 수행한다.
+백엔드 `CommunityController`는 피드 조회, 게시글 작성, 좋아요, 저장 토글을 제공한다. Flutter의 `CommunityApiService`가 access token을 포함해 호출한다. 챗봇 커뮤니티 도구는 `CommunityPostRepository`의 `searchByKeyword` 쿼리로 커뮤니티 글 검색과 화면 이동/작성 화면 이동 액션만 담당하며 실제 글 저장이나 초안 생성은 수행하지 않는다. 커뮤니티 좋아요/댓글/삭제/자동 저장 요청은 `app.unsupported`로 차단된다. 현재 글 작성 요청은 `NAVIGATE COMMUNITY_COMPOSE`로 `CreatePostScreen` 연결까지만 수행한다. <!-- 반영: 2026-05-21 13:24 -->
 
 # 커뮤니티 아이디어 - 하단 네비게이션으로 커뮤니티 들어오면 게시글 | 인기글 | 댓글 내역 으로 네비게이션 변경
 
@@ -100,5 +104,6 @@ Flutter의 `SavedApiService`는 `/api/v1/saved/posts`, `/api/v1/saved/spots` 계
 - 챗봇 지도 도구: `docs/product/chatbot/tools/MAP_AGENT_SPEC.md`
 - 챗봇 꽃/도감 도구: `docs/product/chatbot/tools/FLOWER_AGENT_SPEC.md`
 - 챗봇 커뮤니티 도구: `docs/product/chatbot/tools/COMMUNITY_AGENT_SPEC.md`
+- 챗봇 축제 도구: `docs/product/chatbot/tools/FESTIVAL_AGENT_SPEC.md` <!-- 반영: 2026-05-21 13:24 -->
 - 챗봇 API 계약: `docs/api/CHATBOT_API.md`
 - 전체 API 색인: `docs/api/CURRENT_API_SUMMARY.md`

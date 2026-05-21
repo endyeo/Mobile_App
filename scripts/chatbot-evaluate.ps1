@@ -213,6 +213,10 @@ function Get-ToolDataSummary($ToolResults) {
     foreach ($toolResult in (Convert-ToArray $ToolResults)) {
         $tool = Get-PropertyValue $toolResult "tool"
         $data = Get-PropertyValue $toolResult "data"
+        $keyword = Get-PropertyValue $data "keyword"
+        if ($null -ne $keyword) {
+            $summaries += "$tool.keyword='$keyword'"
+        }
         $dateFilter = Get-PropertyValue $data "dateFilter"
         if (-not [string]::IsNullOrWhiteSpace([string]$dateFilter)) {
             $rangeStart = Get-PropertyValue $data "rangeStart"
