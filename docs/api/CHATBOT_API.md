@@ -1,8 +1,9 @@
 # 챗봇 API 명세
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 SSE 스트림 엔드포인트, 이벤트 계약, flower_book 조회 데이터 필드를 반영함. -->
+<!-- 반영: 2026-05-21 13:24 - 길찾기 액션, 축제 도구 결과, 새 꽃 정보 도구명, planner domain/task 개념 반영 -->
 
-- 문서 버전: v1.3.0
-- 최종 반영일: 2026-05-15
+- 문서 버전: v1.4.0
+- 최종 반영일: 2026-05-21
 
 ## 1. 공통
 
@@ -270,6 +271,8 @@ DONE
 | `MAP_SET_SEARCH_QUERY` | `MAP` | `{ "query": "벚꽃" }` | 지도 검색어 적용 |
 | `MAP_SHOW_FLOWER` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 위치 강조 |
 | `MAP_OPEN_FLOWER_PREVIEW` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 미리보기 열기 |
+| `MAP_OPEN_ROUTE_CHOOSER` | `MAP` | `{ "flowerId": 1 }` | 지도에서 길찾기 이동수단 선택 열기 | <!-- 반영: 2026-05-21 13:24 -->
+| `MAP_START_ROUTE` | `MAP` | `{ "flowerId": 1, "routeMode": "transit" }` | 지도에서 길찾기 실행 | <!-- 반영: 2026-05-21 13:24 -->
 
 ## 6. AgentRunTrace
 
@@ -311,6 +314,10 @@ DONE
 - `queryExpanded`: 사용자가 꽃 이름을 특정하지 않아 후보 키워드 확장을 사용했는지 여부
 - `candidateKeywords`: 후보 확장에 사용된 꽃 이름 목록
 
-월/계절 추천 도구 `flower.recommendSeasonalFlowers`는 `data.month`, `data.items`, `data.source`를 반환한다. 각 item은 꽃 도감 id, 꽃 이름, 개화일, 꽃말, 출처, 승인 명소 수와 대표 명소 정보를 포함할 수 있다.
+월/계절 추천 도구 `flower.recommendByMonth` (`flower.recommendSeasonalFlowers`는 호환 wrapper)은 `data.month`, `data.items`, `data.source`를 반환한다. 각 item은 꽃 도감 id, 꽃 이름, 개화일, 꽃말, 출처, 승인 명소 수와 대표 명소 정보를 포함할 수 있다. <!-- 반영: 2026-05-21 13:24 -->
+
+축제 도구 `festival.searchFlowerFestivals`는 `data.items`, `data.source`, `data.dateFilter`, `data.rangeStart`, `data.rangeEnd`, `data.today`, `data.primaryEndpoint`, `data.fallbackEndpoint`, `data.keywordFallbackUsed`, `data.rawFestivalCount`, `data.flowerFilteredCount` 등 진단값을 반환한다. 각 item은 `contentId`, `title`, `address`, `period`, `eventStartDate`, `eventEndDate`, `imageUrl`, `lat`, `lng`, `source`, `distanceKm`를 포함할 수 있다. <!-- 반영: 2026-05-21 13:24 -->
 
 상점, 구매, 퀘스트, 미션, 인증, 포인트 지급처럼 v1에서 직접 실행하지 않는 요청은 `app.unsupported` ToolResult로 반환되며 앱 액션은 비어 있다.
+
+축제 예매/예약/결제 요청도 `app.unsupported`로 반환된다. <!-- 반영: 2026-05-21 13:24 -->

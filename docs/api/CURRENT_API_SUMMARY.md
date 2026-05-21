@@ -1,4 +1,5 @@
 # HAR_FLOWER API 현황 요약
+<!-- 반영: 2026-05-21 13:24 - /chatbot/message/stream, /api/v1/map/routes, /api/v1/map/transit-route 반영 -->
 
 ## 1. 기준
 
@@ -72,11 +73,23 @@ Base path: `/chatbot`
 | Method | Path | 설명 |
 | --- | --- | --- |
 | `POST` | `/message` | 챗봇 메시지 처리 |
+| `POST` | `/message/stream` | 챗봇 메시지 SSE 스트림 처리 | <!-- 반영: 2026-05-21 13:24 -->
 | `DELETE` | `/session/{sessionId}` | 챗봇 세션 삭제 |
 
 상세 계약은 `CHATBOT_API.md`를 따른다.
 
-## 6. Flutter 서비스에는 있으나 현재 컨트롤러 색인에서 확인되지 않은 API
+## 6. Map Route API <!-- 반영: 2026-05-21 13:24 -->
+
+Base path: `/api/v1/map`
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| `POST` | `/routes` | 길찾기 경로 조회 |
+| `POST` | `/transit-route` | 대중교통 경로 조회 |
+
+v1에서는 `transit`만 실제 경로 조회를 지원한다.
+
+## 7. Flutter 서비스에는 있으나 현재 컨트롤러 색인에서 확인되지 않은 API
 
 다음 경로는 Flutter 서비스에서 호출하지만 현재 확인된 백엔드 컨트롤러 목록에는 전용 컨트롤러가 없다.
 
@@ -87,7 +100,7 @@ Base path: `/chatbot`
 | `SavedApiService` | `DELETE /api/v1/saved/posts/{postId}` | 게시글 저장 해제 |
 | `SavedApiService` | `DELETE /api/v1/saved/spots/{spotId}` | 장소 저장 해제 |
 
-## 7. 외부 API/클라이언트 직접 호출
+## 8. 외부 API/클라이언트 직접 호출
 
 Flutter에서 직접 호출하는 외부 API:
 
@@ -100,5 +113,9 @@ Flutter에서 직접 호출하는 외부 API:
 - `KAKAO_MAP_KEY`
 - `NONGSARO_API_KEY`
 - `TOUR_API_KEY`
+
+백엔드 환경값:
+
+- `tour.api-key` / `TOUR_API_KEY`: Tour API 액세스 키 (축제 도구 사용) <!-- 반영: 2026-05-21 13:24 -->
 
 비밀키 값은 문서에 기록하지 않는다.

@@ -1,4 +1,8 @@
 # MapAgent 명세
+<!-- 반영: 2026-05-21 13:24 - MAP_OPEN_ROUTE_CHOOSER/MAP_START_ROUTE 길찾기 액션, MAP_OPEN_FLOWER_PREVIEW 대표 꽃 자동 전달, focusFlowerById 지도 JS, /api/v1/map/routes 엔드포인트 반영 -->
+
+- 문서 버전: v1.1.0
+- 최종 반영일: 2026-05-21
 
 ## 1. 책임
 
@@ -90,15 +94,55 @@ MapAgent의 각 도구는 하나의 지도 관련 기능만 수행한다. 지도
 }
 ```
 
+### `openRouteChooser(flowerId)` <!-- 반영: 2026-05-21 13:24 -->
+
+- 목적: 지도 화면에서 길찾기 이동수단 선택 열기
+- 한국어 설명: 꽃 장소를 목적지로 하는 길찾기 이동수단 선택 패널을 여는 앱 내부 액션을 준비한다.
+- 입력: `flowerId`
+- 출력 액션:
+
+```json
+{
+  "type": "MAP_OPEN_ROUTE_CHOOSER",
+  "target": "MAP",
+  "params": {
+    "flowerId": 1
+  }
+}
+```
+
+### `startRoute(flowerId, routeMode)` <!-- 반영: 2026-05-21 13:24 -->
+
+- 목적: 지도 화면에서 길찾기 실행
+- 한국어 설명: 꽃 장소를 목적지로 하는 길찾기를 실행하는 앱 내부 액션을 준비한다.
+- 입력: `flowerId`, `routeMode` (`walk`, `car`, `transit`)
+- 출력 액션:
+
+```json
+{
+  "type": "MAP_START_ROUTE",
+  "target": "MAP",
+  "params": {
+    "flowerId": 1,
+    "routeMode": "transit"
+  }
+}
+```
+
 ## 3. 공통 실행 규칙
 
 - `ChatActionValidator`는 `MAP` intent가 있으면 `NAVIGATE MAP`을 우선 추가한다.
 - `MAP`과 `FLOWER` intent가 함께 있고 keyword가 있으면 `MAP_SET_SEARCH_QUERY`를 자동 보강할 수 있다.
-- 꽃 검색 결과가 있고 아직 꽃 표시 액션이 없으면 대표 꽃의 `flowerId`로 `MAP_SHOW_FLOWER`가 추가될 수 있다.
+- 꽃 검색 결과가 있고 아직 꽃 표시 액션이 없으면 대표 꽃의 `flowerId`로 `MAP_SHOW_FLOWER`가 추가될 수 있고, `MAP_OPEN_FLOWER_PREVIEW`로 대표 꽃 장소 미리보기를 자동 전달한다. <!-- 반영: 2026-05-21 13:24 -->
+- `route_request`가 true이면 꽃 검색 결과가 있을 때 `MAP_OPEN_ROUTE_CHOOSER` 또는 `MAP_START_ROUTE`를 생성한다. `route_mode`에 따라 이동수단이 결정된다. <!-- 반영: 2026-05-21 13:24 -->
 - Flutter는 지도 관련 액션이 하나라도 있으면 다른 화면 액션보다 우선해 `KakaoMapScreen`으로 이동한다.
+- 지도 JS의 `FlowerMap.focusFlowerById`는 꽃 데이터 로딩 후 지도 중심 이동과 정보 패널 표시를 수행한다. pending focus 처리로 데이터 로딩 전 요청도 지원한다. <!-- 반영: 2026-05-21 13:24 -->
 
 ## 4. 실패 및 제한 사항
 
 - `MAP_SHOW_FLOWER`, `MAP_OPEN_FLOWER_PREVIEW`는 숫자형 또는 숫자 문자열 `flowerId`만 validator를 통과한다.
+- `MAP_OPEN_ROUTE_CHOOSER`, `MAP_START_ROUTE`는 `MAP` target에 숫자형 `flowerId`만 validator를 통과한다. <!-- 반영: 2026-05-21 13:24 -->
 - 지도 화면이 전달받은 액션을 어떻게 해석하는지는 지도 화면 구현 책임이다.
-- 사용자 위치 context는 요청 DTO에 있으나 현재 MapAgent 명세상 거리 기반 정렬/검색 정책은 정의되어 있지 않다.
+- 사용자 위치 context는 요청 DTO에 있으며 `nearby` 플래그가 있을 때 꽃 명소 검색에서 거리 정렬에 사용된다. <!-- 반영: 2026-05-21 13:24 -->
+- 도보/자동차 길찾기 액션은 작동하지만 백엔드 route API는 v1에서 `transit`만 실제 경로 조회를 지원한다. <!-- 반영: 2026-05-21 13:24 -->
+- `/api/v1/map/routes` 엔드포인트가 추가되었으며 `TransitRouteController`에서 `POST /api/v1/map/routes`와 `POST /api/v1/map/transit-route`를 제공한다. <!-- 반영: 2026-05-21 13:24 -->

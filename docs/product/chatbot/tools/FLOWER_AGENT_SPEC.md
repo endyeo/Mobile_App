@@ -1,8 +1,9 @@
 # FlowerAgent 명세
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 flower_book 설명/재배팁 조회, 후보 확장, projection/PageRequest 제한을 반영함. -->
+<!-- 반영: 2026-05-21 13:24 - 꽃 정보 도구 확장(getBasicInfo, getMeaningAndBloom, getGrowGuide, recommendByMonth, inferCandidates), 기존 도구명 호환 wrapper 역할, 꽃 명소 검색 nearby/distanceKm 진단값, MAP_OPEN_FLOWER_PREVIEW 대표 꽃 자동 전달, 프로젝션 필드 확장(flowerLanguage, bloomMonth, bloomDay, imageUrl) 반영 -->
 
-- 문서 버전: v1.1.0
-- 최종 반영일: 2026-05-15
+- 문서 버전: v1.2.0
+- 최종 반영일: 2026-05-21
 
 ## 1. 책임
 
@@ -20,11 +21,11 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 
 도구 식별자와 `@Tool(description)`은 AI가 직접 읽는 값이므로 영어만 사용한다. 개발자가 읽는 한국어 설명은 코드 주석의 `KO:` 라인과 이 명세 문서에 남긴다.
 
-### `searchFlowerSpots(query)`
+### `searchFlowerSpots(query)` <!-- 반영: 2026-05-21 13:24 - nearby/locationUsed/distanceKm 진단값 추가 -->
 
 - 목적: 승인된 꽃 위치 데이터 검색
 - AI 설명: `Search FLOWER's approved flower spot database by flower name, species, address, or description.`
-- 한국어 설명: 승인된 꽃 명소 데이터를 꽃 이름, 품종, 주소, 설명 기준으로 검색한다.
+- 한국어 설명: 승인된 꽃 명소 데이터를 꽃 이름, 품종, 주소, 설명 기준으로 검색한다. `nearby` 플래그와 위치가 있으면 거리 정렬한다.
 - 검색 대상: 꽃 이름, 품종, 주소, 설명
 - 입력: `query`, blank이면 대표 승인 꽃 위치 조회
 - 입력 한국어 설명: 꽃 명소 검색어. 비어 있으면 대표 승인 꽃 명소를 반환한다.
@@ -44,8 +45,69 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 - `description`
 - `lat`
 - `lng`
+- `nearby` <!-- 반영: 2026-05-21 13:24 -->
+- `locationUsed` <!-- 반영: 2026-05-21 13:24 -->
+- `distanceKm` (위치 정보가 있을 때) <!-- 반영: 2026-05-21 13:24 -->
 
-### `lookupDescriptionSource(query)`
+### `getBasicInfo(query)` <!-- 반영: 2026-05-21 13:24 -->
+
+- 목적: `flower_book` 기반 꽃 기본 정보 조회 (이름, 학명, 설명, 꽃말, 개화일, 이미지, 출처)
+- AI 설명: `Look up basic info (name, scientific name, description, flower language, bloom date, image) from flower_book database.`
+- 한국어 설명: 꽃 이름 또는 학명으로 기본 정보를 조회한다.
+- 입력: `query`
+- 검색 대상: `flower_book.name`, `flower_book.scientific_name`, 카테고리명
+- 결과 제한: DB 레벨 최대 3건
+- 출력: `ToolResult`
+
+`ToolResult.data.items` 항목 필드:
+
+- `flowerBookId`
+- `dataNo`
+- `name`
+- `scientificName`
+- `description`
+- `flowerLanguage`
+- `bloomMonth`
+- `bloomDay`
+- `imageUrl`
+- `source`
+
+### `getMeaningAndBloom(query)` <!-- 반영: 2026-05-21 13:24 -->
+
+- 목적: `flower_book` 기반 꽃말과 개화월/일 전용 조회
+- AI 설명: `Look up a flower's meaning (flower language) and bloom date from the flower_book database.`
+- 한국어 설명: 꽃 이름 또는 학명으로 꽃말과 개화월/일을 조회한다.
+- 입력: `query`
+- 결과 제한: DB 레벨 최대 3건
+- 출력: `ToolResult`
+
+### `getGrowGuide(query)` <!-- 반영: 2026-05-21 13:24 -->
+
+- 목적: `flower_book` 기반 재배 팁 전용 조회
+- AI 설명: `Look up a flower's grow tips and source from the flower_book database.`
+- 한국어 설명: 꽃 이름 또는 학명으로 재배 팁과 출처를 조회한다.
+- 입력: `query`
+- 결과 제한: DB 레벨 최대 3건
+- 출력: `ToolResult`
+
+### `recommendByMonth(month)` <!-- 반영: 2026-05-21 13:24 -->
+
+- 목적: 월/계절 기준 꽃 추천
+- AI 설명: `Recommend seasonal flowers for a given month using FLOWER's flower book and approved flower spots.`
+- 한국어 설명: `flower_book` 월별 개화 데이터와 승인 꽃 명소를 조합해 추천한다.
+- 입력: `month`, 1~12 범위 밖이면 현재 월 사용
+- 결과 제한: 최대 5개
+- 출력: `ToolResult`
+
+### `inferCandidates(description)` <!-- 반영: 2026-05-21 13:24 -->
+
+- 목적: 색상/모양 설명 기반 꽃 후보 추정
+- AI 설명: `Infer candidate flowers from a vague description (color, shape, etc).`
+- 한국어 설명: 색상/이름 모름 설명 기반으로 후보 꽃을 추정한다.
+- 입력: `description`
+- 출력: `ToolResult`
+
+### `lookupDescriptionSource(query)` — 호환 wrapper, 내부적으로 `getBasicInfo`를 호출 <!-- 반영: 2026-05-21 13:24 -->
 
 - 목적: `flower_book` 기반 꽃 설명/출처 조회
 - AI 설명: `Look up a flower's description and source from the flower_book database.`
@@ -72,7 +134,7 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 - `description`
 - `source`
 
-### `lookupGrowTipsSource(query)`
+### `lookupGrowTipsSource(query)` — 호환 wrapper, 내부적으로 `getGrowGuide`를 호출 <!-- 반영: 2026-05-21 13:24 -->
 
 - 목적: `flower_book` 기반 꽃 재배 팁/출처 조회
 - AI 설명: `Look up a flower's grow tips and source from the flower_book database.`
@@ -99,7 +161,7 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 - `growTips`
 - `source`
 
-### `recommendSeasonalFlowers(month)`
+### `recommendSeasonalFlowers(month)` — 호환 wrapper, 내부적으로 `recommendByMonth`를 호출 <!-- 반영: 2026-05-21 13:24 -->
 
 - 목적: 월/계절 기준 꽃 추천
 - AI 설명: `Recommend seasonal flowers for a given month using FLOWER's flower book and approved flower spots.`
@@ -169,9 +231,9 @@ FlowerAgent의 각 도구는 하나의 꽃/도감 관련 기능만 수행한다.
 - 사용자가 도감 열기를 요청하고 지도 요청이 없으면 `NAVIGATE FLOWER_BOOK`을 반환한다.
 - 꽃 설명/특징 질문은 `lookupDescriptionSource`만 사용하고, 키우기/재배/관리 질문은 `lookupGrowTipsSource`만 사용한다.
 - 월/계절 추천 질문은 `recommendSeasonalFlowers`를 사용한다.
-- 꽃 위치/명소/근처/지도 요청과 함께 꽃 keyword가 있으면 `searchFlowerSpots` 결과가 MapAgent 액션과 함께 사용될 수 있다.
+- 꽃 위치/명소/근처/지도 요청과 함께 꽃 keyword가 있으면 `searchFlowerSpots` 결과가 MapAgent 액션과 함께 사용될 수 있다. 검색 결과가 있고 지도 액션이 있으면 대표 꽃 장소를 `MAP_OPEN_FLOWER_PREVIEW`로 전달한다. <!-- 반영: 2026-05-21 13:24 -->
 - 검색 keyword가 없으면 전체/대표 승인 꽃 데이터를 최대 5개까지 조회한다.
-- 꽃 이름을 모르는 묘사형 질문은 후보 꽃 키워드로 확장 검색할 수 있다.
+- 꽃 이름을 모르는 묘사형 질문은 `inferCandidates`로 후보 꽃 키워드를 추정 검색할 수 있다. <!-- 반영: 2026-05-21 13:24 -->
 - 후보 확장은 `이름을 모르는 꽃 식별 질문`에서만 허용하고, 축제/행사/명소/장소/추천/지도 문맥에서는 수행하지 않는다.
 - 서버는 하나의 꽃 정보 질문에서 설명 조회와 재배 팁 조회를 동시에 실행하지 않는다.
 
