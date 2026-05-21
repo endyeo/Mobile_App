@@ -22,7 +22,7 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   final TourApiService _tourApiService = TourApiService();
   final PageController _festivalPageController = PageController(
-    viewportFraction: 0.92,
+    viewportFraction: 0.88,
   );
 
   List<CommunityPost> _posts = <CommunityPost>[];
@@ -100,20 +100,20 @@ class _MainScreenState extends State<MainScreen> {
             await Future.wait(<Future<void>>[_loadPosts(), _loadFestivals()]);
           },
           child: ListView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 18),
+            padding: const EdgeInsets.fromLTRB(0, 8, 0, 18),
             children: <Widget>[
-              _buildTopBar(colors),
+              _pagePadding(_buildTopBar(colors)),
               const SizedBox(height: 16),
-              _buildShortcutButtons(colors),
+              _pagePadding(_buildShortcutButtons(colors)),
               const SizedBox(height: 18),
-              _sectionTitle('축제 소식', colors),
+              _pagePadding(_sectionTitle('축제 소식', colors)),
               _buildFestivalSection(colors),
               const SizedBox(height: 20),
-              _sectionTitle('꽃 게시글', colors),
+              _pagePadding(_sectionTitle('꽃 게시글', colors)),
               _buildPostPreviewStrip(colors),
               const SizedBox(height: 20),
-              _sectionTitle('산책 요약', colors),
-              _buildWalkSummary(colors),
+              _pagePadding(_sectionTitle('산책 요약', colors)),
+              _pagePadding(_buildWalkSummary(colors)),
             ],
           ),
         ),
@@ -161,6 +161,13 @@ class _MainScreenState extends State<MainScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _pagePadding(Widget child) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: child,
     );
   }
 
@@ -292,10 +299,11 @@ class _MainScreenState extends State<MainScreen> {
               final bool isActive = index == _currentFestivalPage;
               return AnimatedPadding(
                 duration: const Duration(milliseconds: 180),
-                padding: EdgeInsets.only(
-                  right: 10,
-                  top: isActive ? 0 : 10,
-                  bottom: isActive ? 0 : 10,
+                padding: EdgeInsets.fromLTRB(
+                  5,
+                  isActive ? 0 : 10,
+                  5,
+                  isActive ? 0 : 10,
                 ),
                 child: _buildFestivalBanner(colors, festival),
               );
