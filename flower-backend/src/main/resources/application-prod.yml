@@ -39,6 +39,13 @@ app:
   dev-login:
     enabled: false
 
+chatbot:
+  openai:
+    api-key: ${OPENAI_API_KEY:no-key-set}
+
+tour:
+  api-key: ${TOUR_API_KEY:}
+
 
 
 

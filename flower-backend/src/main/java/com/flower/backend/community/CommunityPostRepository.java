@@ -90,6 +90,42 @@ public interface CommunityPostRepository extends JpaRepository<CommunityPost, Lo
     """)
     List<CommunityPost> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE (:from IS NULL OR p.createdAt >= :from)
+          AND (:to IS NULL OR p.createdAt <= :to)
+          AND (
+            :keyword = ''
+            OR LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+          )
+        ORDER BY p.createdAt DESC
+    """)
+    List<CommunityPost> findLatestPosts(
+            @Param("keyword") String keyword,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            Pageable pageable);
+
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE (:from IS NULL OR p.createdAt >= :from)
+          AND (:to IS NULL OR p.createdAt <= :to)
+          AND (
+            :keyword = ''
+            OR LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+          )
+        ORDER BY p.likeCount DESC, p.commentCount DESC, p.createdAt DESC
+    """)
+    List<CommunityPost> findPopularPosts(
+            @Param("keyword") String keyword,
+            @Param("from") LocalDateTime from,
+            @Param("to") LocalDateTime to,
+            Pageable pageable);
+
     @Modifying
     @Query("UPDATE CommunityPost p SET p.commentCount = p.commentCount + 1 WHERE p.id = :postId")
     int incrementCommentCount(@Param("postId") Long postId);

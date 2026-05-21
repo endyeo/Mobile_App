@@ -94,5 +94,66 @@
     "message": "게시글 삭제해줘",
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
+  },
+  {
+    "id": "C013",
+    "message": "최신 글들은 어떤 걸 소개 해?",
+    "expectedRoutes": ["COMMUNITY"],
+    "expectedTools": ["community.getLatestPosts"],
+    "forbiddenTools": ["community.searchPosts"]
+  },
+  {
+    "id": "C014",
+    "message": "최근 커뮤니티 글 보여줘",
+    "expectedRoutes": ["COMMUNITY"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "COMMUNITY"
+      }
+    ],
+    "expectedTools": ["community.getLatestPosts"],
+    "forbiddenTools": ["community.searchPosts"]
+  },
+  {
+    "id": "C015",
+    "message": "오늘 올라온 글 있어?",
+    "expectedRoutes": ["COMMUNITY"],
+    "expectedTools": ["community.getLatestPosts"],
+    "forbiddenTools": ["community.searchPosts"]
+  },
+  {
+    "id": "C016",
+    "message": "인기글 알려줘",
+    "expectedRoutes": ["COMMUNITY"],
+    "expectedTools": ["community.getPopularPosts"],
+    "forbiddenTools": ["community.searchPosts"]
+  },
+  {
+    "id": "C017",
+    "message": "이번 주 인기글 보여줘",
+    "expectedRoutes": ["COMMUNITY"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "COMMUNITY"
+      }
+    ],
+    "expectedTools": ["community.getPopularPosts"],
+    "forbiddenTools": ["community.searchPosts"]
+  },
+  {
+    "id": "C018",
+    "message": "3월 인기글 보여줘",
+    "expectedRoutes": ["COMMUNITY"],
+    "expectedTools": ["community.getPopularPosts"],
+    "forbiddenTools": ["community.searchPosts"]
+  },
+  {
+    "id": "C019",
+    "message": "장미 인기글 있어?",
+    "expectedRoutes": ["COMMUNITY"],
+    "expectedTools": ["community.getPopularPosts"],
+    "forbiddenTools": ["community.searchPosts"]
   }
 ]

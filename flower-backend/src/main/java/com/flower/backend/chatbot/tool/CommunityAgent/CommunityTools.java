@@ -5,8 +5,17 @@ import com.flower.backend.chatbot.dto.ToolResult;
 import com.flower.backend.chatbot.tool.ChatbotActionContext;
 import com.flower.backend.community.CommunityPost;
 import com.flower.backend.community.CommunityPostRepository;
+import java.time.DayOfWeek;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.Year;
+import java.time.YearMonth;
+import java.time.ZoneId;
+import java.time.temporal.TemporalAdjusters;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +29,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Component
 @RequiredArgsConstructor
 public class CommunityTools {
+
+    private static final ZoneId KOREA_ZONE = ZoneId.of("Asia/Seoul");
 
     private final CommunityPostRepository postRepository;
     private final ChatbotActionContext actionContext;
@@ -57,6 +68,40 @@ public class CommunityTools {
                     .error("게시글 검색 중 오류가 발생했습니다.")
                     .build();
         }
+    }
+
+    // KO: 검색어와 기간 조건에 맞는 최신 커뮤니티 게시글을 조회합니다.
+    @Tool(description = "Get latest FLOWER community posts, optionally filtered by keyword and period.")
+    @Transactional(readOnly = true)
+    public ToolResult getLatestPosts(
+            // KO: 선택 검색어입니다. 전체 최신글 조회는 빈 문자열을 전달합니다.
+            @ToolParam(description = "Optional keyword for latest community posts.") String query,
+            // KO: today, this_week, this_month, month, none 중 하나입니다.
+            @ToolParam(description = "Period filter: today, this_week, this_month, month, none.") String dateFilter,
+            // KO: dateFilter=month일 때 사용할 월입니다. 없으면 0입니다.
+            @ToolParam(description = "Month number when dateFilter is month. Use 0 if absent.") int month,
+            // KO: dateFilter=month일 때 사용할 연도입니다. 없으면 0입니다.
+            @ToolParam(description = "Year when dateFilter is month. Use 0 if absent.") int year
+    ) {
+        actionContext.incrementToolCount("community.getLatestPosts");
+        return readPosts("community.getLatestPosts", "최신", query, dateFilter, month, year);
+    }
+
+    // KO: 검색어와 기간 조건에 맞는 인기 커뮤니티 게시글을 조회합니다.
+    @Tool(description = "Get popular FLOWER community posts by likes, comments, and recency.")
+    @Transactional(readOnly = true)
+    public ToolResult getPopularPosts(
+            // KO: 선택 검색어입니다. 전체 인기글 조회는 빈 문자열을 전달합니다.
+            @ToolParam(description = "Optional keyword for popular community posts.") String query,
+            // KO: today, this_week, this_month, month, none 중 하나입니다.
+            @ToolParam(description = "Period filter: today, this_week, this_month, month, none.") String dateFilter,
+            // KO: dateFilter=month일 때 사용할 월입니다. 없으면 0입니다.
+            @ToolParam(description = "Month number when dateFilter is month. Use 0 if absent.") int month,
+            // KO: dateFilter=month일 때 사용할 연도입니다. 없으면 0입니다.
+            @ToolParam(description = "Year when dateFilter is month. Use 0 if absent.") int year
+    ) {
+        actionContext.incrementToolCount("community.getPopularPosts");
+        return readPosts("community.getPopularPosts", "인기", query, dateFilter, month, year);
     }
 
     // KO: 커뮤니티 화면을 여는 앱 내부 액션을 준비합니다.
@@ -105,14 +150,89 @@ public class CommunityTools {
         return posts.stream()
                 .map(post -> {
                     Map<String, Object> item = new LinkedHashMap<>();
+                    item.put("id", post.getId());
                     item.put("nickname", post.getUser() != null
                             ? nullToDash(post.getUser().getNickname()) : "-");
                     item.put("content", nullToDash(post.getContent()));
                     item.put("species", nullToDash(post.getFlowerSpecies()));
+                    item.put("plantName", nullToDash(post.getPlantName()));
                     item.put("likes", post.getLikeCount());
+                    item.put("comments", post.getCommentCount());
+                    item.put("createdAt", post.getCreatedAt() == null ? "" : post.getCreatedAt().toString());
                     return item;
                 })
                 .toList();
+    }
+
+    private ToolResult readPosts(
+            String toolName,
+            String label,
+            String query,
+            String dateFilter,
+            int month,
+            int year
+    ) {
+        String sanitized = sanitizeKeyword(query, 100);
+        PeriodRange range = resolvePeriod(dateFilter, month, year);
+
+        try {
+            List<CommunityPost> results = "community.getPopularPosts".equals(toolName)
+                    ? postRepository.findPopularPosts(sanitized, range.from(), range.to(), PageRequest.of(0, 5))
+                    : postRepository.findLatestPosts(sanitized, range.from(), range.to(), PageRequest.of(0, 5));
+
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("items", toItems(results));
+            data.put("keyword", sanitized);
+            data.put("dateFilter", range.dateFilter());
+            data.put("rangeStart", range.from() == null ? "" : range.from().toString());
+            data.put("rangeEnd", range.to() == null ? "" : range.to().toString());
+            data.put("rankingBasis", "community.getPopularPosts".equals(toolName)
+                    ? "likeCount DESC, commentCount DESC, createdAt DESC"
+                    : "createdAt DESC");
+
+            return ToolResult.builder()
+                    .tool(toolName)
+                    .status("SUCCESS")
+                    .summary("'" + displayKeyword(sanitized) + "' " + range.label() + " " + label
+                            + " 커뮤니티 글 " + results.size() + "건을 찾았습니다.")
+                    .data(data)
+                    .build();
+        } catch (Exception e) {
+            log.error("[Tool:{}] 커뮤니티 {}글 조회 실패", toolName, label, e);
+            return ToolResult.builder()
+                    .tool(toolName)
+                    .status("ERROR")
+                    .summary("커뮤니티 " + label + "글 조회에 실패했습니다.")
+                    .error(label + "글 조회 중 오류가 발생했습니다.")
+                    .build();
+        }
+    }
+
+    private PeriodRange resolvePeriod(String dateFilter, int month, int year) {
+        LocalDate today = LocalDate.now(KOREA_ZONE);
+        String normalized = dateFilter == null ? "" : dateFilter.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "today" -> new PeriodRange("today", "오늘",
+                    today.atStartOfDay(), today.atTime(LocalTime.MAX));
+            case "this_week" -> {
+                LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+                LocalDate end = today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY));
+                yield new PeriodRange("this_week", "이번 주", start.atStartOfDay(), end.atTime(LocalTime.MAX));
+            }
+            case "this_month" -> {
+                YearMonth current = YearMonth.from(today);
+                yield new PeriodRange("this_month", "이번 달",
+                        current.atDay(1).atStartOfDay(), current.atEndOfMonth().atTime(LocalTime.MAX));
+            }
+            case "month" -> {
+                int safeMonth = month >= 1 && month <= 12 ? month : today.getMonthValue();
+                int safeYear = year > 0 ? year : Year.now(KOREA_ZONE).getValue();
+                YearMonth requested = YearMonth.of(safeYear, safeMonth);
+                yield new PeriodRange("month", safeMonth + "월",
+                        requested.atDay(1).atStartOfDay(), requested.atEndOfMonth().atTime(LocalTime.MAX));
+            }
+            default -> new PeriodRange("none", "전체 기간", null, null);
+        };
     }
 
     private String sanitizeKeyword(String keyword, int maxLength) {
@@ -133,5 +253,13 @@ public class CommunityTools {
 
     private String nullToDash(String value) {
         return value == null || value.isBlank() ? "-" : value;
+    }
+
+    private record PeriodRange(
+            String dateFilter,
+            String label,
+            LocalDateTime from,
+            LocalDateTime to
+    ) {
     }
 }

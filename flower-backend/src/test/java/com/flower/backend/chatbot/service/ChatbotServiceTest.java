@@ -19,6 +19,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -60,6 +61,10 @@ class ChatbotServiceTest {
                 .thenReturn(tool("flower.searchFlowerSpots"));
         when(communityTools.searchPosts(anyString()))
                 .thenReturn(tool("community.searchPosts"));
+        when(communityTools.getLatestPosts(anyString(), anyString(), anyInt(), anyInt()))
+                .thenReturn(tool("community.getLatestPosts"));
+        when(communityTools.getPopularPosts(anyString(), anyString(), anyInt(), anyInt()))
+                .thenReturn(tool("community.getPopularPosts"));
     }
 
     @Test
@@ -113,6 +118,40 @@ class ChatbotServiceTest {
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getTarget()).isEqualTo("COMMUNITY_COMPOSE");
         assertThat(response.getToolResults()).isEmpty();
+        verify(communityTools, never()).searchPosts(anyString());
+    }
+
+    @Test
+    void latestCommunityRequestUsesLatestToolWithoutKeywordSearch() {
+        ChatMessageResponse response = chatbotService.chat(request("최신 글들은 어떤 걸 소개 해?"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("community.getLatestPosts");
+        verify(communityTools).getLatestPosts("", "none", 0, 0);
+        verify(communityTools, never()).searchPosts(anyString());
+    }
+
+    @Test
+    void popularCommunityRequestUsesPopularToolWithPeriod() {
+        ChatMessageResponse response = chatbotService.chat(request("이번 주 인기글 보여줘"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
+        assertThat(response.getActions()).extracting(ChatAction::getTarget)
+                .contains("COMMUNITY");
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("community.getPopularPosts");
+        verify(communityTools).getPopularPosts("", "this_week", 0, 0);
+        verify(communityTools, never()).searchPosts(anyString());
+    }
+
+    @Test
+    void monthlyPopularCommunityRequestPassesMonthFilter() {
+        ChatMessageResponse response = chatbotService.chat(request("3월 인기글 보여줘"));
+
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("community.getPopularPosts");
+        verify(communityTools).getPopularPosts("", "month", 3, java.time.LocalDate.now().getYear());
         verify(communityTools, never()).searchPosts(anyString());
     }
 
