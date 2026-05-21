@@ -31,11 +31,16 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
   ];
   static final List<_FloatingChatMessage> _messages = [];
   static final String _sessionId = const Uuid().v4();
+  static bool _persistedShowComposer = false;
+  static bool _persistedShowHistory = false;
+  static String _draftText = '';
 
-  final TextEditingController _controller = TextEditingController();
+  final TextEditingController _controller = TextEditingController(
+    text: _draftText,
+  );
   final ChatbotService _chatbotService = ChatbotService();
-  bool _showComposer = false;
-  bool _showHistory = false;
+  bool _showComposer = _persistedShowComposer;
+  bool _showHistory = _persistedShowHistory;
   bool _isSending = false;
   bool _isListening = false;
   StreamSubscription<ChatbotStreamEvent>? _streamSubscription;
@@ -47,6 +52,9 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
 
   @override
   void dispose() {
+    _draftText = _controller.text;
+    _persistedShowComposer = _showComposer;
+    _persistedShowHistory = _showHistory;
     _cancelToken?.cancel('disposed');
     unawaited(_streamSubscription?.cancel());
     _controller.dispose();
@@ -58,6 +66,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     if (text.isEmpty || _isSending || _isListening) return;
 
     _controller.clear();
+    _draftText = '';
     FocusScope.of(context).unfocus();
 
     _cancelledByUser = false;
@@ -71,6 +80,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
       _messages.add(_FloatingChatMessage.bot('AI가 요청을 확인하고 있어요.'));
       _isSending = true;
       _showHistory = true;
+      _persistedShowHistory = true;
     });
 
     final position = await _getCurrentPositionOrNull();
@@ -185,6 +195,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
         _messages.add(_FloatingChatMessage.bot(trimmed));
       }
       _showHistory = true;
+      _persistedShowHistory = true;
     });
   }
 
@@ -207,6 +218,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
         _messages.add(_FloatingChatMessage.bot(trimmed));
       }
       _showHistory = true;
+      _persistedShowHistory = true;
     });
   }
 
@@ -253,6 +265,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
       }
 
       _controller.text = spokenText;
+      _draftText = spokenText;
       await _sendMessage(spokenText);
     } on PlatformException catch (error) {
       if (!mounted) return;
@@ -328,6 +341,8 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     setState(() {
       _showHistory = false;
       _showComposer = false;
+      _persistedShowHistory = false;
+      _persistedShowComposer = false;
     });
   }
 
@@ -349,9 +364,11 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
               setState(() {
                 _showComposer = true;
                 _showHistory = true;
+                _persistedShowComposer = true;
+                _persistedShowHistory = true;
               });
             },
-            child: const Icon(Icons.chat_bubble_outline, size: 26),
+            child: const Icon(Icons.smart_toy_outlined, size: 26),
           )
         : SizedBox(
             width: dockWidth,
@@ -403,7 +420,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
         children: [
           Row(
             children: [
-              Icon(Icons.chat_bubble_outline, color: colors.primary, size: 18),
+              Icon(Icons.smart_toy_outlined, color: colors.primary, size: 18),
               const SizedBox(width: 8),
               const Expanded(
                 child: Text(
@@ -484,10 +501,15 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
           IconButton(
             tooltip: '챗봇 대화 내역',
             icon: Icon(
-              _showHistory ? Icons.expand_more : Icons.chat_bubble_outline,
+              _showHistory ? Icons.expand_more : Icons.smart_toy_outlined,
               color: colors.primary,
             ),
-            onPressed: () => setState(() => _showHistory = !_showHistory),
+            onPressed: () {
+              setState(() {
+                _showHistory = !_showHistory;
+                _persistedShowHistory = _showHistory;
+              });
+            },
           ),
           Expanded(
             child: TextField(
@@ -504,6 +526,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
                 isDense: true,
               ),
               onSubmitted: _sendMessage,
+              onChanged: (value) => _draftText = value,
             ),
           ),
           IconButton(

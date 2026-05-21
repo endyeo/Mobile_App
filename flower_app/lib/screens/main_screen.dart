@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../app_actions/app_action_runtime.dart';
-import '../services/chatbot_service.dart';
 import '../services/community_api_service.dart';
 import 'community_feed_screen.dart';
 import '../services/tour_api_service.dart';
@@ -22,22 +20,15 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  final TextEditingController _chatController = TextEditingController();
-  final ChatbotService _chatbotService = ChatbotService();
   final TourApiService _tourApiService = TourApiService();
   final PageController _festivalPageController = PageController(
     viewportFraction: 0.92,
   );
-  final String _chatSessionId = DateTime.now().microsecondsSinceEpoch
-      .toString();
-  final List<_MainChatMessage> _chatMessages = <_MainChatMessage>[];
 
   List<CommunityPost> _posts = <CommunityPost>[];
   List<FestivalData> _festivals = <FestivalData>[];
   bool _isLoadingPosts = true;
   bool _isLoadingFestivals = true;
-  bool _isChatRunning = false;
-  String? _chatStatus;
   String? _festivalError;
   String _nickname = '사용자';
   String? _profileImageUrl;
@@ -62,7 +53,6 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   void dispose() {
-    _chatController.dispose();
     _festivalPageController.dispose();
     super.dispose();
   }
@@ -114,8 +104,6 @@ class _MainScreenState extends State<MainScreen> {
             children: <Widget>[
               _buildTopBar(colors),
               const SizedBox(height: 16),
-              _buildMainChatComposer(colors),
-              const SizedBox(height: 14),
               _buildShortcutButtons(colors),
               const SizedBox(height: 18),
               _sectionTitle('축제 소식', colors),
@@ -176,156 +164,16 @@ class _MainScreenState extends State<MainScreen> {
     );
   }
 
-  Widget _buildMainChatComposer(SeasonColors colors) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        if (_chatStatus != null) ...<Widget>[
-          _buildChatStatus(colors),
-          const SizedBox(height: 8),
-        ],
-        _buildChatEntry(colors),
-      ],
-    );
-  }
-
-  Widget _buildChatEntry(SeasonColors colors) {
-    return Container(
-      height: 52,
-      padding: const EdgeInsets.only(left: 14, right: 6),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: colors.primary.withValues(alpha: 0.14)),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: colors.primary.withValues(alpha: 0.10),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
-          ),
-        ],
-      ),
-      child: Row(
-        children: <Widget>[
-          Icon(Icons.chat_bubble_outline, color: colors.primary, size: 22),
-          const SizedBox(width: 10),
-          Expanded(
-            child: TextField(
-              controller: _chatController,
-              enabled: !_isChatRunning,
-              textInputAction: TextInputAction.send,
-              decoration: InputDecoration(
-                hintText: _isChatRunning
-                    ? '챗봇이 답변을 준비하고 있어요'
-                    : '챗봇에게 물어보세요',
-                border: InputBorder.none,
-                isDense: true,
-              ),
-              onSubmitted: _sendMainChatMessage,
-            ),
-          ),
-          IconButton(
-            icon: Icon(Icons.send_rounded, color: colors.primary, size: 21),
-            onPressed: _isChatRunning
-                ? null
-                : () => _sendMainChatMessage(_chatController.text),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildChatStatus(SeasonColors colors) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.86),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: colors.primary.withValues(alpha: 0.10)),
-      ),
-      child: Row(
-        children: <Widget>[
-          SizedBox(
-            width: 16,
-            height: 16,
-            child: CircularProgressIndicator(
-              strokeWidth: 2,
-              color: colors.primary,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              _chatStatus ?? '',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: colors.primary,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _sendMainChatMessage(String rawText) async {
-    final String text = rawText.trim();
-    if (text.isEmpty || _isChatRunning) return;
-
-    _chatController.clear();
-    FocusScope.of(context).unfocus();
-
-    setState(() {
-      _chatMessages.add(_MainChatMessage.user(text));
-      _isChatRunning = true;
-      _chatStatus = '질문을 분석하고 있어요';
-    });
-
-    Future<void>.delayed(const Duration(milliseconds: 700), () {
-      if (!mounted || !_isChatRunning) return;
-      setState(() => _chatStatus = '답변을 준비하고 있어요');
-    });
-
-    try {
-      final ChatbotResponse response = await _chatbotService.sendMessage(
-        message: text,
-        sessionId: _chatSessionId,
-        lat: 37.5665,
-        lng: 126.9780,
-      );
-      if (!mounted) return;
-      setState(() {
-        _chatMessages.add(_MainChatMessage.bot(response.reply));
-        _isChatRunning = false;
-        _chatStatus = null;
-      });
-      if (mounted) {
-        await AppActionRuntime.execute(context, response.actions);
-      }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _chatMessages.add(_MainChatMessage.bot('응답을 불러오지 못했습니다.'));
-        _isChatRunning = false;
-        _chatStatus = null;
-      });
-    }
-  }
-
   Widget _buildShortcutButtons(SeasonColors colors) {
     final List<_HomeMenuItem> items = <_HomeMenuItem>[
       _HomeMenuItem(
         Icons.menu_book_outlined,
-        '도감',
+        '꽃 도감',
         () => _goTo(context, const FlowerBookPage()),
       ),
       _HomeMenuItem(
         Icons.directions_walk,
-        '산책',
+        '만보기',
         () => _goTo(context, const PedometerScreen()),
       ),
       _HomeMenuItem(
@@ -335,39 +183,58 @@ class _MainScreenState extends State<MainScreen> {
       ),
     ];
 
-    return Row(
-      children: <Widget>[
-        for (final _HomeMenuItem item in items) ...<Widget>[
-          Expanded(
-            child: Tooltip(
-              message: item.label,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      decoration: _panelDecoration(colors),
+      child: Row(
+        children: <Widget>[
+          for (final _HomeMenuItem item in items) ...<Widget>[
+            Expanded(
               child: InkWell(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(12),
                 onTap: item.onTap,
-                child: Ink(
-                  height: 62,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: colors.primary.withValues(alpha: 0.12),
-                    ),
-                    boxShadow: <BoxShadow>[
-                      BoxShadow(
-                        color: colors.primary.withValues(alpha: 0.10),
-                        blurRadius: 10,
-                        offset: const Offset(0, 3),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 12,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Container(
+                        width: 42,
+                        height: 42,
+                        decoration: BoxDecoration(
+                          color: colors.primary.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Icon(item.icon, color: colors.primary, size: 24),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        item.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF2D2D2D),
+                        ),
                       ),
                     ],
                   ),
-                  child: Icon(item.icon, color: colors.primary, size: 28),
                 ),
               ),
             ),
-          ),
-          if (item != items.last) const SizedBox(width: 10),
+            if (item != items.last)
+              Container(
+                width: 1,
+                height: 62,
+                color: colors.primary.withValues(alpha: 0.08),
+              ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
@@ -626,53 +493,55 @@ class _MainScreenState extends State<MainScreen> {
         itemBuilder: (BuildContext context, int index) {
           final CommunityPost post = _posts[index];
           return GestureDetector(
-            onTap: () => _goTo(context, CommunityFeedScreen(initialPostId: post.id)),
+            onTap: () =>
+                _goTo(context, CommunityFeedScreen(initialPostId: post.id)),
             child: Container(
-            width: 132,
-            decoration: _panelDecoration(colors),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(
-                  child: post.imageUrl == null || post.imageUrl!.isEmpty
-                      ? Container(
-                          width: double.infinity,
-                          color: colors.primary.withValues(alpha: 0.12),
-                          child: Icon(
-                            Icons.article_outlined,
-                            color: colors.primary,
-                          ),
-                        )
-                      : Image.network(
-                          post.imageUrl!,
-                          width: double.infinity,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => Container(
+              width: 132,
+              decoration: _panelDecoration(colors),
+              clipBehavior: Clip.antiAlias,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: post.imageUrl == null || post.imageUrl!.isEmpty
+                        ? Container(
                             width: double.infinity,
                             color: colors.primary.withValues(alpha: 0.12),
                             child: Icon(
                               Icons.article_outlined,
                               color: colors.primary,
                             ),
+                          )
+                        : Image.network(
+                            post.imageUrl!,
+                            width: double.infinity,
+                            fit: BoxFit.cover,
+                            errorBuilder: (_, __, ___) => Container(
+                              width: double.infinity,
+                              color: colors.primary.withValues(alpha: 0.12),
+                              child: Icon(
+                                Icons.article_outlined,
+                                color: colors.primary,
+                              ),
+                            ),
                           ),
-                        ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(9, 6, 9, 7),
-                  child: Text(
-                    post.content,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(9, 6, 9, 7),
+                    child: Text(
+                      post.content,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-          )); // GestureDetector 닫기
+          ); // GestureDetector 닫기
         },
       ),
     );
@@ -732,19 +601,4 @@ class _HomeMenuItem {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
-}
-
-class _MainChatMessage {
-  const _MainChatMessage._({required this.text, required this.isUser});
-
-  factory _MainChatMessage.user(String text) {
-    return _MainChatMessage._(text: text, isUser: true);
-  }
-
-  factory _MainChatMessage.bot(String text) {
-    return _MainChatMessage._(text: text, isUser: false);
-  }
-
-  final String text;
-  final bool isUser;
 }
