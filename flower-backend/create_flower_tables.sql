@@ -73,8 +73,8 @@ CREATE TABLE IF NOT EXISTS flower_book (
     bloom_month      INT,
     bloom_day        INT,
     flower_language  TEXT,
-    description      TEXT,  -- 꽃 설명
-    grow_tips        TEXT,  -- 꽃 키우는 방법
+    description      TEXT,
+    grow_tips        TEXT,
     image_url        VARCHAR(1024),
     category_id      BIGINT REFERENCES flower_categories(id),
     source           VARCHAR(20) NOT NULL DEFAULT 'NONGSARO', -- NONGSARO | WIKIPEDIA | MANUAL

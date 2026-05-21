@@ -15,15 +15,15 @@ public class TransitRouteController {
 
     private final TransitRouteService transitRouteService;
 
-    @PostMapping("/transit-route")
-    public ResponseEntity<ApiResponse<TransitRouteDto.TransitRouteResponse>> getTransitRoute(
-            @RequestBody TransitRouteDto.TransitRouteRequest request
+    @PostMapping("/routes")
+    public ResponseEntity<ApiResponse<TransitRouteDto.RouteResponse>> getRoute(
+            @RequestBody TransitRouteDto.RouteRequest request
     ) {
-        return ResponseEntity.ok(ApiResponse.ok(transitRouteService.getTransitRoute(request)));
+        return ResponseEntity.ok(ApiResponse.ok(transitRouteService.getRoute(request)));
     }
 
-    @PostMapping("/routes")
-    public ResponseEntity<ApiResponse<TransitRouteDto.TransitRouteResponse>> getRoute(
+    @PostMapping("/transit-route")
+    public ResponseEntity<ApiResponse<TransitRouteDto.TransitRouteResponse>> getTransitRoute(
             @RequestBody TransitRouteDto.TransitRouteRequest request
     ) {
         return ResponseEntity.ok(ApiResponse.ok(transitRouteService.getTransitRoute(request)));

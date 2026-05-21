@@ -38,6 +38,12 @@ public class User {
     @Column
     private String fcmToken;
 
+    @Column
+    private Double lastLatitude;
+
+    @Column
+    private Double lastLongitude;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;
@@ -63,6 +69,11 @@ public class User {
 
     public void updateFcmToken(String fcmToken) {
         this.fcmToken = fcmToken;
+    }
+
+    public void updateLocation(Double latitude, Double longitude) {
+        this.lastLatitude = latitude;
+        this.lastLongitude = longitude;
     }
 
     public enum Provider {

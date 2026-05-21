@@ -4,6 +4,7 @@ package com.flower.backend.auth;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -59,13 +60,14 @@ public class SecurityConfig {
                     "/api/v1/flowers/**",
                     "/api/v1/map/transit-route",
                     "/api/v1/map/routes",
-                    "/api/v1/community/posts/*/comments",
+                    "/api/v1/flower-spots",
                     "/api/v1/flower-spots/identify",
                     "/api/v1/admin/flowers/import",
                     "/api/v1/admin/flowers/fetch-images",
                     "/api/v1/admin/flowers/compress-images",
                     "/error"
                 ).permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/v1/community/posts/*/comments").permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class);

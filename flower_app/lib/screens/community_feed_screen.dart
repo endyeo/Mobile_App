@@ -5,6 +5,8 @@ import '../services/community_api_service.dart';
 import '../widgets/app_bottom_navigation.dart';
 import '../widgets/chat_floating_button.dart';
 import 'create_flower_spot_screen.dart';
+import 'kakao_map_screen.dart';
+import '../models/chat_action.dart';
 import '../widgets/comment_bottom_sheet.dart';
 
 class CommunityFeedScreen extends StatefulWidget {
@@ -20,16 +22,35 @@ class CommunityFeedScreen extends StatefulWidget {
 class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   List<CommunityPost> _posts = [];
   bool _isLoading = true;
+  bool _isLoadingMore = false;
+  bool _hasNext = false;
+  int? _nextCursor;
   String? _error;
   String _accessToken = '';
-  String _activeQuery = '';
   final Map<int, GlobalKey> _postKeys = {};
+  final Set<int> _togglingLike = <int>{};
+  final Set<int> _togglingSave = <int>{};
+  final ScrollController _scrollController = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _activeQuery = widget.initialQuery?.trim() ?? '';
+    _scrollController.addListener(_onScroll);
     _loadPosts();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (!_hasNext || _isLoadingMore) return;
+    final pos = _scrollController.position;
+    if (pos.pixels >= pos.maxScrollExtent - 200) {
+      _loadMorePosts();
+    }
   }
 
   Future<void> _loadPosts() async {
@@ -41,10 +62,12 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
     try {
       final prefs = await SharedPreferences.getInstance();
       _accessToken = prefs.getString('accessToken') ?? '';
-      final posts = await CommunityApiService.getPosts(_accessToken);
+      final result = await CommunityApiService.getPosts(_accessToken);
       if (mounted) {
         setState(() {
-          _posts = _filterPosts(posts);
+          _posts = _filterByInitialQuery(result.posts);
+          _nextCursor = result.nextCursor;
+          _hasNext = result.hasNext;
           _isLoading = false;
         });
         _scrollToInitialPost();
@@ -55,6 +78,38 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           _isLoading = false;
           _error = '게시글을 불러오지 못했습니다.';
         });
+    }
+  }
+
+  List<CommunityPost> _filterByInitialQuery(List<CommunityPost> posts) {
+    final query = widget.initialQuery?.trim().toLowerCase();
+    if (query == null || query.isEmpty) return posts;
+    return posts.where((post) {
+      return post.content.toLowerCase().contains(query) ||
+          (post.flowerSpecies ?? '').toLowerCase().contains(query) ||
+          (post.plantName ?? '').toLowerCase().contains(query) ||
+          (post.address ?? '').toLowerCase().contains(query);
+    }).toList();
+  }
+
+  Future<void> _loadMorePosts() async {
+    if (_isLoadingMore || !_hasNext || _nextCursor == null) return;
+    if (mounted) setState(() => _isLoadingMore = true);
+    try {
+      final result = await CommunityApiService.getPosts(
+        _accessToken,
+        cursor: _nextCursor,
+      );
+      if (mounted) {
+        setState(() {
+          _posts.addAll(result.posts);
+          _nextCursor = result.nextCursor;
+          _hasNext = result.hasNext;
+          _isLoadingMore = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingMore = false);
     }
   }
 
@@ -73,27 +128,18 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
     });
   }
 
-  List<CommunityPost> _filterPosts(List<CommunityPost> posts) {
-    if (_activeQuery.isEmpty) return posts;
-    final query = _activeQuery.toLowerCase();
-    return posts.where((post) {
-      return post.content.toLowerCase().contains(query) ||
-          (post.flowerSpecies?.toLowerCase().contains(query) ?? false) ||
-          (post.address?.toLowerCase().contains(query) ?? false) ||
-          post.user.toLowerCase().contains(query);
-    }).toList();
-  }
-
   Future<void> _openCreatePost() async {
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(builder: (_) => const CreateFlowerSpotScreen()),
     );
-    if (result == true) _loadPosts(); // 게시 후 피드 새로고침
+    if (result == true) _loadPosts();
   }
 
   Future<void> _toggleLike(int index) async {
     final post = _posts[index];
+    if (_togglingLike.contains(post.id)) return;
+    _togglingLike.add(post.id);
     final originalLiked = post.liked;
     final originalCount = post.likeCount;
     setState(() {
@@ -108,17 +154,41 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           post.liked = originalLiked;
           post.likeCount = originalCount;
         });
+    } finally {
+      _togglingLike.remove(post.id);
     }
+  }
+
+  void _openMapForPost(CommunityPost post) {
+    if (post.latitude == null || post.longitude == null) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => KakaoMapScreen(
+          initialActions: <ChatAction>[
+            ChatAction(
+              type: 'MAP_OPEN_FLOWER_PREVIEW',
+              target: 'MAP',
+              params: <String, dynamic>{'flowerId': post.id},
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   Future<void> _toggleSave(int index) async {
     final post = _posts[index];
+    if (_togglingSave.contains(post.id)) return;
+    _togglingSave.add(post.id);
     final original = post.saved;
     setState(() => post.saved = !post.saved);
     try {
       await CommunityApiService.toggleSave(_accessToken, post.id);
     } catch (_) {
       if (mounted) setState(() => post.saved = original);
+    } finally {
+      _togglingSave.remove(post.id);
     }
   }
 
@@ -179,21 +249,28 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
               child: _posts.isEmpty
                   ? _buildEmpty(colors)
                   : ListView.builder(
+                      controller: _scrollController,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 8,
                       ),
-                      itemCount: _posts.length + (_activeQuery.isEmpty ? 0 : 1),
+                      itemCount: _posts.length + (_hasNext ? 1 : 0),
                       itemBuilder: (context, index) {
-                        if (_activeQuery.isNotEmpty && index == 0) {
-                          return _buildQueryHeader(colors);
+                        if (index == _posts.length) {
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                            child: Center(
+                              child: CircularProgressIndicator(
+                                color: colors.primary,
+                              ),
+                            ),
+                          );
                         }
-                        final postIndex = _activeQuery.isEmpty ? index : index - 1;
-                        final post = _posts[postIndex];
+                        final post = _posts[index];
                         _postKeys[post.id] ??= GlobalKey();
                         return KeyedSubtree(
                           key: _postKeys[post.id],
-                          child: _buildPostCard(post, colors, postIndex),
+                          child: _buildPostCard(post, colors, index),
                         );
                       },
                     ),
@@ -209,7 +286,7 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           Icon(Icons.local_florist_outlined, size: 60, color: Colors.grey[300]),
           const SizedBox(height: 12),
           Text(
-            _activeQuery.isEmpty ? '아직 게시글이 없어요' : '"$_activeQuery" 관련 게시글이 없어요',
+            '아직 게시글이 없어요',
             style: TextStyle(color: Colors.grey[500], fontSize: 16),
           ),
           const SizedBox(height: 8),
@@ -220,37 +297,6 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
               '첫 게시글 작성하기',
               style: TextStyle(color: Colors.white),
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildQueryHeader(SeasonColors colors) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: colors.primary.withAlpha(35)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.search, color: colors.primary, size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '"$_activeQuery" 관련 후기',
-              style: TextStyle(color: colors.primary, fontWeight: FontWeight.w700),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() => _activeQuery = '');
-              _loadPosts();
-            },
-            child: const Text('전체'),
           ),
         ],
       ),
@@ -344,25 +390,6 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                     ],
                   ),
                 ),
-                if (post.flowerSpecies != null)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: colors.primary.withAlpha(20),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Text(
-                      post.flowerSpecies!,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: colors.primary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
               ],
             ),
           ),
@@ -392,6 +419,91 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                   size: 48,
                   color: colors.primary.withAlpha(100),
                 ),
+              ),
+            ),
+          if (post.displaySpecies != null ||
+              (post.latitude != null && post.longitude != null))
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 0),
+              child: Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: [
+                  if (post.displaySpecies != null)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: colors.primary.withAlpha(20),
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.local_florist,
+                            size: 14,
+                            color: colors.primary,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            post.displaySpecies!,
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: colors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  if (post.latitude != null && post.longitude != null)
+                    InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => _openMapForPost(post),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.withAlpha(20),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: Colors.blue.withAlpha(60),
+                            width: 1,
+                          ),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.place,
+                              size: 14,
+                              color: Colors.blue,
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              post.address ?? '지도에서 보기',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.blue,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            const Icon(
+                              Icons.chevron_right,
+                              size: 14,
+                              color: Colors.blue,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
           Padding(

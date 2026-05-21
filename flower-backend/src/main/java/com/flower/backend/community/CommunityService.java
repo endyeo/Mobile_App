@@ -3,12 +3,15 @@ package com.flower.backend.community;
 import com.flower.backend.auth.User;
 import com.flower.backend.auth.UserRepository;
 import com.flower.backend.community.CommunityDto.*;
+import com.flower.backend.fcm.FcmService;
 import com.flower.backend.storage.StorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -26,6 +29,7 @@ public class CommunityService {
     private final UserRepository userRepository;
     private final StorageService storageService;
     private final CommentRepository commentRepository;
+    private final FcmService fcmService;
 
     @Transactional(readOnly = true)
     public FeedResponse getFeed(Long userId, Long cursor, int limit) {
@@ -54,7 +58,7 @@ public class CommunityService {
     public PostResponse createPost(Long userId, String content, String flowerSpecies,
                                    MultipartFile image, Double latitude, Double longitude, String address) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없습니다."));
 
         String imageUrl = null;
         if (image != null && !image.isEmpty()) {
@@ -67,14 +71,14 @@ public class CommunityService {
                 .build();
 
         CommunityPost saved = postRepository.save(post);
-        return toResponse(saved, Set.of(), Set.of());
+        return toResponseWithoutContext(saved);
     }
 
     @Transactional
     public Map<String, Object> toggleLike(Long userId, Long postId) {
         PostLikeId likeId = new PostLikeId(userId, postId);
         CommunityPost post = postRepository.findById(postId)
-                .orElseThrow(() -> new RuntimeException("게시글을 찾을 수 없습니다."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "게시글을 찾을 수 없습니다."));
 
         boolean liked;
         if (likeRepository.existsById(likeId)) {
@@ -110,7 +114,7 @@ public class CommunityService {
                                           Double latitude, Double longitude, String address,
                                           boolean notifyOthers) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없습니다."));
 
         String imageUrl = null;
         if (image != null && !image.isEmpty()) {
@@ -124,7 +128,13 @@ public class CommunityService {
                 .plantConfidence(plantConfidence).notifyOthers(notifyOthers)
                 .build();
 
-        return toResponse(postRepository.save(post), Set.of(), Set.of());
+        CommunityPost saved = postRepository.save(post);
+
+        if (latitude != null && longitude != null) {
+            notifyNearbyUsersOfNewFlowerSpot(userId, latitude, longitude, plantName, address);
+        }
+
+        return toResponseWithoutContext(saved);
     }
 
     @Transactional(readOnly = true)
@@ -151,7 +161,7 @@ public class CommunityService {
         Long nextCursor = hasNext ? posts.get(posts.size() - 1).getId() : null;
 
         return FeedResponse.builder()
-                .posts(posts.stream().map(p -> toResponse(p, Set.of(), Set.of())).collect(Collectors.toList()))
+                .posts(posts.stream().map(this::toResponseWithoutContext).collect(Collectors.toList()))
                 .nextCursor(nextCursor).hasNext(hasNext).build();
     }
 
@@ -175,14 +185,15 @@ public class CommunityService {
     @Transactional
     public CommunityDto.CommentResponse addComment(Long userId, Long postId, String content) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "사용자를 찾을 수 없습니다."));
         CommunityPost post = postRepository.findById(postId)
-                .orElseThrow(() -> new RuntimeException("게시글을 찾을 수 없습니다."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "게시글을 찾을 수 없습니다."));
 
         Comment comment = Comment.builder().post(post).user(user).content(content).build();
         commentRepository.save(comment);
-        post.increaseCommentCount();
-        postRepository.save(post);
+        postRepository.incrementCommentCount(postId);
+
+        notifyPostAuthorOfComment(post, user, content);
 
         return CommunityDto.CommentResponse.builder()
                 .id(comment.getId())
@@ -198,15 +209,37 @@ public class CommunityService {
     @Transactional
     public void deleteComment(Long userId, Long postId, Long commentId) {
         Comment comment = commentRepository.findById(commentId)
-                .orElseThrow(() -> new RuntimeException("댓글을 찾을 수 없습니다."));
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "댓글을 찾을 수 없습니다."));
         if (!comment.getUser().getId().equals(userId)) {
-            throw new RuntimeException("본인 댓글만 삭제할 수 있습니다.");
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "본인 댓글만 삭제할 수 있습니다.");
         }
         commentRepository.delete(comment);
-        postRepository.findById(postId).ifPresent(p -> {
-            p.decreaseCommentCount();
-            postRepository.save(p);
-        });
+        int updated = postRepository.decrementCommentCount(postId);
+        if (updated == 0) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "게시글을 찾을 수 없습니다.");
+        }
+    }
+
+    // 사용자 컨텍스트(liked/saved)가 없는 단건 응답 생성 (생성/수정 직후 등)
+    private PostResponse toResponseWithoutContext(CommunityPost post) {
+        return toResponse(post, Set.of(), Set.of());
+    }
+
+    // 게시글 작성자에게 댓글 알림 발송 (본인 댓글이면 스킵)
+    private void notifyPostAuthorOfComment(CommunityPost post, User commenter, String content) {
+        if (post.getUser().getId().equals(commenter.getId())) return;
+        fcmService.send(post.getUser().getFcmToken(),
+                "새 댓글이 달렸어요 🌸",
+                commenter.getNickname() + ": " + content);
+    }
+
+    // 반경 내 사용자에게 새 꽃 게시글 알림 (FCM 토큰/위치 보유자만)
+    private void notifyNearbyUsersOfNewFlowerSpot(Long authorUserId, double lat, double lng,
+                                                   String plantName, String address) {
+        userRepository.findNearbyUsersWithFcmToken(lat, lng, 1000, authorUserId)
+                .forEach(u -> fcmService.send(u.getFcmToken(),
+                        "근처에 새 꽃 발견! 🌺",
+                        (plantName != null ? plantName : "꽃") + " - " + (address != null ? address : "내 주변")));
     }
 
     private PostResponse toResponse(CommunityPost post, Set<Long> likedIds, Set<Long> savedIds) {

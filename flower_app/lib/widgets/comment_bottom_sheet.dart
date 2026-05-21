@@ -46,14 +46,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
 
   Future<void> _loadComments() async {
     final comments = await CommentApiService.getComments(
-      widget.postId,
-      accessToken: _accessToken,
+      widget.postId, accessToken: _accessToken,
     );
-    if (mounted)
-      setState(() {
-        _comments = comments;
-        _isLoading = false;
-      });
+    if (mounted) setState(() { _comments = comments; _isLoading = false; });
   }
 
   Future<void> _send() async {
@@ -63,11 +58,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
     FocusScope.of(context).unfocus();
     setState(() => _isSending = true);
 
-    final comment = await CommentApiService.addComment(
-      _accessToken,
-      widget.postId,
-      text,
-    );
+    final comment = await CommentApiService.addComment(_accessToken, widget.postId, text);
     if (mounted) {
       setState(() {
         _isSending = false;
@@ -89,9 +80,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
 
   Future<void> _deleteComment(CommentItem comment) async {
     final ok = await CommentApiService.deleteComment(
-      _accessToken,
-      widget.postId,
-      comment.id,
+      _accessToken, widget.postId, comment.id,
     );
     if (ok && mounted) {
       setState(() => _comments.remove(comment));
@@ -122,8 +111,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                   children: [
                     Center(
                       child: Container(
-                        width: 40,
-                        height: 4,
+                        width: 40, height: 4,
                         decoration: BoxDecoration(
                           color: Colors.grey[300],
                           borderRadius: BorderRadius.circular(2),
@@ -133,10 +121,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                     const SizedBox(width: 8),
                     Text(
                       '댓글 ${_comments.length}개',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: colors.primary,
-                      ),
+                      style: TextStyle(fontWeight: FontWeight.bold, color: colors.primary),
                     ),
                     const Spacer(),
                     IconButton(
@@ -150,40 +135,25 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
               // 댓글 목록
               Expanded(
                 child: _isLoading
-                    ? Center(
-                        child: CircularProgressIndicator(color: colors.primary),
-                      )
+                    ? Center(child: CircularProgressIndicator(color: colors.primary))
                     : _comments.isEmpty
-                    ? Center(
-                        child: Text(
-                          '첫 댓글을 남겨보세요 🌸',
-                          style: TextStyle(
-                            color: Colors.grey[400],
-                            fontSize: 14,
+                        ? Center(
+                            child: Text('첫 댓글을 남겨보세요 🌸',
+                              style: TextStyle(color: Colors.grey[400], fontSize: 14)),
+                          )
+                        : ListView.builder(
+                            controller: scrollController,
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            itemCount: _comments.length,
+                            itemBuilder: (context, i) => _buildCommentItem(_comments[i], colors),
                           ),
-                        ),
-                      )
-                    : ListView.builder(
-                        controller: scrollController,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        itemCount: _comments.length,
-                        itemBuilder: (context, i) =>
-                            _buildCommentItem(_comments[i], colors),
-                      ),
               ),
               // 입력창
               Container(
                 padding: EdgeInsets.only(
-                  left: 12,
-                  right: 8,
-                  top: 8,
-                  bottom:
-                      MediaQuery.of(context).viewInsets.bottom +
-                      MediaQuery.of(context).padding.bottom +
-                      8,
+                  left: 12, right: 8, top: 8,
+                  bottom: MediaQuery.of(context).viewInsets.bottom +
+                      MediaQuery.of(context).padding.bottom + 8,
                 ),
                 decoration: BoxDecoration(
                   color: Colors.white,
@@ -199,10 +169,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                         maxLength: 500,
                         decoration: InputDecoration(
                           hintText: '댓글을 입력하세요',
-                          hintStyle: TextStyle(
-                            color: Colors.grey[400],
-                            fontSize: 14,
-                          ),
+                          hintStyle: TextStyle(color: Colors.grey[400], fontSize: 14),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(20),
                             borderSide: BorderSide(color: Colors.grey.shade300),
@@ -211,10 +178,7 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                             borderRadius: BorderRadius.circular(20),
                             borderSide: BorderSide(color: Colors.grey.shade300),
                           ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
-                          ),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
                           counterText: '',
                         ),
                         onSubmitted: (_) => _send(),
@@ -222,19 +186,10 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                     ),
                     const SizedBox(width: 8),
                     _isSending
-                        ? SizedBox(
-                            width: 36,
-                            height: 36,
-                            child: CircularProgressIndicator(
-                              color: colors.primary,
-                              strokeWidth: 2,
-                            ),
-                          )
+                        ? SizedBox(width: 36, height: 36,
+                            child: CircularProgressIndicator(color: colors.primary, strokeWidth: 2))
                         : IconButton(
-                            icon: Icon(
-                              Icons.send_rounded,
-                              color: colors.primary,
-                            ),
+                            icon: Icon(Icons.send_rounded, color: colors.primary),
                             onPressed: _send,
                           ),
                   ],
@@ -259,17 +214,10 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
               radius: 16,
               backgroundColor: colors.primary.withAlpha(30),
               backgroundImage: comment.profileImageUrl != null
-                  ? NetworkImage(comment.profileImageUrl!)
-                  : null,
+                  ? NetworkImage(comment.profileImageUrl!) : null,
               child: comment.profileImageUrl == null
-                  ? Text(
-                      comment.nickname.isNotEmpty ? comment.nickname[0] : '?',
-                      style: TextStyle(
-                        color: colors.primary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    )
+                  ? Text(comment.nickname.isNotEmpty ? comment.nickname[0] : '?',
+                      style: TextStyle(color: colors.primary, fontSize: 12, fontWeight: FontWeight.bold))
                   : null,
             ),
             const SizedBox(width: 10),
@@ -279,36 +227,22 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
                 children: [
                   Row(
                     children: [
-                      Text(
-                        comment.nickname,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 13,
-                        ),
-                      ),
+                      Text(comment.nickname,
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                       const SizedBox(width: 6),
-                      Text(
-                        _formatTime(comment.createdAt),
-                        style: TextStyle(fontSize: 11, color: Colors.grey[400]),
-                      ),
+                      Text(_formatTime(comment.createdAt),
+                        style: TextStyle(fontSize: 11, color: Colors.grey[400])),
                       if (comment.mine) ...[
                         const Spacer(),
                         GestureDetector(
                           onTap: () => _showDeleteDialog(comment),
-                          child: Icon(
-                            Icons.close,
-                            size: 16,
-                            color: Colors.grey[400],
-                          ),
+                          child: Icon(Icons.close, size: 16, color: Colors.grey[400]),
                         ),
                       ],
                     ],
                   ),
                   const SizedBox(height: 2),
-                  Text(
-                    comment.content,
-                    style: const TextStyle(fontSize: 14, height: 1.4),
-                  ),
+                  Text(comment.content, style: const TextStyle(fontSize: 14, height: 1.4)),
                 ],
               ),
             ),
@@ -325,15 +259,9 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
         title: const Text('댓글 삭제'),
         content: const Text('이 댓글을 삭제할까요?'),
         actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('취소')),
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('취소'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _deleteComment(comment);
-            },
+            onPressed: () { Navigator.pop(ctx); _deleteComment(comment); },
             child: const Text('삭제', style: TextStyle(color: Colors.red)),
           ),
         ],
@@ -351,25 +279,18 @@ class _CommentBottomSheetState extends State<CommentBottomSheet> {
       if (diff.inDays < 1) return '${diff.inHours}시간 전';
       if (diff.inDays < 7) return '${diff.inDays}일 전';
       return '${dt.month}/${dt.day}';
-    } catch (_) {
-      return '';
-    }
+    } catch (_) { return ''; }
   }
 }
 
 // 댓글 버튼을 피드 카드에서 사용하는 헬퍼 함수
-void showCommentSheet(
-  BuildContext context,
-  int postId, {
-  VoidCallback? onCommentAdded,
-}) {
+void showCommentSheet(BuildContext context, int postId, {VoidCallback? onCommentAdded}) {
   showModalBottomSheet(
     context: context,
     isScrollControlled: true,
     useRootNavigator: true, // 탭바 위로 시트가 뜨게
     backgroundColor: Colors.transparent,
-    builder: (_) =>
-        CommentBottomSheet(postId: postId, onCommentAdded: onCommentAdded),
+    builder: (_) => CommentBottomSheet(postId: postId, onCommentAdded: onCommentAdded),
   );
 }
 

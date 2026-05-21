@@ -63,15 +63,13 @@ class _LoginScreenState extends State<LoginScreen> {
           await prefs.setString('accessToken', accessToken);
           await prefs.setString('refreshToken', data['refreshToken'] ?? '');
           final user = data['user'] as Map<String, dynamic>?;
-          if (user?['nickname'] != null)
-            await prefs.setString('nickname', user!['nickname']);
-          if (user?['profileImageUrl'] != null)
-            await prefs.setString('profileImageUrl', user!['profileImageUrl']);
+          if (user?['nickname'] != null) await prefs.setString('nickname', user!['nickname']);
+          if (user?['profileImageUrl'] != null) await prefs.setString('profileImageUrl', user!['profileImageUrl']);
 
           // FCM 토큰 백엔드에 전송
           final fcmToken = prefs.getString('fcmToken');
           if (fcmToken != null && accessToken.isNotEmpty) {
-            AuthApiService.saveFcmToken(
+            await AuthApiService.saveFcmToken(
               accessToken: accessToken,
               fcmToken: fcmToken,
             );
@@ -176,7 +174,10 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 8),
         Text(
           '${colors.name}의 꽃과 함께 산책해요',
-          style: TextStyle(fontSize: 15, color: Colors.grey[600]),
+          style: TextStyle(
+            fontSize: 15,
+            color: Colors.grey[600],
+          ),
         ),
       ],
     );

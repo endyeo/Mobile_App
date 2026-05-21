@@ -6,9 +6,6 @@
     bucket: ${ORACLE_BUCKET}
     region: ${ORACLE_REGION:ap-chuncheon-1}
 
-tour:
-  api-key: ${TOUR_API_KEY:}
-
 spring:
   ai:
     openai:
@@ -37,6 +34,10 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: false
     show-sql: false
+
+app:
+  dev-login:
+    enabled: false
 
 
 

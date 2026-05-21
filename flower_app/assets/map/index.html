@@ -24,12 +24,7 @@
         DEFAULT_RADIUS: Number(params.get('radius') || 5000),
         MAX_RADIUS: Number(params.get('maxRadius') || 50000),
         DEFAULT_LIMIT: Number(params.get('limit') || 50),
-        EMBEDDED: embedded,
-        INITIAL_SEARCH_QUERY: params.get('initialSearchQuery') || '',
-        INITIAL_FOCUS_FLOWER_ID: params.get('initialFocusFlowerId') || '',
-        INITIAL_OPEN_FLOWER_PREVIEW: params.get('initialOpenFlowerPreview') === '1',
-        INITIAL_ROUTE_FLOWER_ID: params.get('initialRouteFlowerId') || '',
-        INITIAL_ROUTE_MODE: params.get('initialRouteMode') || ''
+        EMBEDDED: embedded
       };
 
       if (kakaoKey && kakaoKey !== 'YOUR_KAKAO_JS_KEY_HERE') {

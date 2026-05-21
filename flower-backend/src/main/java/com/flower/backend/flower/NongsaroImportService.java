@@ -32,6 +32,9 @@ public class NongsaroImportService {
             throw new RuntimeException("NONGSARO_API_KEY가 설정되지 않았습니다.");
         }
 
+        // 카테고리는 임포트 시작 시 한 번만 로드해서 재사용 (N+1 방지)
+        List<FlowerCategory> categories = categoryRepository.findAll();
+
         RestTemplate restTemplate = new RestTemplate();
         int saved = 0, skipped = 0;
 
@@ -48,10 +51,18 @@ public class NongsaroImportService {
                 try {
                     FlowerDetailData detail = fetchDetail(restTemplate, item.dataNo); // 외부 API
                     Thread.sleep(100); // API 부하 방지 (트랜잭션 밖)
-                    saveFlower(item, detail); // DB 저장만 트랜잭션
+                    saveFlower(item, detail, categories); // DB 저장만 트랜잭션
                     saved++;
-                } catch (Exception e) {
-                    log.warn("꽃 저장 실패 - dataNo={}, name={}: {}", item.dataNo, item.flowNm, e.getMessage());
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("임포트 중단 - dataNo={}", item.dataNo);
+                    return new ImportResult(saved, skipped);
+                } catch (org.springframework.web.client.RestClientException e) {
+                    log.warn("외부 API 호출 실패 - dataNo={}, name={}: {}", item.dataNo, item.flowNm, e.getMessage());
+                } catch (org.springframework.dao.DataAccessException e) {
+                    log.error("DB 저장 실패 - dataNo={}, name={}: {}", item.dataNo, item.flowNm, e.getMessage());
+                } catch (RuntimeException e) {
+                    log.error("예상치 못한 오류 - dataNo={}, name={}: {}", item.dataNo, item.flowNm, e.getMessage(), e);
                 }
             }
         }
@@ -77,8 +88,8 @@ public class NongsaroImportService {
     }
 
     @Transactional
-    protected void saveFlower(FlowerListItem item, FlowerDetailData detail) {
-        FlowerCategory category = matchCategory(item.flowNm);
+    protected void saveFlower(FlowerListItem item, FlowerDetailData detail, List<FlowerCategory> categories) {
+        FlowerCategory category = matchCategory(item.flowNm, categories);
         flowerRepository.save(FlowerBook.builder()
                 .dataNo(item.dataNo).name(item.flowNm).scientificName(detail.sciNm)
                 .bloomMonth(item.fMonth).bloomDay(item.fDay).flowerLanguage(detail.flowLang)
@@ -101,12 +112,15 @@ public class NongsaroImportService {
         }
     }
 
-    private FlowerCategory matchCategory(String flowerName) {
-        // 꽃 이름으로 카테고리 매칭 시도
-        return categoryRepository.findAll().stream()
+    private FlowerCategory matchCategory(String flowerName, List<FlowerCategory> categories) {
+        // 꽃 이름으로 카테고리 매칭 시도 (캐싱된 카테고리 사용)
+        return categories.stream()
                 .filter(c -> !c.getName().equals("기타") && flowerName.contains(c.getName()))
                 .findFirst()
-                .orElseGet(() -> categoryRepository.findByName("기타").orElse(null));
+                .orElseGet(() -> categories.stream()
+                        .filter(c -> c.getName().equals("기타"))
+                        .findFirst()
+                        .orElse(null));
     }
 
     private List<FlowerListItem> parseList(String xml) {

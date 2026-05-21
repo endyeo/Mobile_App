@@ -86,6 +86,15 @@ public class AuthService {
         });
     }
 
+    // ─── 위치 업데이트 ──────────────────────────────────────────────────────
+    @Transactional
+    public void updateLocation(Long userId, Double latitude, Double longitude) {
+        userRepository.findById(userId).ifPresent(user -> {
+            user.updateLocation(latitude, longitude);
+            userRepository.save(user);
+        });
+    }
+
     // ─── 로그아웃 ────────────────────────────────────────────────────────
     // 현재는 Stateless 방식: 클라이언트에서 토큰 삭제로 처리
     // 추후 필요 시 DB에 Refresh Token 블랙리스트 테이블 추가하여 서버 측 무효화 가능

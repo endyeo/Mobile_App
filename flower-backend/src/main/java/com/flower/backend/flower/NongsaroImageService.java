@@ -41,11 +41,8 @@ public class NongsaroImageService {
     private String region;
 
     public CompressResult compressAndStore() {
-        // Oracle Storage URL이 아닌 꽃만 처리
-        List<FlowerBook> targets = flowerBookRepository.findAll().stream()
-                .filter(f -> f.getImageUrl() == null
-                        || !f.getImageUrl().contains("objectstorage"))
-                .toList();
+        // Oracle Storage URL이 아닌 꽃만 DB 레벨에서 필터링
+        List<FlowerBook> targets = flowerBookRepository.findNeedingImageCompression();
 
         log.info("농사로 이미지 압축 대상: {}개", targets.size());
 

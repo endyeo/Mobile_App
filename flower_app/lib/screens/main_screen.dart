@@ -70,7 +70,7 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _loadPosts() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     final String token = prefs.getString('accessToken') ?? '';
-    final posts = await CommunityApiService.getPosts(token);
+    final posts = (await CommunityApiService.getPosts(token)).posts;
     if (!mounted) return;
     setState(() {
       _posts = posts.take(5).toList();
@@ -215,7 +215,9 @@ class _MainScreenState extends State<MainScreen> {
               enabled: !_isChatRunning,
               textInputAction: TextInputAction.send,
               decoration: InputDecoration(
-                hintText: _isChatRunning ? '챗봇이 답변을 준비하고 있어요' : '챗봇에게 물어보세요',
+                hintText: _isChatRunning
+                    ? '챗봇이 답변을 준비하고 있어요'
+                    : '챗봇에게 물어보세요',
                 border: InputBorder.none,
                 isDense: true,
               ),
@@ -624,55 +626,53 @@ class _MainScreenState extends State<MainScreen> {
         itemBuilder: (BuildContext context, int index) {
           final CommunityPost post = _posts[index];
           return GestureDetector(
-            onTap: () =>
-                _goTo(context, CommunityFeedScreen(initialPostId: post.id)),
+            onTap: () => _goTo(context, CommunityFeedScreen(initialPostId: post.id)),
             child: Container(
-              width: 132,
-              decoration: _panelDecoration(colors),
-              clipBehavior: Clip.antiAlias,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  Expanded(
-                    child: post.imageUrl == null || post.imageUrl!.isEmpty
-                        ? Container(
+            width: 132,
+            decoration: _panelDecoration(colors),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Expanded(
+                  child: post.imageUrl == null || post.imageUrl!.isEmpty
+                      ? Container(
+                          width: double.infinity,
+                          color: colors.primary.withValues(alpha: 0.12),
+                          child: Icon(
+                            Icons.article_outlined,
+                            color: colors.primary,
+                          ),
+                        )
+                      : Image.network(
+                          post.imageUrl!,
+                          width: double.infinity,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => Container(
                             width: double.infinity,
                             color: colors.primary.withValues(alpha: 0.12),
                             child: Icon(
                               Icons.article_outlined,
                               color: colors.primary,
                             ),
-                          )
-                        : Image.network(
-                            post.imageUrl!,
-                            width: double.infinity,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Container(
-                              width: double.infinity,
-                              color: colors.primary.withValues(alpha: 0.12),
-                              child: Icon(
-                                Icons.article_outlined,
-                                color: colors.primary,
-                              ),
-                            ),
                           ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(9, 6, 9, 7),
-                    child: Text(
-                      post.content,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
+                        ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(9, 6, 9, 7),
+                  child: Text(
+                    post.content,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ); // GestureDetector 닫기
+          )); // GestureDetector 닫기
         },
       ),
     );

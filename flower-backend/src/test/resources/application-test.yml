@@ -17,3 +17,6 @@ jwt:
   secret: test-secret-key-must-be-at-least-32-characters-long
   access-token-validity-seconds: 3600
   refresh-token-validity-seconds: 2592000
+
+# Spring AI 자동 설정용 더미 키 (테스트에서 실제 OpenAI 호출 없음)
+spring.ai.openai.api-key: test-dummy-key

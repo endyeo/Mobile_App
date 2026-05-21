@@ -78,6 +78,12 @@ public class CommunityController {
     }
 
     private Long getUserIdOrNull() {
-        try { return getUserId(); } catch (Exception e) { return null; }
+        // 비인증 요청은 principal이 "anonymousUser" 문자열이거나 null이므로
+        // ClassCastException/NullPointerException만 잡아 null 반환
+        try {
+            return getUserId();
+        } catch (ClassCastException | NullPointerException e) {
+            return null;
+        }
     }
 }

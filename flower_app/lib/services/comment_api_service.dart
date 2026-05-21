@@ -38,23 +38,19 @@ class CommentItem {
 class CommentApiService {
   static String get _base => '${ApiConfig.backendBaseUrl()}/api/v1/community';
 
-  static Future<List<CommentItem>> getComments(
-    int postId, {
-    String? accessToken,
-  }) async {
+  static Future<List<CommentItem>> getComments(int postId, {String? accessToken}) async {
     try {
       final headers = <String, String>{};
       if (accessToken != null && accessToken.isNotEmpty) {
         headers['Authorization'] = 'Bearer $accessToken';
       }
-      final res = await http
-          .get(Uri.parse('$_base/posts/$postId/comments'), headers: headers)
-          .timeout(const Duration(seconds: 10));
+      final res = await http.get(
+        Uri.parse('$_base/posts/$postId/comments'),
+        headers: headers,
+      ).timeout(const Duration(seconds: 10));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body)['data'] as List;
-        return data
-            .map((e) => CommentItem.fromJson(e as Map<String, dynamic>))
-            .toList();
+        return data.map((e) => CommentItem.fromJson(e as Map<String, dynamic>)).toList();
       }
     } catch (e) {
       debugPrint('[Comment] 댓글 조회 실패: $e');
@@ -62,22 +58,13 @@ class CommentApiService {
     return [];
   }
 
-  static Future<CommentItem?> addComment(
-    String accessToken,
-    int postId,
-    String content,
-  ) async {
+  static Future<CommentItem?> addComment(String accessToken, int postId, String content) async {
     try {
-      final res = await http
-          .post(
-            Uri.parse('$_base/posts/$postId/comments'),
-            headers: {
-              'Authorization': 'Bearer $accessToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({'content': content}),
-          )
-          .timeout(const Duration(seconds: 10));
+      final res = await http.post(
+        Uri.parse('$_base/posts/$postId/comments'),
+        headers: {'Authorization': 'Bearer $accessToken', 'Content-Type': 'application/json'},
+        body: jsonEncode({'content': content}),
+      ).timeout(const Duration(seconds: 10));
       if (res.statusCode == 201) {
         final data = jsonDecode(res.body)['data'] as Map<String, dynamic>;
         return CommentItem.fromJson(data);
@@ -88,18 +75,12 @@ class CommentApiService {
     return null;
   }
 
-  static Future<bool> deleteComment(
-    String accessToken,
-    int postId,
-    int commentId,
-  ) async {
+  static Future<bool> deleteComment(String accessToken, int postId, int commentId) async {
     try {
-      final res = await http
-          .delete(
-            Uri.parse('$_base/posts/$postId/comments/$commentId'),
-            headers: {'Authorization': 'Bearer $accessToken'},
-          )
-          .timeout(const Duration(seconds: 10));
+      final res = await http.delete(
+        Uri.parse('$_base/posts/$postId/comments/$commentId'),
+        headers: {'Authorization': 'Bearer $accessToken'},
+      ).timeout(const Duration(seconds: 10));
       return res.statusCode == 200;
     } catch (e) {
       debugPrint('[Comment] 댓글 삭제 실패: $e');

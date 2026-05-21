@@ -42,6 +42,15 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.ok(null));
     }
 
+    @PostMapping("/location")
+    public ResponseEntity<ApiResponse<Void>> updateLocation(@RequestBody java.util.Map<String, Double> body) {
+        var auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        Long userId = (Long) auth.getPrincipal();
+        authService.updateLocation(userId, body.get("latitude"), body.get("longitude"));
+        return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<Void>> logout() {
         var auth = org.springframework.security.core.context.SecurityContextHolder

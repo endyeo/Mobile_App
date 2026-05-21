@@ -10,10 +10,8 @@ import java.util.Optional;
 
 public interface UserRepository extends JpaRepository<User, Long> {
 
-    // 소셜 로그인용: 어떤 소셜 + 소셜 고유 ID로 유저 찾기
     Optional<User> findByProviderAndProviderId(User.Provider provider, String providerId);
 
-    // 닉네임 중복 체크
     boolean existsByNickname(String nickname);
 
     // PostGIS 공간 인덱스 기반 반경 검색 (idx_users_last_location GIST 인덱스 사용)

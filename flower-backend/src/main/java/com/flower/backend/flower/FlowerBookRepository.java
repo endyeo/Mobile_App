@@ -109,4 +109,12 @@ public interface FlowerBookRepository extends JpaRepository<FlowerBook, Long> {
 
     @Query("SELECT f FROM FlowerBook f WHERE f.scientificName LIKE :genus%")
     List<FlowerBook> findByGenus(@Param("genus") String genus);
+
+    @Query("""
+        SELECT f FROM FlowerBook f
+        WHERE f.imageUrl IS NULL
+           OR f.imageUrl = ''
+           OR f.imageUrl NOT LIKE '%objectstorage%'
+    """)
+    List<FlowerBook> findNeedingImageCompression();
 }

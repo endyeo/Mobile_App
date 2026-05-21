@@ -26,6 +26,8 @@ import java.util.Set;
 public class TransitRouteService {
 
     private static final String TRANSIT_ROUTE_URL = "https://apis.openapi.sk.com/transit/routes";
+    private static final String PEDESTRIAN_ROUTE_URL = "https://apis.openapi.sk.com/tmap/routes/pedestrian?version=1";
+    private static final String CAR_ROUTE_URL = "https://apis.openapi.sk.com/tmap/routes?version=1";
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final RestTemplate restTemplate;
@@ -33,11 +35,26 @@ public class TransitRouteService {
     @Value("${tmap.transit.app-key:}")
     private String tmapTransitAppKey;
 
+    public TransitRouteDto.RouteResponse getRoute(TransitRouteDto.RouteRequest request) {
+        String mode = normalizeRequestMode(request.mode());
+        return switch (mode) {
+            case "transit" -> {
+                TransitRouteDto.TransitRouteResponse transitRoute = getTransitRoute(
+                        new TransitRouteDto.TransitRouteRequest(
+                                request.startLat(),
+                                request.startLng(),
+                                request.endLat(),
+                                request.endLng()
+                        )
+                );
+                yield new TransitRouteDto.RouteResponse("transit", transitRoute.summary(), transitRoute.legs());
+            }
+            case "car" -> fetchTmapGeoJsonRoute(request, "car", CAR_ROUTE_URL);
+            default -> fetchTmapGeoJsonRoute(request, "walk", PEDESTRIAN_ROUTE_URL);
+        };
+    }
+
     public TransitRouteDto.TransitRouteResponse getTransitRoute(TransitRouteDto.TransitRouteRequest request) {
-        String mode = normalizeRouteMode(request.mode());
-        if (!"transit".equals(mode)) {
-            throw new IllegalStateException("Only transit route is supported in v1.");
-        }
         if (tmapTransitAppKey == null || tmapTransitAppKey.isBlank()) {
             throw new IllegalStateException("TMAP transit app key is not configured.");
         }
@@ -70,10 +87,133 @@ public class TransitRouteService {
         }
 
         String body = new String(response.getBody(), StandardCharsets.UTF_8);
-        return parseTransitRoute(body, mode);
+        return parseTransitRoute(body);
     }
 
-    private TransitRouteDto.TransitRouteResponse parseTransitRoute(String body, String mode) {
+    private TransitRouteDto.RouteResponse fetchTmapGeoJsonRoute(
+            TransitRouteDto.RouteRequest request,
+            String mode,
+            String url
+    ) {
+        if (tmapTransitAppKey == null || tmapTransitAppKey.isBlank()) {
+            throw new IllegalStateException("TMAP route app key is not configured.");
+        }
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        headers.set("appKey", tmapTransitAppKey);
+
+        Map<String, Object> payload = "car".equals(mode)
+                ? Map.ofEntries(
+                        Map.entry("startX", request.startLng()),
+                        Map.entry("startY", request.startLat()),
+                        Map.entry("endX", request.endLng()),
+                        Map.entry("endY", request.endLat()),
+                        Map.entry("reqCoordType", "WGS84GEO"),
+                        Map.entry("resCoordType", "WGS84GEO"),
+                        Map.entry("sort", "index"),
+                        Map.entry("carType", 0),
+                        Map.entry("endRpFlag", "G")
+                )
+                : Map.ofEntries(
+                        Map.entry("startX", request.startLng()),
+                        Map.entry("startY", request.startLat()),
+                        Map.entry("endX", request.endLng()),
+                        Map.entry("endY", request.endLat()),
+                        Map.entry("reqCoordType", "WGS84GEO"),
+                        Map.entry("resCoordType", "WGS84GEO"),
+                        Map.entry("sort", "index"),
+                        Map.entry("startName", "현재 위치"),
+                        Map.entry("endName", "도착지"),
+                        Map.entry("searchOption", "0")
+                );
+
+        ResponseEntity<byte[]> response = restTemplate.exchange(
+                url,
+                HttpMethod.POST,
+                new HttpEntity<>(payload, headers),
+                byte[].class
+        );
+
+        if (!response.getStatusCode().is2xxSuccessful() || response.getBody() == null) {
+            throw new IllegalStateException("TMAP route request failed: " + response.getStatusCode());
+        }
+
+        String body = new String(response.getBody(), StandardCharsets.UTF_8);
+        return parseTmapGeoJsonRoute(body, mode);
+    }
+
+    private TransitRouteDto.RouteResponse parseTmapGeoJsonRoute(String body, String mode) {
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(body);
+            JsonNode features = root.path("features");
+            if (!features.isArray() || features.isEmpty()) {
+                throw new IllegalStateException("TMAP route result is empty.");
+            }
+
+            List<TransitRouteDto.Point> polyline = new ArrayList<>();
+            List<String> instructions = new ArrayList<>();
+            int totalDistanceM = 0;
+            int totalTimeSec = 0;
+
+            for (JsonNode feature : features) {
+                JsonNode properties = feature.path("properties");
+                if (totalDistanceM == 0) {
+                    totalDistanceM = properties.path("totalDistance").asInt(0);
+                }
+                if (totalTimeSec == 0) {
+                    totalTimeSec = properties.path("totalTime").asInt(0);
+                }
+
+                String description = properties.path("description").asText("").trim();
+                if (!description.isBlank()) {
+                    instructions.add(description);
+                }
+
+                JsonNode geometry = feature.path("geometry");
+                if ("LineString".equalsIgnoreCase(geometry.path("type").asText(""))) {
+                    appendGeoJsonLineStringPoints(geometry.path("coordinates"), polyline);
+                }
+            }
+
+            if (polyline.size() < 2) {
+                throw new IllegalStateException("TMAP route line is empty.");
+            }
+
+            if (totalDistanceM == 0) {
+                totalDistanceM = (int) Math.round(sumPolylineDistance(polyline));
+            }
+
+            TransitRouteDto.Summary summary = new TransitRouteDto.Summary(
+                    totalTimeSec,
+                    totalDistanceM,
+                    "walk".equals(mode) ? totalTimeSec : null,
+                    "walk".equals(mode) ? totalDistanceM : null,
+                    null,
+                    null
+            );
+            TransitRouteDto.Leg leg = new TransitRouteDto.Leg(
+                    "car".equals(mode) ? "CAR" : "WALK",
+                    "",
+                    "car".equals(mode) ? "#6B7280" : "#111827",
+                    "현재 위치",
+                    "도착지",
+                    totalDistanceM,
+                    totalTimeSec,
+                    0,
+                    instructions,
+                    polyline,
+                    List.of()
+            );
+
+            return new TransitRouteDto.RouteResponse(mode, summary, List.of(leg));
+        } catch (Exception exception) {
+            throw new IllegalStateException("Failed to parse TMAP route response.", exception);
+        }
+    }
+
+    private TransitRouteDto.TransitRouteResponse parseTransitRoute(String body) {
         try {
             JsonNode root = OBJECT_MAPPER.readTree(body);
             JsonNode itinerary = root.path("metaData").path("plan").path("itineraries").path(0);
@@ -95,18 +235,10 @@ public class TransitRouteService {
                 legs.add(parseLeg(legNode));
             }
 
-            return new TransitRouteDto.TransitRouteResponse(mode, summary, legs);
+            return new TransitRouteDto.TransitRouteResponse(summary, legs);
         } catch (Exception exception) {
             throw new IllegalStateException("Failed to parse TMAP transit response.", exception);
         }
-    }
-
-    private String normalizeRouteMode(String mode) {
-        String normalized = mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
-        return switch (normalized) {
-            case "walk", "car" -> normalized;
-            default -> "transit";
-        };
     }
 
     private TransitRouteDto.Leg parseLeg(JsonNode legNode) {
@@ -147,13 +279,62 @@ public class TransitRouteService {
             for (JsonNode stepNode : legNode.path("steps")) {
                 appendLineStringPoints(stepNode.path("linestring").asText(""), deduped, points);
             }
+            if (points.size() < 2) {
+                appendLegEndpointPoints(legNode, deduped, points);
+            }
             return points;
         }
 
         Set<String> deduped = new LinkedHashSet<>();
         List<TransitRouteDto.Point> points = new ArrayList<>();
         appendLineStringPoints(legNode.path("passShape").path("linestring").asText(""), deduped, points);
+        if (points.size() < 2) {
+            appendLegEndpointPoints(legNode, deduped, points);
+        }
         return points;
+    }
+
+    private void appendLegEndpointPoints(
+            JsonNode legNode,
+            Set<String> deduped,
+            List<TransitRouteDto.Point> points
+    ) {
+        appendNamedPoint(legNode.path("start"), deduped, points);
+        appendNamedPoint(legNode.path("end"), deduped, points);
+    }
+
+    private void appendNamedPoint(
+            JsonNode node,
+            Set<String> deduped,
+            List<TransitRouteDto.Point> points
+    ) {
+        double lat = firstCoordinate(node, "lat", "y");
+        double lng = firstCoordinate(node, "lon", "lng", "x");
+        if (!Double.isFinite(lat) || !Double.isFinite(lng) || lat == 0 || lng == 0) {
+            return;
+        }
+
+        String key = String.format(Locale.US, "%.7f,%.7f", lat, lng);
+        if (deduped.add(key)) {
+            points.add(new TransitRouteDto.Point(lat, lng));
+        }
+    }
+
+    private double firstCoordinate(JsonNode node, String... fieldNames) {
+        for (String fieldName : fieldNames) {
+            JsonNode value = node.path(fieldName);
+            if (value.isNumber()) {
+                return value.asDouble();
+            }
+            if (value.isTextual()) {
+                try {
+                    return Double.parseDouble(value.asText());
+                } catch (NumberFormatException ignored) {
+                    // Try the next candidate field.
+                }
+            }
+        }
+        return Double.NaN;
     }
 
     private void appendLineStringPoints(
@@ -183,6 +364,44 @@ public class TransitRouteService {
                 // Ignore malformed points and keep the rest of the route.
             }
         }
+    }
+
+    private void appendGeoJsonLineStringPoints(JsonNode coordinatesNode, List<TransitRouteDto.Point> points) {
+        if (!coordinatesNode.isArray()) {
+            return;
+        }
+
+        for (JsonNode coordinate : coordinatesNode) {
+            if (!coordinate.isArray() || coordinate.size() < 2) {
+                continue;
+            }
+
+            double lng = coordinate.path(0).asDouble();
+            double lat = coordinate.path(1).asDouble();
+            points.add(new TransitRouteDto.Point(lat, lng));
+        }
+    }
+
+    private double sumPolylineDistance(List<TransitRouteDto.Point> points) {
+        double distance = 0;
+        for (int index = 1; index < points.size(); index++) {
+            TransitRouteDto.Point previous = points.get(index - 1);
+            TransitRouteDto.Point current = points.get(index);
+            distance += distanceMeters(previous.lat(), previous.lng(), current.lat(), current.lng());
+        }
+        return distance;
+    }
+
+    private double distanceMeters(double lat1, double lng1, double lat2, double lng2) {
+        double earthRadius = 6371000;
+        double dLat = Math.toRadians(lat2 - lat1);
+        double dLng = Math.toRadians(lng2 - lng1);
+        double a = Math.sin(dLat / 2) * Math.sin(dLat / 2)
+                + Math.cos(Math.toRadians(lat1))
+                * Math.cos(Math.toRadians(lat2))
+                * Math.sin(dLng / 2)
+                * Math.sin(dLng / 2);
+        return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     }
 
     private List<TransitRouteDto.Station> parseStations(JsonNode stationsNode) {
@@ -260,7 +479,7 @@ public class TransitRouteService {
             case "BUS" -> "#2E8B57";
             case "SUBWAY" -> "#3B82F6";
             case "EXPRESSBUS", "TRAIN", "AIRPLANE", "FERRY" -> "#8B5CF6";
-            default -> "#6B7280";
+            default -> "#111827";
         };
     }
 
@@ -271,5 +490,13 @@ public class TransitRouteService {
             }
         }
         return "";
+    }
+
+    private String normalizeRequestMode(String mode) {
+        String normalized = mode == null ? "" : mode.trim().toLowerCase(Locale.ROOT);
+        if ("car".equals(normalized) || "transit".equals(normalized) || "walk".equals(normalized)) {
+            return normalized;
+        }
+        return "walk";
     }
 }

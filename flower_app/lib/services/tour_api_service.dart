@@ -175,6 +175,49 @@ class TourApiService {
     return _dedupeTouristSpots(_parseTouristSpotList(response.body));
   }
 
+  Future<List<TouristSpotData>> getNationwideFlowerTouristSpots({
+    int maxResults = 300,
+    int rowsPerKeyword = 35,
+  }) async {
+    final List<TouristSpotData> merged = <TouristSpotData>[];
+    final List<String> keywords = _touristSpotKeywords
+        .where((String keyword) => !RegExp(r'^[a-zA-Z]+$').hasMatch(keyword))
+        .take(12)
+        .toList();
+
+    for (final String keyword in keywords) {
+      if (merged.length >= maxResults) break;
+      try {
+        final Map<String, String> params = <String, String>{
+          'serviceKey': serviceKey,
+          'numOfRows': '$rowsPerKeyword',
+          'pageNo': '1',
+          'MobileOS': 'ETC',
+          'MobileApp': 'FlowerApp',
+          '_type': 'json',
+          'keyword': keyword,
+          'arrange': 'A',
+          'contentTypeId': '12',
+        };
+        final Uri uri = Uri.parse(
+          '$_baseUrl/searchKeyword2',
+        ).replace(queryParameters: params);
+        final http.Response response = await _client
+            .get(uri)
+            .timeout(const Duration(seconds: 15));
+        if (response.statusCode != 200) continue;
+        merged.addAll(_parseTouristSpotList(response.body));
+      } catch (_) {
+        // Keep partial nationwide results from other keywords.
+      }
+    }
+
+    final List<TouristSpotData> results = _dedupeTouristSpots(merged);
+    return results.length > maxResults
+        ? results.take(maxResults).toList()
+        : results;
+  }
+
   Future<List<FestivalData>> _fetchFlowerKeywordFestivals({
     required DateTime today,
     required int pageNo,
