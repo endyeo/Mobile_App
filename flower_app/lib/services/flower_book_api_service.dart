@@ -1,6 +1,6 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import '../api_config.dart';
+import 'package:dio/dio.dart';
+
+import 'api_client.dart';
 
 class FlowerBookItem {
   final int id;
@@ -88,43 +88,43 @@ class FlowerBookDetail {
 }
 
 class FlowerBookApiService {
-  static String get _base => ApiConfig.backendBaseUrl();
-
   static Future<List<FlowerBookItem>> getByMonth(int month) async {
-    final res = await http.get(
-      Uri.parse('$_base/api/v1/flowers/monthly/$month'),
-    ).timeout(const Duration(seconds: 10));
-
-    if (res.statusCode == 200) {
-      final body = jsonDecode(res.body);
-      final data = body['data'] as List;
-      return data.map((e) => FlowerBookItem.fromJson(e as Map<String, dynamic>)).toList();
+    final Response<dynamic> response = await ApiClient.dio.get(
+      '/api/v1/flowers/monthly/$month',
+    );
+    if (response.statusCode == 200 && response.data is Map) {
+      final List data = (response.data as Map)['data'] as List;
+      return data
+          .map((e) => FlowerBookItem.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
     throw Exception('꽃 목록을 불러오지 못했습니다.');
   }
 
   static Future<FlowerBookDetail> getDetail(int id) async {
-    final res = await http.get(
-      Uri.parse('$_base/api/v1/flowers/$id'),
-    ).timeout(const Duration(seconds: 10));
-
-    if (res.statusCode == 200) {
-      final body = jsonDecode(res.body);
-      return FlowerBookDetail.fromJson(body['data'] as Map<String, dynamic>);
+    final Response<dynamic> response = await ApiClient.dio.get(
+      '/api/v1/flowers/$id',
+    );
+    if (response.statusCode == 200 && response.data is Map) {
+      return FlowerBookDetail.fromJson(
+        (response.data as Map)['data'] as Map<String, dynamic>,
+      );
     }
     throw Exception('꽃 상세 정보를 불러오지 못했습니다.');
   }
 
   static Future<List<FlowerBookItem>> search(String keyword) async {
-    final res = await http.get(
-      Uri.parse('$_base/api/v1/flowers/search?keyword=${Uri.encodeComponent(keyword)}'),
-    ).timeout(const Duration(seconds: 10));
-
-    if (res.statusCode == 200) {
-      final body = jsonDecode(res.body);
-      final data = (body['data']['flowers']) as List;
-      return data.map((e) => FlowerBookItem.fromJson(e as Map<String, dynamic>)).toList();
+    final Response<dynamic> response = await ApiClient.dio.get(
+      '/api/v1/flowers/search',
+      queryParameters: <String, dynamic>{'keyword': keyword},
+    );
+    if (response.statusCode == 200 && response.data is Map) {
+      final Map data = (response.data as Map)['data'] as Map;
+      final List flowers = data['flowers'] as List;
+      return flowers
+          .map((e) => FlowerBookItem.fromJson(e as Map<String, dynamic>))
+          .toList();
     }
-    return [];
+    return <FlowerBookItem>[];
   }
 }

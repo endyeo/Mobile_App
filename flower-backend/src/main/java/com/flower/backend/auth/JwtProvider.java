@@ -88,6 +88,15 @@ public class JwtProvider {
         }
     }
 
+    // 토큰 type 추출 ("access" | "refresh" | "temp")
+    public String getTokenType(String token) {
+        try {
+            return getClaims(token).get("type", String.class);
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     // Access Token 만료 시간(초) 반환
     public long getAccessTokenValidSeconds() {
         return accessTokenValidMs / 1000;

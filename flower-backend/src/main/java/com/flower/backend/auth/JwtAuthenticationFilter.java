@@ -32,7 +32,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         String token = resolveToken(request);
 
         // 2. 토큰이 있고 유효한 경우 → SecurityContext에 인증 정보 등록
-        if (StringUtils.hasText(token) && jwtProvider.validateToken(token)) {
+        //    단, type=access 토큰만 보호 API 인증으로 인정 (refresh/temp 토큰 거부)
+        if (StringUtils.hasText(token) && jwtProvider.validateToken(token)
+                && "access".equals(jwtProvider.getTokenType(token))) {
             try {
                 Long userId = jwtProvider.getUserId(token);
 

@@ -31,10 +31,12 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   final Set<int> _togglingLike = <int>{};
   final Set<int> _togglingSave = <int>{};
   final ScrollController _scrollController = ScrollController();
+  late bool _initialScrollDone;
 
   @override
   void initState() {
     super.initState();
+    _initialScrollDone = widget.initialPostId == null;
     _scrollController.addListener(_onScroll);
     _loadPosts();
   }
@@ -84,11 +86,11 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
   List<CommunityPost> _filterByInitialQuery(List<CommunityPost> posts) {
     final query = widget.initialQuery?.trim().toLowerCase();
     if (query == null || query.isEmpty) return posts;
+
     return posts.where((post) {
       return post.content.toLowerCase().contains(query) ||
-          (post.flowerSpecies ?? '').toLowerCase().contains(query) ||
-          (post.plantName ?? '').toLowerCase().contains(query) ||
-          (post.address ?? '').toLowerCase().contains(query);
+          (post.displaySpecies?.toLowerCase().contains(query) ?? false) ||
+          (post.address?.toLowerCase().contains(query) ?? false);
     }).toList();
   }
 
@@ -115,16 +117,40 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
 
   void _scrollToInitialPost() {
     if (widget.initialPostId == null) return;
+    final int index = _posts.indexWhere((p) => p.id == widget.initialPostId);
+    if (index < 0) {
+      if (mounted) setState(() => _initialScrollDone = true);
+      return;
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final key = _postKeys[widget.initialPostId!];
-      if (key?.currentContext != null) {
-        Scrollable.ensureVisible(
-          key!.currentContext!,
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeInOut,
-          alignment: 0.1,
-        );
+      if (!_scrollController.hasClients) {
+        if (mounted) setState(() => _initialScrollDone = true);
+        return;
       }
+
+      // 1단계: 카드 추정 높이로 즉시 점프 → viewport에 끌어옴
+      const double estimatedCardHeight = 480.0;
+      final double rough = (estimatedCardHeight * index).clamp(
+        0.0,
+        _scrollController.position.maxScrollExtent,
+      );
+      _scrollController.jumpTo(rough);
+
+      // 2단계: 다음 frame에 GlobalKey 잡히면 정확한 위치로 즉시 보정
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final key = _postKeys[widget.initialPostId!];
+        if (key?.currentContext != null) {
+          Scrollable.ensureVisible(
+            key!.currentContext!,
+            duration: Duration.zero,
+            alignment: 0.1,
+          );
+        }
+        // 정확한 위치 확정 → ListView fade-in으로 등장 (offset 0이 사용자에게 안 보임)
+        setState(() => _initialScrollDone = true);
+      });
     });
   }
 
@@ -248,31 +274,35 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
               onRefresh: _loadPosts,
               child: _posts.isEmpty
                   ? _buildEmpty(colors)
-                  : ListView.builder(
-                      controller: _scrollController,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 16,
-                        vertical: 8,
-                      ),
-                      itemCount: _posts.length + (_hasNext ? 1 : 0),
-                      itemBuilder: (context, index) {
-                        if (index == _posts.length) {
-                          return Padding(
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                            child: Center(
-                              child: CircularProgressIndicator(
-                                color: colors.primary,
+                  : AnimatedOpacity(
+                      opacity: _initialScrollDone ? 1.0 : 0.0,
+                      duration: const Duration(milliseconds: 120),
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 8,
+                        ),
+                        itemCount: _posts.length + (_hasNext ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index == _posts.length) {
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  color: colors.primary,
+                                ),
                               ),
-                            ),
+                            );
+                          }
+                          final post = _posts[index];
+                          _postKeys[post.id] ??= GlobalKey();
+                          return KeyedSubtree(
+                            key: _postKeys[post.id],
+                            child: _buildPostCard(post, colors, index),
                           );
-                        }
-                        final post = _posts[index];
-                        _postKeys[post.id] ??= GlobalKey();
-                        return KeyedSubtree(
-                          key: _postKeys[post.id],
-                          child: _buildPostCard(post, colors, index),
-                        );
-                      },
+                        },
+                      ),
                     ),
             ),
     );

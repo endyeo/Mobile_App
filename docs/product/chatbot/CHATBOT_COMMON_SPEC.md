@@ -1,9 +1,10 @@
 # AI 챗봇 공통 명세
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 SSE 스트림, 음성 입력, GENERAL/fallback 라우팅, flower_book 조회 규칙을 반영함. -->
 <!-- 반영: 2026-05-21 13:24 - planner domain/task 구조, 축제 도메인, 길찾기 액션, 꽃 정보 도구 확장, 로컬 보정 제거, ChatFloatingButton 위치 전달 반영 -->
+<!-- 반영: 2026-05-22 automation - ChatbotService 프롬프트 계층 분리와 docs/chatbot 프롬프트 명세 연결을 현재 코드 기준으로 반영함. -->
 
-- 문서 버전: v1.4.0
-- 최종 반영일: 2026-05-21
+- 문서 버전: v1.4.1
+- 최종 반영일: 2026-05-22
 
 ## 1. 목적
 
@@ -15,6 +16,11 @@ AI 챗봇은 사용자의 자연어 요청을 분석해 꽃 데이터, 커뮤니
 - `tools/FLOWER_AGENT_SPEC.md`
 - `tools/COMMUNITY_AGENT_SPEC.md`
 - `tools/FESTIVAL_AGENT_SPEC.md` <!-- 반영: 2026-05-21 13:24 -->
+
+프롬프트 문서:
+
+- `docs/chatbot/CHATBOT_PROMPT_SPEC.md` - planner/repair/answer/fallback 프롬프트 구조와 계약 <!-- 반영: 2026-05-22 automation -->
+- `docs/chatbot/CHATBOT_PROMPT_KO_SPEC.md` - 현재 코드 프롬프트의 한국어 검토용 해설 <!-- 반영: 2026-05-22 automation -->
 
 ## 도구 설계 원칙
 
@@ -30,7 +36,7 @@ AI 챗봇은 사용자의 자연어 요청을 분석해 꽃 데이터, 커뮤니
 백엔드 구성:
 
 - `ChatbotController`: `/chatbot/message`, `/chatbot/message/stream`, `/chatbot/session/{sessionId}` 제공
-- `ChatbotService`: 세션 관리, planner `domain/task` 기반 라우팅, 도구 실행, Spring AI 응답 생성 <!-- 반영: 2026-05-21 13:24 -->
+- `ChatbotService`: 세션 관리, planner `domain/task` 기반 라우팅, 도구 실행, Spring AI 응답 생성. 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()`로 나뉘고, answer prompt는 다시 base/format/domain style 조합으로 생성된다. <!-- 반영: 2026-05-22 automation -->
 - `ChatActionValidator`: planner가 만든 액션만 허용 목록 기준으로 정규화하고 중복을 제거
 - `RouteIntent`: `GENERAL`, `MAP`, `FLOWER`, `FLOWER_GROW`, `COMMUNITY`, `WALK`, `SAVED`, `QUEST`, `SHOP`, `FESTIVAL` <!-- 반영: 2026-05-21 13:24 -->
 - `ChatbotActionContext`: request scope 도구 실행 상태와 액션 저장

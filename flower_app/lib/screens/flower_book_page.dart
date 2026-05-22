@@ -3,14 +3,14 @@ import '../theme/season_theme.dart';
 import '../services/flower_book_api_service.dart';
 
 class FlowerBookPage extends StatefulWidget {
+  final String? initialQuery;
+  final int? initialFlowerBookId;
+
   const FlowerBookPage({
     super.key,
     this.initialQuery,
     this.initialFlowerBookId,
   });
-
-  final String? initialQuery;
-  final int? initialFlowerBookId;
 
   @override
   State<FlowerBookPage> createState() => _FlowerBookPageState();
@@ -27,10 +27,10 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
   @override
   void initState() {
     super.initState();
-    final initialQuery = widget.initialQuery?.trim();
-    if (initialQuery != null && initialQuery.isNotEmpty) {
-      _searchController.text = initialQuery;
-      _search(initialQuery);
+    final query = widget.initialQuery?.trim();
+    if (query != null && query.isNotEmpty) {
+      _searchController.text = query;
+      _search(query);
     } else {
       _loadFlowers();
     }
@@ -92,28 +92,27 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
   }
 
   Future<void> _openInitialFlowerIfNeeded() async {
-    final flowerId = widget.initialFlowerBookId;
-    if (flowerId == null) return;
+    final id = widget.initialFlowerBookId;
+    if (id == null) return;
+
     try {
-      final detail = await FlowerBookApiService.getDetail(flowerId);
+      final detail = await FlowerBookApiService.getDetail(id);
       if (!mounted) return;
-      final item = FlowerBookItem(
+      final flower = FlowerBookItem(
         id: detail.id,
         name: detail.name,
         categoryName: detail.categoryName,
         categoryEmoji: detail.categoryEmoji,
+        flowerLanguage: detail.flowerLanguage,
         bloomMonth: detail.bloomMonth,
         bloomDay: detail.bloomDay,
-        flowerLanguage: detail.flowerLanguage,
         imageUrl: detail.imageUrl,
       );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        _showFlowerDetail(item, SeasonTheme.getColors());
+        _showFlowerDetail(flower, SeasonTheme.getColors());
       });
-    } catch (_) {
-      // 상세 이동은 보조 동작이므로 실패해도 목록 화면은 유지한다.
-    }
+    } catch (_) {}
   }
 
   @override

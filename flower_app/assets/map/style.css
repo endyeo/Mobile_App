@@ -257,6 +257,14 @@ body {
   max-height: 88px;
 }
 
+/* 최근 검색어 패널만 검색바 바로 아래 상단에 배치 (화면 중앙·하단 가리지 않게) */
+.search-results-panel.recent {
+  top: var(--route-panel-top, 130px);
+  bottom: auto;
+  max-height: min(45vh, 320px);
+  overflow-y: auto;
+}
+
 .search-results-header {
   display: flex;
   align-items: center;

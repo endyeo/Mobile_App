@@ -5,8 +5,12 @@ import com.flower.backend.common.response.ApiResponse;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/auth")
@@ -49,6 +53,26 @@ public class AuthController {
         Long userId = (Long) auth.getPrincipal();
         authService.updateLocation(userId, body.get("latitude"), body.get("longitude"));
         return ResponseEntity.ok(ApiResponse.ok(null));
+    }
+
+    @PatchMapping("/profile/nickname")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> updateNickname(
+            @RequestBody Map<String, String> body) {
+        var auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        Long userId = (Long) auth.getPrincipal();
+        return ResponseEntity.ok(ApiResponse.ok(
+                authService.updateNickname(userId, body.get("nickname"))));
+    }
+
+    @PostMapping(value = "/profile/image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> updateProfileImage(
+            @RequestParam("image") MultipartFile image) {
+        var auth = org.springframework.security.core.context.SecurityContextHolder
+                .getContext().getAuthentication();
+        Long userId = (Long) auth.getPrincipal();
+        return ResponseEntity.ok(ApiResponse.ok(
+                authService.updateProfileImage(userId, image)));
     }
 
     @PostMapping("/logout")

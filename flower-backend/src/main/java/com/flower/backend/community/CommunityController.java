@@ -45,6 +45,14 @@ public class CommunityController {
         return ResponseEntity.ok(ApiResponse.ok(communityService.toggleLike(getUserId(), postId)));
     }
 
+    @GetMapping("/posts/liked")
+    public ResponseEntity<ApiResponse<FeedResponse>> getLikedPosts(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int limit) {
+        return ResponseEntity.ok(ApiResponse.ok(
+                communityService.getLikedPosts(getUserId(), page, limit)));
+    }
+
     @PostMapping("/posts/{postId}/save")
     public ResponseEntity<ApiResponse<Map<String, Object>>> toggleSave(@PathVariable Long postId) {
         return ResponseEntity.ok(ApiResponse.ok(communityService.toggleSave(getUserId(), postId)));

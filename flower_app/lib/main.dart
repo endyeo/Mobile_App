@@ -6,25 +6,24 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/profile_setup_screen.dart';
+import 'services/api_client.dart';
 import 'services/step_notification_service.dart';
 import 'theme/season_theme.dart';
-import 'api_config.dart';
 
-final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+final FlutterLocalNotificationsPlugin _localNotifications =
+    FlutterLocalNotificationsPlugin();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await dotenv.load(fileName: ".env");
-  try { await Firebase.initializeApp(); } catch (_) {}
 
+  // UI 분기 결정에 필요한 최소 작업만 동기로 (.env + 토큰 체크)
+  await dotenv.load(fileName: ".env");
   final prefs = await SharedPreferences.getInstance();
   final String? token = prefs.getString('accessToken');
 
-  // 토큰 만료 시 자동 로그아웃
   bool hasToken = false;
   if (token != null && token.isNotEmpty) {
     if (_isTokenExpired(token)) {
@@ -35,13 +34,25 @@ Future<void> main() async {
     }
   }
 
+  // UI 먼저 띄움 (검은 화면 시간 최소화)
+  runApp(OurTApp(hasToken: hasToken));
+
+  // 무거운 초기화는 UI가 뜨고 난 뒤 백그라운드로 실행
+  _initBackgroundTasks(prefs, hasToken);
+}
+
+Future<void> _initBackgroundTasks(
+  SharedPreferences prefs,
+  bool hasToken,
+) async {
+  try {
+    await Firebase.initializeApp();
+  } catch (_) {}
   await _initLocalNotifications();
   await StepNotificationService.initialize();
-  await _initFcm(prefs);
+  await _initFcm(prefs); // 네트워크 의존 — fire & forget OK
   await _requestLocationPermission();
   if (hasToken) await _sendLocationToServer(prefs);
-
-  runApp(OurTApp(hasToken: hasToken));
 }
 
 bool _isTokenExpired(String token) {
@@ -58,7 +69,9 @@ bool _isTokenExpired(String token) {
       debugPrint('[Auth] JWT exp 필드 없음');
       return true;
     }
-    return DateTime.fromMillisecondsSinceEpoch(exp * 1000).isBefore(DateTime.now());
+    return DateTime.fromMillisecondsSinceEpoch(
+      exp * 1000,
+    ).isBefore(DateTime.now());
   } catch (e) {
     debugPrint('[Auth] JWT 파싱 실패: $e');
     return true;
@@ -78,7 +91,9 @@ Future<void> _requestLocationPermission() async {
 
 Future<void> _initLocalNotifications() async {
   const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-  await _localNotifications.initialize(const InitializationSettings(android: android));
+  await _localNotifications.initialize(
+    const InitializationSettings(android: android),
+  );
 }
 
 Future<void> _initFcm(SharedPreferences prefs) async {
@@ -101,7 +116,8 @@ Future<void> _initFcm(SharedPreferences prefs) async {
         notification.body,
         const NotificationDetails(
           android: AndroidNotificationDetails(
-            'ourt_channel', 'OurT 알림',
+            'ourt_channel',
+            'OurT 알림',
             importance: Importance.high,
             priority: Priority.high,
           ),
@@ -121,18 +137,54 @@ Future<void> _sendLocationToServer(SharedPreferences prefs) async {
     );
     final token = prefs.getString('accessToken') ?? '';
     if (token.isEmpty) return;
-    await http.post(
-      Uri.parse('${ApiConfig.backendBaseUrl()}/api/v1/auth/location'),
-      headers: {'Authorization': 'Bearer $token', 'Content-Type': 'application/json'},
-      body: jsonEncode({'latitude': pos.latitude, 'longitude': pos.longitude}),
-    ).timeout(const Duration(seconds: 5));
+    await ApiClient.dio.post(
+      '/api/v1/auth/location',
+      data: <String, dynamic>{
+        'latitude': pos.latitude,
+        'longitude': pos.longitude,
+      },
+    );
   } catch (_) {}
 }
 
-class OurTApp extends StatelessWidget {
+class OurTApp extends StatefulWidget {
   final bool hasToken;
 
   const OurTApp({super.key, this.hasToken = false});
+
+  @override
+  State<OurTApp> createState() => _OurTAppState();
+}
+
+class _OurTAppState extends State<OurTApp> {
+  final GlobalKey<NavigatorState> _navigatorKey = GlobalKey<NavigatorState>();
+  bool _expiredHandled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // refresh도 실패한 401 → 토큰 정리 + 로그인 화면 강제 이동
+    ApiClient.onSessionExpired = _handleSessionExpired;
+  }
+
+  Future<void> _handleSessionExpired() async {
+    if (_expiredHandled) return;
+    _expiredHandled = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('accessToken');
+      await prefs.remove('refreshToken');
+      _navigatorKey.currentState?.pushNamedAndRemoveUntil(
+        '/login',
+        (_) => false,
+      );
+    } finally {
+      // 다음 만료에도 동작하도록 짧게 후 잠금 해제
+      Future<void>.delayed(const Duration(seconds: 2), () {
+        _expiredHandled = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -142,7 +194,8 @@ class OurTApp extends StatelessWidget {
       title: 'OurT',
       debugShowCheckedModeBanner: false,
       theme: colors.toThemeData(),
-      home: hasToken ? const MainScreen() : const LoginScreen(),
+      navigatorKey: _navigatorKey,
+      home: widget.hasToken ? const MainScreen() : const LoginScreen(),
       routes: {
         '/login': (context) => const LoginScreen(),
         '/profile-setup': (context) => const ProfileSetupScreen(),

@@ -1,8 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'dart:convert';
 import 'dart:io';
-import 'package:http/http.dart' as http;
-import '../api_config.dart';
+
+import 'api_client.dart';
 
 class CommunityPost {
   final int id;
@@ -44,10 +44,12 @@ class CommunityPost {
   /// 꽃 종류 표시용 — flowerSpecies(일반 게시글) 또는 plantName(꽃 명소) 둘 중 하나.
   /// "기타"는 인식 실패 fallback이라 표시 안 함.
   String? get displaySpecies {
-    final String? candidate = (flowerSpecies != null && flowerSpecies!.isNotEmpty)
+    final String? candidate =
+        (flowerSpecies != null && flowerSpecies!.isNotEmpty)
         ? flowerSpecies
         : plantName;
-    if (candidate == null || candidate.isEmpty || candidate == '기타') return null;
+    if (candidate == null || candidate.isEmpty || candidate == '기타')
+      return null;
     return candidate;
   }
 
@@ -78,37 +80,41 @@ class FeedResult {
   final int? nextCursor;
   final bool hasNext;
 
-  const FeedResult({required this.posts, this.nextCursor, this.hasNext = false});
+  const FeedResult({
+    required this.posts,
+    this.nextCursor,
+    this.hasNext = false,
+  });
 }
 
 class CommunityApiService {
-  static String get _baseUrl => '${ApiConfig.backendBaseUrl()}/api/v1/community';
+  static const String _basePath = '/api/v1/community';
 
+  /// accessToken 매개변수는 호환성을 위해 남겨두지만 사용하지 않음.
+  /// 인증 헤더는 ApiClient의 AuthInterceptor가 자동으로 첨부.
   static Future<FeedResult> getPosts(String accessToken, {int? cursor}) async {
     try {
-      final uri = Uri.parse('$_baseUrl/posts').replace(
-        queryParameters: {
-          if (cursor != null) 'cursor': cursor.toString(),
-          'limit': '10',
+      final Response<dynamic> response = await ApiClient.dio.get(
+        '$_basePath/posts',
+        queryParameters: <String, dynamic>{
+          if (cursor != null) 'cursor': cursor,
+          'limit': 10,
         },
       );
-      final response = await http.get(uri,
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 10));
-
-      if (response.statusCode == 200) {
-        final body = jsonDecode(response.body);
-        final data = body['data'] as Map<String, dynamic>;
-        final posts = (data['posts'] as List)
-            .map((e) => CommunityPost.fromJson(e as Map<String, dynamic>))
-            .toList();
+      if (response.statusCode == 200 && response.data is Map) {
+        final Map data = (response.data as Map)['data'] as Map;
+        final List posts = data['posts'] as List;
         return FeedResult(
-          posts: posts,
+          posts: posts
+              .map((e) => CommunityPost.fromJson(e as Map<String, dynamic>))
+              .toList(),
           nextCursor: data['nextCursor'] as int?,
           hasNext: data['hasNext'] as bool? ?? false,
         );
       }
-    } catch (e) { debugPrint('[API Error] $e'); }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
     return const FeedResult(posts: []);
   }
 
@@ -122,54 +128,87 @@ class CommunityApiService {
     String? address,
   }) async {
     try {
-      final request = http.MultipartRequest('POST', Uri.parse('$_baseUrl/posts'));
-      request.headers['Authorization'] = 'Bearer $accessToken';
-      request.fields['content'] = content;
-      if (flowerSpecies != null) request.fields['flowerSpecies'] = flowerSpecies;
-      if (latitude != null) request.fields['latitude'] = latitude.toString();
-      if (longitude != null) request.fields['longitude'] = longitude.toString();
-      if (address != null) request.fields['address'] = address;
-      if (image != null) {
-        request.files.add(await http.MultipartFile.fromPath('image', image.path));
+      final FormData form = FormData.fromMap(<String, dynamic>{
+        'content': content,
+        if (flowerSpecies != null) 'flowerSpecies': flowerSpecies,
+        if (latitude != null) 'latitude': latitude.toString(),
+        if (longitude != null) 'longitude': longitude.toString(),
+        if (address != null) 'address': address,
+        if (image != null) 'image': await MultipartFile.fromFile(image.path),
+      });
+      final Response<dynamic> response = await ApiClient.dio.post(
+        '$_basePath/posts',
+        data: form,
+      );
+      if (response.statusCode == 201 && response.data is Map) {
+        return CommunityPost.fromJson(
+          (response.data as Map)['data'] as Map<String, dynamic>,
+        );
       }
-
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 30));
-      final response = await http.Response.fromStream(streamedResponse);
-
-      if (response.statusCode == 201) {
-        final body = jsonDecode(response.body);
-        return CommunityPost.fromJson(body['data'] as Map<String, dynamic>);
-      }
-    } catch (e) { debugPrint('[API Error] $e'); }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
     return null;
   }
 
-  static Future<Map<String, dynamic>> toggleLike(String accessToken, int postId) async {
+  static Future<Map<String, dynamic>> toggleLike(
+    String accessToken,
+    int postId,
+  ) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/posts/$postId/like'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body)['data'] as Map<String, dynamic>;
+      final Response<dynamic> response = await ApiClient.dio.post(
+        '$_basePath/posts/$postId/like',
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        return ((response.data as Map)['data'] as Map).cast<String, dynamic>();
       }
-    } catch (e) { debugPrint('[API Error] $e'); }
-    return {};
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
+    return <String, dynamic>{};
   }
 
-  static Future<Map<String, dynamic>> toggleSave(String accessToken, int postId) async {
+  /// 내가 좋아요 한 게시글 목록 (최근 좋아요 순)
+  static Future<FeedResult> getLikedPosts({
+    int page = 0,
+    int limit = 20,
+  }) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/posts/$postId/save'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body)['data'] as Map<String, dynamic>;
+      final Response<dynamic> response = await ApiClient.dio.get(
+        '$_basePath/posts/liked',
+        queryParameters: <String, dynamic>{'page': page, 'limit': limit},
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        final Map data = (response.data as Map)['data'] as Map;
+        final List posts = data['posts'] as List;
+        return FeedResult(
+          posts: posts
+              .map((e) => CommunityPost.fromJson(e as Map<String, dynamic>))
+              .toList(),
+          nextCursor: data['nextCursor'] as int?,
+          hasNext: data['hasNext'] as bool? ?? false,
+        );
       }
-    } catch (e) { debugPrint('[API Error] $e'); }
-    return {};
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
+    return const FeedResult(posts: []);
   }
 
+  static Future<Map<String, dynamic>> toggleSave(
+    String accessToken,
+    int postId,
+  ) async {
+    try {
+      final Response<dynamic> response = await ApiClient.dio.post(
+        '$_basePath/posts/$postId/save',
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        return ((response.data as Map)['data'] as Map).cast<String, dynamic>();
+      }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
+    return <String, dynamic>{};
+  }
 }

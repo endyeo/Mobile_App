@@ -1,12 +1,13 @@
-import 'dart:convert';
+import 'dart:io';
+
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import '../api_config.dart';
+
+import 'api_client.dart';
 
 /// 백엔드 API와 OAuth 흐름을 관리하는 서비스.
 class AuthApiService {
-  static String get baseUrl =>
-      '${ApiConfig.backendBaseUrl(androidEmulator: defaultTargetPlatform == TargetPlatform.android)}/api/v1/auth';
+  static const String _basePath = '/api/v1/auth';
 
   // 모바일 OAuth 콜백 딥링크 스킴
   static const String callbackUrlScheme = 'ourt';
@@ -27,17 +28,11 @@ class AuthApiService {
     required String provider,
     required String authCode,
   }) async {
-    final url = '$baseUrl/oauth/$provider';
-    final response = await http.post(
-      Uri.parse(url),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'authCode': authCode,
-        'redirectUri': callbackUrl,
-      }),
+    final Response<dynamic> response = await ApiClient.dio.post(
+      '$_basePath/oauth/$provider',
+      data: <String, dynamic>{'authCode': authCode, 'redirectUri': callbackUrl},
     );
-
-    return jsonDecode(response.body);
+    return (response.data as Map).cast<String, dynamic>();
   }
 
   // ─── FCM 토큰 저장 ────────────────────────────────────────
@@ -45,33 +40,84 @@ class AuthApiService {
     required String accessToken,
     required String fcmToken,
   }) async {
-    await http.post(
-      Uri.parse('$baseUrl/fcm-token'),
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      },
-      body: jsonEncode({'fcmToken': fcmToken}),
+    await ApiClient.dio.post(
+      '$_basePath/fcm-token',
+      data: <String, dynamic>{'fcmToken': fcmToken},
     );
   }
 
   // ─── 프로필 설정 (신규 유저) ────────────────────────────────
-
+  /// tempToken으로 인증 → AuthInterceptor의 자동 access 첨부를 막기 위해
+  /// Authorization 헤더를 명시 전달 (이미 있으면 인터셉터가 덮어쓰지 않음).
   static Future<Map<String, dynamic>> setupProfile({
     required String tempToken,
     required String nickname,
     String? profileImageUrl,
   }) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/profile-setup'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
+    final Response<dynamic> response = await ApiClient.dio.post(
+      '$_basePath/profile-setup',
+      data: <String, dynamic>{
         'tempToken': tempToken,
         'nickname': nickname,
         'profileImageUrl': profileImageUrl,
-      }),
+      },
+      options: Options(
+        headers: <String, dynamic>{'Authorization': 'Bearer $tempToken'},
+      ),
     );
+    return (response.data as Map).cast<String, dynamic>();
+  }
 
-    return jsonDecode(response.body);
+  // ─── 닉네임 변경 ────────────────────────────────────────────
+  static Future<String?> updateNickname(String nickname) async {
+    try {
+      final Response<dynamic> response = await ApiClient.dio.patch(
+        '$_basePath/profile/nickname',
+        data: <String, dynamic>{'nickname': nickname},
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        final Map data = (response.data as Map)['data'] as Map;
+        return data['nickname'] as String?;
+      }
+    } catch (e) {
+      debugPrint('[Auth] 닉네임 변경 실패: $e');
+    }
+    return null;
+  }
+
+  // ─── 프로필 이미지 변경 ─────────────────────────────────────
+  static Future<String?> updateProfileImage(File image) async {
+    try {
+      final FormData form = FormData.fromMap(<String, dynamic>{
+        'image': await MultipartFile.fromFile(image.path),
+      });
+      final Response<dynamic> response = await ApiClient.dio.post(
+        '$_basePath/profile/image',
+        data: form,
+        options: Options(sendTimeout: const Duration(seconds: 30)),
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        final Map data = (response.data as Map)['data'] as Map;
+        return data['profileImageUrl'] as String?;
+      }
+    } catch (e) {
+      debugPrint('[Auth] 프로필 이미지 변경 실패: $e');
+    }
+    return null;
+  }
+
+  // ─── 로그아웃 (서버: FCM 토큰 초기화) ───────────────────────
+  /// 실패해도 클라이언트는 로그아웃 진행해야 하므로 예외는 던지지 않음.
+  static Future<bool> logout({required String accessToken}) async {
+    if (accessToken.isEmpty) return true;
+    try {
+      final Response<dynamic> response = await ApiClient.dio.post(
+        '$_basePath/logout',
+      );
+      return response.statusCode == 200;
+    } catch (e) {
+      debugPrint('[Auth] 로그아웃 API 실패(무시하고 진행): $e');
+      return false;
+    }
   }
 }

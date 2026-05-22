@@ -1,9 +1,10 @@
 # HAR_FLOWER 현재 프로젝트 명세
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 챗봇 SSE 스트림, 음성 입력, flower_book 조회 반영 상태를 갱신함. -->
 <!-- 반영: 2026-05-21 13:24 - 축제 도메인, 꽃 정보 도구 확장, 길찾기 액션, TransitRouteController, CommunityPostRepository, focusFlowerById, 위치 전달 반영 -->
+<!-- 반영: 2026-05-22 automation - ChatbotService 프롬프트 계층과 docs/chatbot 프롬프트 명세 문서 연결을 현재 코드 기준으로 갱신함. -->
 
-- 문서 버전: v1.3.0
-- 최종 반영일: 2026-05-21
+- 문서 버전: v1.3.1
+- 최종 반영일: 2026-05-22
 
 ## 1. 프로젝트 개요
 
@@ -67,7 +68,7 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 
 ### AI 챗봇
 
-챗봇은 사용자 메시지를 받아 planner의 `domain/task` 계약으로 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영한다. 상세 명세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`와 도구별 문서를 따른다. <!-- 반영: 2026-05-21 13:24 -->
+챗봇은 사용자 메시지를 받아 planner의 `domain/task` 계약으로 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영한다. `ChatbotService` 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()` 계층으로 분리되어 있으며, 구조/문장 규칙 상세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_KO_SPEC.md`를 함께 따른다. <!-- 반영: 2026-05-22 automation -->
 
 planner domain은 `flower_info`, `festival_info`, `community`, `map_place`, `app_navigation`, `unsupported`, `general`이며, 꽃 정보 도구는 `flower.getBasicInfo`, `flower.getMeaningAndBloom`, `flower.getGrowGuide`, `flower.recommendByMonth`, `flower.inferCandidates`를 포함한다. 축제 도구는 Tour API 기반 `festival.searchFlowerFestivals`를 사용한다. <!-- 반영: 2026-05-21 13:24 -->
 
@@ -101,6 +102,8 @@ Flutter의 `SavedApiService`는 `/api/v1/saved/posts`, `/api/v1/saved/spots` 계
 
 - 전체 현황: 이 문서
 - 챗봇 공통 동작: `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`
+- 챗봇 프롬프트 구조 명세: `docs/chatbot/CHATBOT_PROMPT_SPEC.md` <!-- 반영: 2026-05-22 automation -->
+- 챗봇 프롬프트 한국어 검토 명세: `docs/chatbot/CHATBOT_PROMPT_KO_SPEC.md` <!-- 반영: 2026-05-22 automation -->
 - 챗봇 지도 도구: `docs/product/chatbot/tools/MAP_AGENT_SPEC.md`
 - 챗봇 꽃/도감 도구: `docs/product/chatbot/tools/FLOWER_AGENT_SPEC.md`
 - 챗봇 커뮤니티 도구: `docs/product/chatbot/tools/COMMUNITY_AGENT_SPEC.md`

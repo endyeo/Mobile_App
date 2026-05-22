@@ -2,9 +2,13 @@
 package com.flower.backend.auth;
 
 import com.flower.backend.auth.AuthDto.*;
+import com.flower.backend.storage.StorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -12,6 +16,7 @@ public class AuthService {
 
     private final UserRepository userRepository;
     private final JwtProvider jwtProvider;
+    private final StorageService storageService;
 
     // 일반 회원가입/로그인 제거됨 (소셜 전용)
 
@@ -93,6 +98,37 @@ public class AuthService {
             user.updateLocation(latitude, longitude);
             userRepository.save(user);
         });
+    }
+
+    // ─── 닉네임 변경 ─────────────────────────────────────────────────────
+    @Transactional
+    public Map<String, Object> updateNickname(Long userId, String nickname) {
+        if (nickname == null || nickname.trim().isEmpty()) {
+            throw new AuthException("INVALID_NICKNAME", "닉네임을 입력해주세요.");
+        }
+        String trimmed = nickname.trim();
+        if (trimmed.length() < 2 || trimmed.length() > 10) {
+            throw new AuthException("INVALID_NICKNAME_LENGTH", "닉네임은 2~10자여야 합니다.");
+        }
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthException("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
+        user.updateNickname(trimmed);
+        userRepository.save(user);
+        return Map.of("nickname", trimmed);
+    }
+
+    // ─── 프로필 이미지 변경 ──────────────────────────────────────────────
+    @Transactional
+    public Map<String, Object> updateProfileImage(Long userId, MultipartFile image) {
+        if (image == null || image.isEmpty()) {
+            throw new AuthException("INVALID_IMAGE", "이미지가 비어있습니다.");
+        }
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new AuthException("USER_NOT_FOUND", "사용자를 찾을 수 없습니다."));
+        String url = storageService.upload(image);
+        user.updateProfileImage(url);
+        userRepository.save(user);
+        return Map.of("profileImageUrl", url);
     }
 
     // ─── 로그아웃 ────────────────────────────────────────────────────────

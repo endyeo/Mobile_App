@@ -1,7 +1,7 @@
-import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:http/http.dart' as http;
-import '../api_config.dart';
+
+import 'api_client.dart';
 
 class CommentItem {
   final int id;
@@ -36,38 +36,43 @@ class CommentItem {
 }
 
 class CommentApiService {
-  static String get _base => '${ApiConfig.backendBaseUrl()}/api/v1/community';
+  static const String _basePath = '/api/v1/community';
 
-  static Future<List<CommentItem>> getComments(int postId, {String? accessToken}) async {
+  /// accessToken은 호환성을 위해 남김. ApiClient AuthInterceptor가 자동 첨부.
+  static Future<List<CommentItem>> getComments(
+    int postId, {
+    String? accessToken,
+  }) async {
     try {
-      final headers = <String, String>{};
-      if (accessToken != null && accessToken.isNotEmpty) {
-        headers['Authorization'] = 'Bearer $accessToken';
-      }
-      final res = await http.get(
-        Uri.parse('$_base/posts/$postId/comments'),
-        headers: headers,
-      ).timeout(const Duration(seconds: 10));
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body)['data'] as List;
-        return data.map((e) => CommentItem.fromJson(e as Map<String, dynamic>)).toList();
+      final Response<dynamic> response = await ApiClient.dio.get(
+        '$_basePath/posts/$postId/comments',
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        final List data = (response.data as Map)['data'] as List;
+        return data
+            .map((e) => CommentItem.fromJson(e as Map<String, dynamic>))
+            .toList();
       }
     } catch (e) {
       debugPrint('[Comment] 댓글 조회 실패: $e');
     }
-    return [];
+    return <CommentItem>[];
   }
 
-  static Future<CommentItem?> addComment(String accessToken, int postId, String content) async {
+  static Future<CommentItem?> addComment(
+    String accessToken,
+    int postId,
+    String content,
+  ) async {
     try {
-      final res = await http.post(
-        Uri.parse('$_base/posts/$postId/comments'),
-        headers: {'Authorization': 'Bearer $accessToken', 'Content-Type': 'application/json'},
-        body: jsonEncode({'content': content}),
-      ).timeout(const Duration(seconds: 10));
-      if (res.statusCode == 201) {
-        final data = jsonDecode(res.body)['data'] as Map<String, dynamic>;
-        return CommentItem.fromJson(data);
+      final Response<dynamic> response = await ApiClient.dio.post(
+        '$_basePath/posts/$postId/comments',
+        data: <String, dynamic>{'content': content},
+      );
+      if (response.statusCode == 201 && response.data is Map) {
+        return CommentItem.fromJson(
+          (response.data as Map)['data'] as Map<String, dynamic>,
+        );
       }
     } catch (e) {
       debugPrint('[Comment] 댓글 작성 실패: $e');
@@ -75,13 +80,16 @@ class CommentApiService {
     return null;
   }
 
-  static Future<bool> deleteComment(String accessToken, int postId, int commentId) async {
+  static Future<bool> deleteComment(
+    String accessToken,
+    int postId,
+    int commentId,
+  ) async {
     try {
-      final res = await http.delete(
-        Uri.parse('$_base/posts/$postId/comments/$commentId'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      ).timeout(const Duration(seconds: 10));
-      return res.statusCode == 200;
+      final Response<dynamic> response = await ApiClient.dio.delete(
+        '$_basePath/posts/$postId/comments/$commentId',
+      );
+      return response.statusCode == 200;
     } catch (e) {
       debugPrint('[Comment] 댓글 삭제 실패: $e');
       return false;

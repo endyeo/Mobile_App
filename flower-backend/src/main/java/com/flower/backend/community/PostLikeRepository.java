@@ -1,13 +1,19 @@
 package com.flower.backend.community;
 
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
 import java.util.Set;
 
 public interface PostLikeRepository extends JpaRepository<PostLike, PostLikeId> {
 
     @Query("SELECT l.id.postId FROM PostLike l WHERE l.id.userId = :userId AND l.id.postId IN :postIds")
     Set<Long> findLikedPostIds(@Param("userId") Long userId, @Param("postIds") Set<Long> postIds);
+
+    /** 사용자가 좋아요 누른 게시글의 id 목록을 최근 좋아요 순으로 조회 */
+    @Query("SELECT l.id.postId FROM PostLike l WHERE l.id.userId = :userId ORDER BY l.createdAt DESC")
+    List<Long> findPostIdsByUserId(@Param("userId") Long userId, Pageable pageable);
 }

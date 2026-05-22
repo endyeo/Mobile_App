@@ -67,6 +67,10 @@ public class User {
         this.nickname = nickname;
     }
 
+    public void updateProfileImage(String url) {
+        this.profileImageUrl = url;
+    }
+
     public void updateFcmToken(String fcmToken) {
         this.fcmToken = fcmToken;
     }

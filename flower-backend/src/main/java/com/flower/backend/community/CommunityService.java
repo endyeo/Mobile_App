@@ -54,6 +54,34 @@ public class CommunityService {
                 .build();
     }
 
+    /** 사용자가 좋아요 누른 게시글을 최근 좋아요 순으로 조회. page는 0부터 시작. */
+    @Transactional(readOnly = true)
+    public FeedResponse getLikedPosts(Long userId, int page, int limit) {
+        var pageable = PageRequest.of(page, limit);
+        List<Long> orderedIds = likeRepository.findPostIdsByUserId(userId, pageable);
+        if (orderedIds.isEmpty()) {
+            return FeedResponse.builder().posts(List.of()).hasNext(false).build();
+        }
+
+        List<CommunityPost> posts = postRepository.findAllById(orderedIds);
+        // findAllById는 정렬 보장 안 함 → 좋아요 시간 순으로 다시 정렬
+        Map<Long, Integer> order = new java.util.HashMap<>();
+        for (int i = 0; i < orderedIds.size(); i++) order.put(orderedIds.get(i), i);
+        posts.sort(java.util.Comparator.comparingInt(p -> order.get(p.getId())));
+
+        Set<Long> postIdSet = new java.util.HashSet<>(orderedIds);
+        Set<Long> savedIds = savedPostRepository.findSavedPostIds(userId, postIdSet);
+        // 좋아요 한 목록이므로 모두 liked=true
+        Set<Long> likedIds = postIdSet;
+
+        boolean hasNext = orderedIds.size() == limit;
+        return FeedResponse.builder()
+                .posts(posts.stream().map(p -> toResponse(p, likedIds, savedIds)).collect(Collectors.toList()))
+                .nextCursor(hasNext ? (long) (page + 1) : null)
+                .hasNext(hasNext)
+                .build();
+    }
+
     @Transactional
     public PostResponse createPost(Long userId, String content, String flowerSpecies,
                                    MultipartFile image, Double latitude, Double longitude, String address) {
