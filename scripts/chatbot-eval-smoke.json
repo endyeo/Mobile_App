@@ -2,7 +2,7 @@
   {
     "id": "001",
     "message": "장미가 어떤 꽃이야?",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getBasicInfo"],
     "forbiddenActions": ["*"],
@@ -11,7 +11,7 @@
   {
     "id": "002",
     "message": "벚꽃 특징 알려줘",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getBasicInfo"],
     "forbiddenActions": ["*"],
@@ -20,7 +20,7 @@
   {
     "id": "003",
     "message": "튤립 학명과 설명 알려줘",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getBasicInfo"],
     "forbiddenActions": ["*"]
@@ -28,7 +28,7 @@
   {
     "id": "004",
     "message": "수국 꽃말 알려줘",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getMeaningAndBloom"],
     "forbiddenActions": ["*"],
@@ -37,7 +37,7 @@
   {
     "id": "005",
     "message": "매화는 언제 피어?",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getMeaningAndBloom"],
     "forbiddenActions": ["*"]
@@ -45,7 +45,7 @@
   {
     "id": "006",
     "message": "동백 개화시기 알려줘",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getMeaningAndBloom"],
     "forbiddenActions": ["*"]
@@ -53,7 +53,7 @@
   {
     "id": "007",
     "message": "장미 키우는 법 알려줘",
-    "expectedRoutes": ["FLOWER_GROW"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getGrowGuide"],
     "forbiddenActions": ["*"]
@@ -61,7 +61,7 @@
   {
     "id": "008",
     "message": "수국 물주기 알려줘",
-    "expectedRoutes": ["FLOWER_GROW"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getGrowGuide"],
     "forbiddenActions": ["*"]
@@ -69,7 +69,7 @@
   {
     "id": "009",
     "message": "라벤더 햇빛 관리 방법 알려줘",
-    "expectedRoutes": ["FLOWER_GROW"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getGrowGuide"],
     "forbiddenActions": ["*"]
@@ -77,7 +77,7 @@
   {
     "id": "010",
     "message": "이번 달에 피는 꽃 추천해줘",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.recommendByMonth"],
     "forbiddenActions": ["*"]
@@ -85,7 +85,7 @@
   {
     "id": "011",
     "message": "4월에 피는 꽃 추천해줘",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.recommendByMonth"],
     "forbiddenActions": ["*"]
@@ -93,7 +93,7 @@
   {
     "id": "012",
     "message": "분홍색 꽃인데 이름이 뭘까?",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.inferCandidates"],
     "forbiddenActions": ["*"]
@@ -101,7 +101,7 @@
   {
     "id": "013",
     "message": "이름 모르는 하얀 꽃이 있어",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.inferCandidates"],
     "forbiddenActions": ["*"]
@@ -109,14 +109,14 @@
   {
     "id": "014",
     "message": "안녕",
-    "expectedRoutes": ["GENERAL"],
+    "expectedRoutes": ["simple_chat"],
     "expectedActions": [],
     "expectedTools": []
   },
   {
     "id": "015",
     "message": "상점에서 아이템 사줘",
-    "expectedRoutes": ["SHOP"],
+    "expectedRoutes": ["unsupported"],
     "expectedActions": [],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]

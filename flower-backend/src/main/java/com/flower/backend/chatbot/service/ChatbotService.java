@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Supplier;
 import java.util.concurrent.ConcurrentHashMap;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -62,7 +63,7 @@ public class ChatbotService {
             CommunityTools communityTools,
             FestivalToolService festivalToolService,
             ObjectProvider<ChatClient.Builder> chatClientBuilderProvider,
-            @Value("${chatbot.openai.api-key:}") String openAiApiKey
+            @Value("${spring.ai.openai.api-key:}") String openAiApiKey
     ) {
         this.flowerToolService = flowerToolService;
         this.communityTools = communityTools;
@@ -85,6 +86,7 @@ public class ChatbotService {
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = UUID.randomUUID().toString();
         }
+        String requestId = resolveRequestId(request);
 
         String message = request.getMessage() == null ? "" : request.getMessage().trim();
         AgentExecution execution = routeAndExecute(message, request.getContext(), null);
@@ -109,6 +111,7 @@ public class ChatbotService {
                 .agentRun(execution.trace())
                 .toolResults(execution.toolResults())
                 .sessionId(sessionId)
+                .requestId(requestId)
                 .build();
     }
 
@@ -117,16 +120,18 @@ public class ChatbotService {
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = UUID.randomUUID().toString();
         }
+        String requestId = resolveRequestId(request);
+        StreamSender requestSender = (eventName, data) -> sender.send(eventName, withRequestId(data, requestId));
 
         String message = request.getMessage() == null ? "" : request.getMessage().trim();
-        sendStreamEvent(sender, "CONNECTED", Map.of("sessionId", sessionId));
-        sendStatus(sender, "CONNECTED", "SSE 연결이 확인되었습니다.");
+        sendStreamEvent(requestSender, "CONNECTED", Map.of("sessionId", sessionId));
+        sendStatus(requestSender, "CONNECTED", "SSE 연결이 확인되었습니다.");
 
-        AgentExecution execution = routeAndExecute(message, request.getContext(), sender);
+        AgentExecution execution = routeAndExecute(message, request.getContext(), requestSender);
         ChatAction primaryAction = execution.primaryAction();
         String localContext = execution.toPromptContext();
 
-        sendStatus(sender, "ANSWER", "답변을 종합하고 있어요.");
+        sendStatus(requestSender, "ANSWER", "답변을 종합하고 있어요.");
         String reply = callSpringAi(
                 message,
                 sessionId,
@@ -146,10 +151,11 @@ public class ChatbotService {
                 .agentRun(execution.trace())
                 .toolResults(execution.toolResults())
                 .sessionId(sessionId)
+                .requestId(requestId)
                 .build();
 
-        sendStreamEvent(sender, "FINAL_ANSWER", response);
-        sendStreamEvent(sender, "DONE", Map.of("reason", "completed"));
+        sendStreamEvent(requestSender, "FINAL_ANSWER", response);
+        sendStreamEvent(requestSender, "DONE", Map.of("reason", "completed"));
     }
 
     public void clearSession(String sessionId) {
@@ -166,7 +172,9 @@ public class ChatbotService {
         List<RouteIntent> intents = plan.intents() == null ? List.of() : plan.intents();
         String informationTask = normalizeInformationTask(plan.informationTask(), message, intents, plan.actions());
         boolean flowerBookRequested = actionsContainTarget(plan.actions(), "FLOWER_BOOK");
-        String route = intents.isEmpty() ? "GENERAL" : joinIntents(intents);
+        String route = plan.flow().isBlank()
+                ? (intents.isEmpty() ? "general" : joinIntents(intents))
+                : plan.flow();
         List<AgentStepTrace> steps = new ArrayList<>();
         List<ToolResult> toolResults = new ArrayList<>();
         List<ChatAction> actions = new ArrayList<>();
@@ -174,11 +182,12 @@ public class ChatbotService {
         if (keyword == null || keyword.isBlank()) {
             keyword = sanitizePlannerKeyword(extractKeyword(message));
         }
-        List<Flower> flowerResults = List.of();
         int step = 1;
 
-        steps.add(stepTrace(step++, "RouterAgent", "routeAndPlan", "SUCCESS",
-                plan.source() + "가 " + displayPlannerChoice(plan) + " 실행 계획을 선택했습니다."));
+        steps.add(stepTrace(step++, "RouterAgent", "selectFlow", "SUCCESS",
+                plan.source() + "가 flow=" + route + " 처리 흐름을 선택했습니다."));
+        steps.add(stepTrace(step++, "RolePlanner", "planForFlow", "SUCCESS",
+                displayPlannerChoice(plan) + " 실행 계획을 선택했습니다."));
         sendStreamEvent(streamSender, "CONTEXT_PLANNED", Map.of(
                 "route", route,
                 "message", "요청 맥락과 필요한 작업 계획을 확인했습니다."
@@ -208,38 +217,64 @@ public class ChatbotService {
         }
 
         boolean flowerIntent = hasFlowerIntent(intents);
-        ToolResult festivalResult = executeFestivalTask(plan, keyword, location, streamSender);
-        if (festivalResult != null) {
-            toolResults.add(festivalResult);
-            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", festivalResult));
-            steps.add(stepTrace(step++, "FestivalAgent", festivalResult.getTool(), "SUCCESS",
-                    festivalResult.getSummary()));
-        }
+        if (usesInformationToolLoop(route)) {
+            ToolLoopExecution loopExecution = executeInformationToolLoop(
+                    route,
+                    informationTask,
+                    keyword,
+                    message,
+                    plan,
+                    intents,
+                    actions,
+                    location,
+                    streamSender);
+            for (ToolResult result : loopExecution.toolResults()) {
+                toolResults.add(result);
+                sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", result));
+                steps.add(stepTrace(step++, agentForTool(result.getTool()), result.getTool(), toolStepStatus(result),
+                        result.getSummary()));
+            }
+            steps.add(stepTrace(step++, "EvidenceCheck", "checkEvidence", loopExecution.evidenceStatus().name(),
+                    loopExecution.evidenceMessage()));
+        } else {
+            ToolResult festivalResult = executeFestivalTask(plan, keyword, location, streamSender);
+            if (festivalResult != null) {
+                toolResults.add(festivalResult);
+                sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", festivalResult));
+                steps.add(stepTrace(step++, "FestivalAgent", festivalResult.getTool(), toolStepStatus(festivalResult),
+                        festivalResult.getSummary()));
+            }
 
-        ToolResult informationResult = executeInformationTask(informationTask, keyword, message, plan, location, streamSender);
-        if (informationResult != null) {
-            toolResults.add(informationResult);
-            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", informationResult));
-            steps.add(stepTrace(step++, "FlowerAgent", informationResult.getTool(), "SUCCESS",
-                    informationResult.getSummary()));
-            addRepresentativeMapAction(actions, informationResult, plan);
-        } else if (flowerIntent && !flowerBookRequested) {
-            sendStatus(streamSender, "SEARCH", "꽃 정보를 검색하고 있어요.");
-            flowerResults = searchFlowers(keyword);
-            ToolResult flowerResult = flowerToolResult(keyword, flowerResults);
-            toolResults.add(flowerResult);
-            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", flowerResult));
-            steps.add(stepTrace(step++, "FlowerAgent", "searchFlowerSpots", "SUCCESS",
-                    "승인된 꽃 명소 후보 " + flowerResults.size() + "개를 확인했습니다."));
-            addRepresentativeMapAction(actions, flowerResult, plan);
-        }
+            ToolResult informationResult = executeInformationTask(informationTask, keyword, message, plan, location, streamSender);
+            if (informationResult != null) {
+                toolResults.add(informationResult);
+                sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", informationResult));
+                steps.add(stepTrace(step++, "FlowerAgent", informationResult.getTool(), toolStepStatus(informationResult),
+                        informationResult.getSummary()));
+                addRepresentativeMapAction(actions, informationResult, plan);
+            } else if (flowerIntent && !flowerBookRequested) {
+                sendStatus(streamSender, "SEARCH", "꽃 정보를 검색하고 있어요.");
+                String flowerSearchKeyword = keyword;
+                ToolResult flowerResult = safeToolResult(
+                        "flower.searchFlowerSpots",
+                        "꽃 장소 조회에 실패했습니다.",
+                        "꽃 장소를 조회하는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> flowerToolResult(flowerSearchKeyword, searchFlowers(flowerSearchKeyword)));
+                toolResults.add(flowerResult);
+                sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", flowerResult));
+                steps.add(stepTrace(step++, "FlowerAgent", flowerResult.getTool(), toolStepStatus(flowerResult),
+                        flowerResult.getSummary()));
+                addRepresentativeMapAction(actions, flowerResult, plan);
+            }
 
-        ToolResult communityResult = executeCommunityTask(plan, intents, actions, keyword, streamSender);
-        if (communityResult != null) {
-            toolResults.add(communityResult);
-            sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", communityResult));
-            steps.add(stepTrace(step++, "RouterAgent", communityResult.getTool(), "SUCCESS",
-                    communityResult.getSummary()));
+            ToolResult communityResult = executeCommunityTask(plan, intents, actions, keyword, streamSender);
+            if (communityResult != null) {
+                toolResults.add(communityResult);
+                sendStreamEvent(streamSender, "TOOL_RESULT", Map.of("toolResult", communityResult));
+                steps.add(stepTrace(step++, "RouterAgent", communityResult.getTool(), toolStepStatus(communityResult),
+                        communityResult.getSummary()));
+            }
         }
 
         for (ChatAction action : actions) {
@@ -268,6 +303,173 @@ public class ChatbotService {
         return intents.contains(RouteIntent.FLOWER) || intents.contains(RouteIntent.FLOWER_GROW);
     }
 
+    private boolean usesInformationToolLoop(String flow) {
+        return List.of("flower_information", "community_read", "festival_information").contains(flow);
+    }
+
+    private ToolLoopExecution executeInformationToolLoop(
+            String flow,
+            String informationTask,
+            String keyword,
+            String message,
+            AgentPlan plan,
+            List<RouteIntent> intents,
+            List<ChatAction> actions,
+            ChatMessageRequest.LocationContext location,
+            StreamSender streamSender
+    ) {
+        List<ToolResult> results = new ArrayList<>();
+        ToolResult firstResult = executeFirstInformationLoopTool(
+                flow,
+                informationTask,
+                keyword,
+                message,
+                plan,
+                intents,
+                actions,
+                location,
+                streamSender);
+        if (firstResult != null) {
+            results.add(firstResult);
+        }
+
+        EvidenceCheck firstCheck = checkEvidence(flow, message, plan, results);
+        if (firstCheck.status() == EvidenceStatus.INSUFFICIENT && results.size() < 2) {
+            String secondTask = nextInformationTask(flow, message, plan, results);
+            if (secondTask != null) {
+                ToolResult secondResult = executeInformationTask(secondTask, keyword, message, plan, location, streamSender);
+                if (secondResult != null) {
+                    results.add(secondResult);
+                }
+            }
+        }
+
+        EvidenceCheck finalCheck = checkEvidence(flow, message, plan, results);
+        return new ToolLoopExecution(results, finalCheck.status(), finalCheck.message());
+    }
+
+    private ToolResult executeFirstInformationLoopTool(
+            String flow,
+            String informationTask,
+            String keyword,
+            String message,
+            AgentPlan plan,
+            List<RouteIntent> intents,
+            List<ChatAction> actions,
+            ChatMessageRequest.LocationContext location,
+            StreamSender streamSender
+    ) {
+        return switch (flow) {
+            case "flower_information" -> executeInformationTask(
+                    firstFlowerInformationTask(informationTask, message),
+                    keyword,
+                    message,
+                    plan,
+                    location,
+                    streamSender);
+            case "community_read" -> {
+                ToolResult result = executeCommunityTask(plan, intents, actions, keyword, streamSender);
+                if (result != null) {
+                    yield result;
+                }
+                sendStatus(streamSender, "SEARCH", "커뮤니티 글을 검색하고 있어요.");
+                yield safeToolResult(
+                        "community.searchPosts",
+                        "커뮤니티 글 조회에 실패했습니다.",
+                        "커뮤니티 글을 조회하는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> communityTools.searchPosts(keyword));
+            }
+            case "festival_information" -> executeFestivalTask(plan, keyword, location, streamSender);
+            default -> null;
+        };
+    }
+
+    private String firstFlowerInformationTask(String informationTask, String message) {
+        if (wantsFlowerDescriptionInfo(message) && wantsFlowerGrowTips(message)) {
+            return "basic_info";
+        }
+        return isInformationTask(informationTask) ? informationTask : "basic_info";
+    }
+
+    private String nextInformationTask(
+            String flow,
+            String message,
+            AgentPlan plan,
+            List<ToolResult> results
+    ) {
+        if (!"flower_information".equals(flow) || hasEvidenceError(results) || hasNoEvidence(results)) {
+            return null;
+        }
+        if (needsFlowerBasicEvidence(message) && !hasToolResult(results, "flower.getBasicInfo")) {
+            return "basic_info";
+        }
+        if (wantsFlowerGrowTips(message) && !hasToolResult(results, "flower.getGrowGuide")) {
+            return "grow_guide";
+        }
+        if (wantsMeaningOrBloom(message) && !hasToolResult(results, "flower.getMeaningAndBloom")) {
+            return "meaning_bloom";
+        }
+        String task = plan.task() == null ? "" : plan.task();
+        if (isInformationTask(task) && !hasTaskResult(results, task)) {
+            return task;
+        }
+        return null;
+    }
+
+    private EvidenceCheck checkEvidence(
+            String flow,
+            String message,
+            AgentPlan plan,
+            List<ToolResult> results
+    ) {
+        if (results == null || results.isEmpty()) {
+            return new EvidenceCheck(EvidenceStatus.NONE, "도구 결과가 없습니다.");
+        }
+        if (hasEvidenceError(results)) {
+            return new EvidenceCheck(EvidenceStatus.ERROR, "도구 실행 오류가 있어 추가 호출하지 않습니다.");
+        }
+        if (hasNoEvidence(results)) {
+            return new EvidenceCheck(EvidenceStatus.NONE, "도구 조회 결과가 비어 있어 추가 호출하지 않습니다.");
+        }
+        if ("flower_information".equals(flow)) {
+            String nextTask = nextInformationTask(flow, message, plan, results);
+            if (nextTask != null) {
+                return new EvidenceCheck(EvidenceStatus.INSUFFICIENT,
+                        "요청한 정보 슬롯이 부족해 한 번 더 조회할 수 있습니다: " + nextTask);
+            }
+        }
+        return new EvidenceCheck(EvidenceStatus.SUFFICIENT, "현재 도구 결과로 답변할 수 있습니다.");
+    }
+
+    private boolean hasEvidenceError(List<ToolResult> results) {
+        return results.stream().anyMatch(this::isErrorResult);
+    }
+
+    private boolean hasNoEvidence(List<ToolResult> results) {
+        return results.stream().anyMatch(result -> hasEmptyItems(result) || hasEmptyCandidates(result));
+    }
+
+    private boolean needsFlowerBasicEvidence(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return wantsFlowerDescriptionInfo(message) || containsAny(lower, "특징", "생김새", "설명", "정보", "어떤 꽃");
+    }
+
+    private boolean hasTaskResult(List<ToolResult> results, String task) {
+        return switch (task) {
+            case "basic_info" -> hasToolResult(results, "flower.getBasicInfo");
+            case "meaning_bloom" -> hasToolResult(results, "flower.getMeaningAndBloom");
+            case "grow_guide" -> hasToolResult(results, "flower.getGrowGuide");
+            case "monthly_recommendation" -> hasToolResult(results, "flower.recommendByMonth");
+            case "candidate_inference" -> hasToolResult(results, "flower.inferCandidates");
+            default -> false;
+        };
+    }
+
+    private boolean hasToolResult(List<ToolResult> results, String toolName) {
+        return results.stream().anyMatch(result -> toolName.equals(result.getTool()));
+    }
+
     private ToolResult executeInformationTask(
             String informationTask,
             String keyword,
@@ -279,27 +481,57 @@ public class ChatbotService {
         return switch (informationTask) {
             case "basic_info" -> {
                 sendStatus(streamSender, "SEARCH", "꽃 기본 정보를 찾고 있어요.");
-                yield flowerToolService.getBasicInfoResult(keyword, false);
+                yield safeToolResult(
+                        "flower.getBasicInfo",
+                        "꽃 기본 정보 조회에 실패했습니다.",
+                        "꽃 정보를 조회하는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> flowerToolService.getBasicInfoResult(keyword, false));
             }
             case "meaning_bloom" -> {
                 sendStatus(streamSender, "SEARCH", "꽃말과 개화 정보를 찾고 있어요.");
-                yield flowerToolService.getMeaningAndBloomResult(keyword, false);
+                yield safeToolResult(
+                        "flower.getMeaningAndBloom",
+                        "꽃말과 개화 정보 조회에 실패했습니다.",
+                        "꽃말과 개화 정보를 조회하는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> flowerToolService.getMeaningAndBloomResult(keyword, false));
             }
             case "grow_guide" -> {
                 sendStatus(streamSender, "SEARCH", "꽃 재배 정보를 찾고 있어요.");
-                yield flowerToolService.getGrowGuideResult(keyword, false);
+                yield safeToolResult(
+                        "flower.getGrowGuide",
+                        "꽃 재배 정보 조회에 실패했습니다.",
+                        "꽃 재배 정보를 조회하는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> flowerToolService.getGrowGuideResult(keyword, false));
             }
             case "monthly_recommendation" -> {
                 sendStatus(streamSender, "SEARCH", "이번 시기에 맞는 꽃을 찾고 있어요.");
-                yield flowerToolService.recommendByMonthResult(extractRequestedMonth(message));
+                yield safeToolResult(
+                        "flower.recommendByMonth",
+                        "월별 꽃 추천 조회에 실패했습니다.",
+                        "추천할 꽃 정보를 조회하는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> flowerToolService.recommendByMonthResult(extractRequestedMonth(message)));
             }
             case "candidate_inference" -> {
                 sendStatus(streamSender, "SEARCH", "설명과 비슷한 꽃 후보를 찾고 있어요.");
-                yield flowerToolService.inferCandidatesResult(message);
+                yield safeToolResult(
+                        "flower.inferCandidates",
+                        "꽃 후보 추정에 실패했습니다.",
+                        "꽃 후보를 찾는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> flowerToolService.inferCandidatesResult(message));
             }
             case "place_search" -> {
                 sendStatus(streamSender, "SEARCH", "등록된 꽃 장소를 찾고 있어요.");
-                yield flowerToolService.searchFlowerSpotsResult(keyword, location, plan.nearby());
+                yield safeToolResult(
+                        "flower.searchFlowerSpots",
+                        "꽃 장소 조회에 실패했습니다.",
+                        "꽃 장소를 조회하는 중 오류가 발생했습니다.",
+                        plan,
+                        () -> flowerToolService.searchFlowerSpotsResult(keyword, location, plan.nearby()));
             }
             default -> null;
         };
@@ -316,7 +548,12 @@ public class ChatbotService {
         }
         sendStatus(streamSender, "SEARCH", "꽃 축제 정보를 찾고 있어요.");
         boolean nearby = "recommend_nearby".equals(plan.task()) || "open_festival_map".equals(plan.task());
-        return festivalToolService.searchFlowerFestivalsResult(keyword, location, nearby, plan.dateFilter());
+        return safeToolResult(
+                "festival.searchFlowerFestivals",
+                "축제 정보 조회에 실패했습니다.",
+                "축제 정보를 조회하는 중 오류가 발생했습니다.",
+                plan,
+                () -> festivalToolService.searchFlowerFestivalsResult(keyword, location, nearby, plan.dateFilter()));
     }
 
     private String normalizeInformationTask(
@@ -424,22 +661,42 @@ public class ChatbotService {
             return switch (plan.task()) {
                 case "search_posts" -> {
                     sendStatus(streamSender, "SEARCH", "커뮤니티 글을 검색하고 있어요.");
-                    yield communityTools.searchPosts(keyword);
+                    yield safeToolResult(
+                            "community.searchPosts",
+                            "커뮤니티 글 조회에 실패했습니다.",
+                            "커뮤니티 글을 조회하는 중 오류가 발생했습니다.",
+                            plan,
+                            () -> communityTools.searchPosts(keyword));
                 }
                 case "latest_posts" -> {
                     sendStatus(streamSender, "SEARCH", "최신 커뮤니티 글을 확인하고 있어요.");
-                    yield communityTools.getLatestPosts(keyword, plan.dateFilter(), plan.month(), plan.year());
+                    yield safeToolResult(
+                            "community.getLatestPosts",
+                            "커뮤니티 최신글 조회에 실패했습니다.",
+                            "커뮤니티 최신글을 조회하는 중 오류가 발생했습니다.",
+                            plan,
+                            () -> communityTools.getLatestPosts(keyword, plan.dateFilter(), plan.month(), plan.year()));
                 }
                 case "popular_posts" -> {
                     sendStatus(streamSender, "SEARCH", "인기 커뮤니티 글을 확인하고 있어요.");
-                    yield communityTools.getPopularPosts(keyword, plan.dateFilter(), plan.month(), plan.year());
+                    yield safeToolResult(
+                            "community.getPopularPosts",
+                            "커뮤니티 인기글 조회에 실패했습니다.",
+                            "커뮤니티 인기글을 조회하는 중 오류가 발생했습니다.",
+                            plan,
+                            () -> communityTools.getPopularPosts(keyword, plan.dateFilter(), plan.month(), plan.year()));
                 }
                 default -> null;
             };
         }
         if (plan.domain().isBlank() && intents.contains(RouteIntent.COMMUNITY)) {
             sendStatus(streamSender, "SEARCH", "커뮤니티 글을 검색하고 있어요.");
-            return communityTools.searchPosts(keyword);
+            return safeToolResult(
+                    "community.searchPosts",
+                    "커뮤니티 글 조회에 실패했습니다.",
+                    "커뮤니티 글을 조회하는 중 오류가 발생했습니다.",
+                    plan,
+                    () -> communityTools.searchPosts(keyword));
         }
         return null;
     }
@@ -589,6 +846,35 @@ public class ChatbotService {
                 "festival", "event", "place", "spot", "nearby");
     }
 
+    private boolean wantsFestival(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "festival", "event", "축제", "행사", "이벤트");
+    }
+
+    private boolean wantsNearby(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "near", "nearby", "근처", "주변");
+    }
+
+    private boolean wantsRouteRequest(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(lower, "route", "directions", "길찾기", "가는 길", "가는 법", "까지 가");
+    }
+
+    private String extractRouteMode(String message) {
+        String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        if (containsAny(lower, "walk", "walking", "도보", "걸어서")) {
+            return "walk";
+        }
+        if (containsAny(lower, "car", "drive", "자동차", "차로", "운전")) {
+            return "car";
+        }
+        if (containsAny(lower, "transit", "bus", "subway", "대중교통", "버스", "지하철")) {
+            return "transit";
+        }
+        return "none";
+    }
+
     private boolean wantsSeasonalRecommendation(String message) {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
         return containsAny(lower,
@@ -681,33 +967,114 @@ public class ChatbotService {
     private AgentPlan createAgentPlan(String message) {
         if (!openAiApiKey.isBlank() && chatClient != null) {
             try {
-                String content = chatClient.prompt()
-                        .system(planningSystemPrompt())
-                        .user(message == null ? "" : message)
-                        .call()
-                        .content();
-                PlannerDecision decision = parsePlannerDecision(content, "AIPlanner");
-                PlannerValidation validation = validatePlannerDecision(decision);
-                if (!validation.valid()) {
-                    decision = repairPlannerDecision(message, content, validation);
-                    validation = validatePlannerDecision(decision);
-                }
-                if (validation.valid()) {
-                    return toAgentPlan(decision);
+                RouteDecision routeDecision = createRouteDecision(message);
+                AgentPlan plan = planForRoute(message, routeDecision);
+                if (plan != null) {
+                    return plan;
                 }
             } catch (Exception e) {
-                log.warn("AI 계획 JSON 생성 실패. 로컬 플래너로 전환합니다: {}", e.getMessage());
+                log.warn("AI flow/계획 JSON 생성 실패. 로컬 플래너로 전환합니다: {}", e.getMessage());
             }
         }
         return fallbackAgentPlan(message);
     }
 
-    private String planningSystemPrompt() {
+    private RouteDecision createRouteDecision(String message) throws Exception {
+        String content = chatClient.prompt()
+                .system(routeSystemPrompt())
+                .user(message == null ? "" : message)
+                .call()
+                .content();
+        RouteDecision decision = parseRouteDecision(content, "RouteAI");
+        if (!validateRouteDecision(decision)) {
+            throw new IllegalArgumentException("unknown flow: " + decision.flow());
+        }
+        return decision;
+    }
+
+    private AgentPlan planForRoute(String message, RouteDecision routeDecision) {
+        if ("community_write".equals(routeDecision.flow())) {
+            return communityWritePlan(routeDecision);
+        }
+        if ("simple_chat".equals(routeDecision.flow())
+                || "unsupported".equals(routeDecision.flow())
+                || "clarification_needed".equals(routeDecision.flow())) {
+            return fallbackPlanForRoute(message, routeDecision);
+        }
+        if (!openAiApiKey.isBlank() && chatClient != null) {
+            try {
+                String content = chatClient.prompt()
+                        .system(planningSystemPrompt(routeDecision.flow()))
+                        .user(message == null ? "" : message)
+                        .call()
+                        .content();
+                PlannerDecision decision = parsePlannerDecision(content, "RolePlanner");
+                PlannerValidation validation = validatePlannerDecision(decision);
+                if (validation.valid() && !plannerDecisionMatchesFlow(routeDecision.flow(), decision)) {
+                    validation = new PlannerValidation(false, List.of("planner decision escaped flow: " + routeDecision.flow()));
+                }
+                if (!validation.valid()) {
+                    decision = repairPlannerDecision(message, content, validation, routeDecision.flow());
+                    validation = validatePlannerDecision(decision);
+                }
+                if (validation.valid() && plannerDecisionMatchesFlow(routeDecision.flow(), decision)) {
+                    return toAgentPlan(decision, routeDecision);
+                }
+            } catch (Exception e) {
+                log.warn("RolePlanner JSON 생성 실패. flow fallback으로 전환합니다: {}", e.getMessage());
+            }
+        }
+        return fallbackPlanForRoute(message, routeDecision);
+    }
+
+    private String routeSystemPrompt() {
+        return """
+                You are FLOWER's Route AI.
+                Return only valid JSON. Do not wrap it in markdown.
+                Choose only the processing flow. Do not choose tool names, action names, domain, or task.
+                Schema:
+                {
+                  "flow": "simple_chat | flower_information | community_read | community_write | festival_information | map_action | app_navigation | unsupported | clarification_needed",
+                  "keyword": "optional concrete topic keyword only",
+                  "confidence": "high | medium | low",
+                  "reason": "short Korean reason"
+                }
+                Rules:
+                - General greetings and small talk are simple_chat.
+                - Flower facts, flower meaning, bloom time, growing tips, monthly flower recommendations, or flower identification are flower_information.
+                - Reading, searching, latest, recent, or popular community posts is community_read.
+                - Writing a community post is community_write. Phrases like "글 써줘", "글 올릴래", "후기 작성", and "올리고 싶어" are community_write.
+                - Requests to auto-save, publish for the user, like, comment, edit, or delete posts are unsupported.
+                - Festival, event, or 행사 information is festival_information.
+                - Map, place, nearby, location, or route/directions requests are map_action.
+                - Opening an app screen without asking for information is app_navigation.
+                - Shop, purchase, quest, reservation, payment, private, or admin actions are unsupported.
+                - Use clarification_needed only when the message is too ambiguous to choose a flow.
+                - keyword means only a concrete search topic such as a flower name, plant name, place name, or clearly named subject.
+
+                Examples:
+                User: 안녕
+                JSON: {"flow":"simple_chat","keyword":"","confidence":"high","reason":"인사"}
+                User: 장미 키우는 법 알려줘
+                JSON: {"flow":"flower_information","keyword":"장미","confidence":"high","reason":"꽃 재배 정보 요청"}
+                User: 수국 후기 찾아줘
+                JSON: {"flow":"community_read","keyword":"수국","confidence":"high","reason":"커뮤니티 후기 조회"}
+                User: 커뮤니티에 글 올릴래
+                JSON: {"flow":"community_write","keyword":"","confidence":"high","reason":"커뮤니티 글 작성 화면 요청"}
+                User: 벚꽃 지도에서 보여줘
+                JSON: {"flow":"map_action","keyword":"벚꽃","confidence":"high","reason":"지도에서 꽃 장소 확인"}
+                User: 상점에서 아이템 사줘
+                JSON: {"flow":"unsupported","keyword":"","confidence":"high","reason":"상점 구매는 미지원"}
+                """;
+    }
+
+    private String planningSystemPrompt(String flow) {
         // 이 프롬프트는 AIPlanner가 사용자 말을 JSON 계획으로만 바꾸게 하는 지시문이다.
         // domain/task는 서버가 허용된 도구와 액션으로 변환하는 실행 계약이다.
         // planner는 도구명과 action명을 직접 고르지 않고 사용자 목적만 구조화한다.
         return """
-                You are FLOWER's RouterAI and specialist planner.
+                You are FLOWER's specialist Role Planner.
+                Route AI already selected this flow: %s.
                 Return only valid JSON. Do not wrap it in markdown.
                 Schema:
                 {
@@ -726,6 +1093,7 @@ public class ChatbotService {
                 }
                 Rules:
                 - Choose only domain and task. Do not choose tool names or action names.
+                - Stay inside the selected flow. Do not reinterpret the request as another flow.
                 - keyword means only a concrete search topic such as a flower name, plant name, place name, or clearly named subject.
                 - Request style, sorting words, time expressions, and commands are not keywords. Do not put words such as 최신, 최근, 인기글, 오늘, 이번 주, 3월, 보여줘, 알려줘, 소개해 in keyword.
                 - If the user does not name a concrete topic, set keyword to an empty string.
@@ -848,12 +1216,20 @@ public class ChatbotService {
                 JSON: {"domain":"festival_info","task":"open_festival_map","keyword":"행사","date_filter":"upcoming","needs_screen":true,"confidence":"high","reason":"행사 지도 확인"}
                 User: 축제 티켓 예매해줘
                 JSON: {"domain":"unsupported","task":"private_or_admin","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"축제 예매는 지원하지 않음"}
-                """;
+                """.formatted(flow);
     }
 
-    private PlannerDecision repairPlannerDecision(String message, String invalidContent, PlannerValidation validation)
+    private PlannerDecision repairPlannerDecision(
+            String message,
+            String invalidContent,
+            PlannerValidation validation,
+            String flow
+    )
             throws Exception {
         String repairUserPrompt = """
+                Selected flow:
+                %s
+
                 Original user message:
                 %s
 
@@ -865,6 +1241,7 @@ public class ChatbotService {
 
                 Return corrected JSON only, using the same schema. Do not answer the user.
                 """.formatted(
+                flow == null ? "" : flow,
                 message == null ? "" : message,
                 invalidContent == null ? "" : invalidContent,
                 String.join("; ", validation.errors())
@@ -885,6 +1262,7 @@ public class ChatbotService {
                 {"domain":"flower_info|festival_info|community|map_place|app_navigation|unsupported|general","task":"string","keyword":"string","date_filter":"today|this_week|this_month|month|upcoming|none","month":0,"year":0,"nearby":true,"route_request":true,"route_mode":"walk|car|transit|none","needs_screen":true,"confidence":"high|medium|low","reason":"short Korean reason"}
                 Do not add actions, tool names, markdown, or prose.
                 Domain/task must be a valid pair.
+                Stay inside the selected flow.
                 """;
     }
 
@@ -920,6 +1298,32 @@ public class ChatbotService {
                 reason,
                 source
         );
+    }
+
+    private RouteDecision parseRouteDecision(String content, String source) throws Exception {
+        if (content == null || content.isBlank()) {
+            return new RouteDecision("clarification_needed", "", "empty route response", "low", source);
+        }
+        JsonNode root = JSON_MAPPER.readTree(content.trim());
+        String flow = root.path("flow").asText("").trim().toLowerCase(Locale.ROOT);
+        String keyword = root.path("keyword").asText("").trim();
+        String reason = root.path("reason").asText("").trim();
+        String confidence = root.path("confidence").asText("medium").trim().toLowerCase(Locale.ROOT);
+        return new RouteDecision(flow, sanitizePlannerKeyword(keyword), reason, confidence, source);
+    }
+
+    private boolean validateRouteDecision(RouteDecision decision) {
+        return decision != null && List.of(
+                "simple_chat",
+                "flower_information",
+                "community_read",
+                "community_write",
+                "festival_information",
+                "map_action",
+                "app_navigation",
+                "unsupported",
+                "clarification_needed"
+        ).contains(decision.flow());
     }
 
     private PlannerValidation validatePlannerDecision(PlannerDecision decision) {
@@ -970,7 +1374,24 @@ public class ChatbotService {
         return new PlannerValidation(errors.isEmpty(), errors);
     }
 
-    private AgentPlan toAgentPlan(PlannerDecision decision) {
+    private boolean plannerDecisionMatchesFlow(String flow, PlannerDecision decision) {
+        return switch (flow == null ? "" : flow) {
+            case "simple_chat", "clarification_needed" -> "general".equals(decision.domain());
+            case "flower_information" -> "flower_info".equals(decision.domain());
+            case "community_read" -> "community".equals(decision.domain())
+                    && List.of("search_posts", "latest_posts", "popular_posts", "open_community").contains(decision.task());
+            case "community_write" -> "community".equals(decision.domain()) && "open_composer".equals(decision.task());
+            case "festival_information" -> "festival_info".equals(decision.domain());
+            case "map_action" -> "map_place".equals(decision.domain())
+                    || ("app_navigation".equals(decision.domain()) && "open_map".equals(decision.task()));
+            case "app_navigation" -> "app_navigation".equals(decision.domain())
+                    || ("community".equals(decision.domain()) && "open_community".equals(decision.task()));
+            case "unsupported" -> "unsupported".equals(decision.domain());
+            default -> false;
+        };
+    }
+
+    private AgentPlan toAgentPlan(PlannerDecision decision, RouteDecision routeDecision) {
         String keyword = sanitizePlannerKeyword(decision.keyword());
         if ("community".equals(decision.domain())
                 && List.of("latest_posts", "popular_posts").contains(decision.task())) {
@@ -1086,7 +1507,8 @@ public class ChatbotService {
                 decision.routeMode(),
                 decision.needsScreen(),
                 decision.confidence(),
-                decision.reason()
+                decision.reason(),
+                routeDecision.flow()
         );
     }
 
@@ -1160,62 +1582,284 @@ public class ChatbotService {
     }
 
     private AgentPlan fallbackAgentPlan(String message) {
-        String keyword = sanitizePlannerKeyword(extractKeyword(message));
-        List<RouteIntent> intents = new ArrayList<>();
-        List<ChatAction> actions = new ArrayList<>();
+        RouteDecision routeDecision = fallbackRouteDecision(message);
+        return fallbackPlanForRoute(message, routeDecision);
+    }
 
+    private RouteDecision fallbackRouteDecision(String message) {
+        String keyword = sanitizePlannerKeyword(extractKeyword(message));
         if (wantsUnsupportedFeature(message)) {
-            intents.add(wantsShopRequest(message) ? RouteIntent.SHOP : RouteIntent.QUEST);
-            return new AgentPlan(intents, "unsupported", keyword, actions, "FallbackPlanner");
+            return new RouteDecision("unsupported", keyword, "미지원 쓰기/구매/관리 요청", "high", "FallbackRoute");
         }
         boolean communityIntent = wantsCommunity(message);
-        boolean communityCompose = communityIntent && wantsCommunityCompose(message);
-        boolean latestCommunity = communityIntent && wantsLatestCommunityPosts(message);
-        boolean popularCommunity = communityIntent && wantsPopularCommunityPosts(message);
-        if (latestCommunity || popularCommunity) {
-            return fallbackCommunityReadPlan(message, keyword, latestCommunity ? "latest_posts" : "popular_posts");
-        }
-        if (wantsMap(message)) {
-            intents.add(RouteIntent.MAP);
-            actions.add(navigateAction("MAP", Map.of()));
+        if (communityIntent && wantsCommunityCompose(message)) {
+            return new RouteDecision("community_write", keyword, "커뮤니티 글 작성 화면 요청", "high", "FallbackRoute");
         }
         if (communityIntent) {
-            intents.add(RouteIntent.COMMUNITY);
-            if (communityCompose) {
-                actions.add(navigateAction("COMMUNITY_COMPOSE", Map.of()));
-            } else {
-                actions.add(navigateAction("COMMUNITY", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
-            }
+            return new RouteDecision("community_read", keyword, "커뮤니티 게시글 조회 요청", "high", "FallbackRoute");
         }
-        if (wantsWalk(message)) {
-            intents.add(RouteIntent.WALK);
-            actions.add(navigateAction("WALK", Map.of()));
+        if (wantsFestival(message)) {
+            return new RouteDecision("festival_information", keyword, "꽃 축제 정보 요청", "high", "FallbackRoute");
         }
-        if (wantsSaved(message)) {
-            intents.add(RouteIntent.SAVED);
-            actions.add(navigateAction("SAVED", Map.of()));
+        if (wantsMap(message)) {
+            return new RouteDecision("map_action", keyword, "지도 또는 길찾기 요청", "high", "FallbackRoute");
         }
-        if (wantsFlowerGrowTips(message)) {
-            intents.add(RouteIntent.FLOWER_GROW);
-        } else if (!communityCompose && (!communityIntent || wantsMap(message) || wantsSeasonalRecommendation(message) || wantsFlowerBookInfo(message))
-                && (mentionsFlower(message) || wantsFlowerBookInfo(message) || wantsSeasonalRecommendation(message))) {
-            intents.add(RouteIntent.FLOWER);
+        if (wantsFlowerBookOpen(message) || wantsWalk(message) || wantsSaved(message)) {
+            return new RouteDecision("app_navigation", keyword, "앱 화면 이동 요청", "medium", "FallbackRoute");
         }
-        if (wantsFlowerBookOpen(message) && !wantsMap(message)) {
-            actions.add(navigateAction("FLOWER_BOOK", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
+        if (wantsFlowerGrowTips(message)
+                || wantsUnknownFlowerIdentification(message)
+                || wantsMeaningOrBloom(message)
+                || wantsSeasonalRecommendation(message)
+                || wantsFlowerDescriptionInfo(message)
+                || mentionsFlower(message)) {
+            return new RouteDecision("flower_information", keyword, "꽃 정보 요청", "medium", "FallbackRoute");
         }
-        if (intents.contains(RouteIntent.MAP) && hasFlowerIntent(intents) && !wantsSeasonalRecommendation(message) && !keyword.isBlank()) {
+        return new RouteDecision("simple_chat", "", "일반 대화", "medium", "FallbackRoute");
+    }
+
+    private AgentPlan fallbackPlanForRoute(String message, RouteDecision routeDecision) {
+        String keyword = routeDecision.keyword().isBlank()
+                ? sanitizePlannerKeyword(extractKeyword(message))
+                : routeDecision.keyword();
+        return switch (routeDecision.flow()) {
+            case "community_write" -> communityWritePlan(routeDecision);
+            case "community_read" -> fallbackCommunityReadPlan(message, keyword);
+            case "festival_information" -> fallbackFestivalPlan(message, keyword, routeDecision);
+            case "map_action" -> fallbackMapPlan(message, keyword, routeDecision);
+            case "app_navigation" -> fallbackAppNavigationPlan(message, keyword, routeDecision);
+            case "unsupported" -> fallbackUnsupportedPlan(message, keyword, routeDecision);
+            case "flower_information" -> fallbackFlowerInformationPlan(message, keyword, routeDecision);
+            case "clarification_needed", "simple_chat" -> new AgentPlan(
+                    List.of(RouteIntent.GENERAL),
+                    "general",
+                    "",
+                    List.of(),
+                    routeDecision.source(),
+                    "general",
+                    "general_chat",
+                    "none",
+                    0,
+                    0,
+                    false,
+                    false,
+                    "none",
+                    false,
+                    routeDecision.confidence(),
+                    routeDecision.reason(),
+                    routeDecision.flow());
+            default -> new AgentPlan(List.of(RouteIntent.GENERAL), "general", "", List.of(), "FallbackPlanner");
+        };
+    }
+
+    private AgentPlan communityWritePlan(RouteDecision routeDecision) {
+        return new AgentPlan(
+                List.of(RouteIntent.COMMUNITY),
+                "app_navigation",
+                routeDecision.keyword(),
+                List.of(navigateAction("COMMUNITY_COMPOSE", Map.of())),
+                routeDecision.source(),
+                "community",
+                "open_composer",
+                "none",
+                0,
+                0,
+                false,
+                false,
+                "none",
+                true,
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "community_write");
+    }
+
+    private AgentPlan fallbackCommunityReadPlan(String message, String keyword) {
+        String task = wantsLatestCommunityPosts(message)
+                ? "latest_posts"
+                : wantsPopularCommunityPosts(message) ? "popular_posts" : "search_posts";
+        if ("latest_posts".equals(task) || "popular_posts".equals(task)) {
+            return fallbackCommunityReadPlan(message, keyword, task);
+        }
+        boolean needsScreen = true;
+        String effectiveKeyword = sanitizePlannerKeyword(keyword);
+        List<ChatAction> actions = List.of(
+                navigateAction("COMMUNITY", effectiveKeyword.isBlank() ? Map.of() : Map.of("query", effectiveKeyword)));
+        return new AgentPlan(
+                List.of(RouteIntent.COMMUNITY),
+                "app_navigation",
+                effectiveKeyword,
+                actions,
+                "FallbackPlanner",
+                "community",
+                "search_posts",
+                "none",
+                0,
+                0,
+                false,
+                false,
+                "none",
+                needsScreen,
+                "medium",
+                "커뮤니티 검색 fallback 분류",
+                "community_read");
+    }
+
+    private AgentPlan fallbackFestivalPlan(String message, String keyword, RouteDecision routeDecision) {
+        CommunityPeriod period = resolveCommunityPeriod(message);
+        String task = wantsMap(message) ? "open_festival_map" : wantsNearby(message) ? "recommend_nearby" : "search_festivals";
+        String effectiveKeyword = keyword.isBlank() ? "꽃" : keyword;
+        List<ChatAction> actions = new ArrayList<>();
+        if ("open_festival_map".equals(task)) {
+            actions.add(navigateAction("MAP", Map.of()));
             actions.add(ChatAction.builder()
                     .type("MAP_SET_SEARCH_QUERY")
                     .target("MAP")
-                    .params(Map.of("query", keyword))
+                    .params(Map.of("query", effectiveKeyword.isBlank() ? "축제" : effectiveKeyword))
                     .build());
         }
-        if (intents.isEmpty()) {
-            intents.add(RouteIntent.GENERAL);
+        return new AgentPlan(
+                "open_festival_map".equals(task) ? List.of(RouteIntent.FESTIVAL, RouteIntent.MAP) : List.of(RouteIntent.FESTIVAL),
+                "app_navigation",
+                effectiveKeyword,
+                actions,
+                routeDecision.source(),
+                "festival_info",
+                task,
+                "none".equals(period.dateFilter()) ? "upcoming" : period.dateFilter(),
+                period.month(),
+                period.year(),
+                "recommend_nearby".equals(task),
+                false,
+                "none",
+                !actions.isEmpty(),
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "festival_information");
+    }
+
+    private AgentPlan fallbackMapPlan(String message, String keyword, RouteDecision routeDecision) {
+        String effectiveKeyword = keyword.isBlank() ? "꽃" : keyword;
+        boolean routeRequest = wantsRouteRequest(message);
+        String routeMode = extractRouteMode(message);
+        List<ChatAction> actions = new ArrayList<>();
+        actions.add(navigateAction("MAP", Map.of()));
+        actions.add(ChatAction.builder()
+                .type("MAP_SET_SEARCH_QUERY")
+                .target("MAP")
+                .params(Map.of("query", effectiveKeyword))
+                .build());
+        return new AgentPlan(
+                List.of(RouteIntent.MAP, RouteIntent.FLOWER),
+                "place_search",
+                effectiveKeyword,
+                actions,
+                routeDecision.source(),
+                "map_place",
+                "place_search",
+                "none",
+                0,
+                0,
+                wantsNearby(message),
+                routeRequest,
+                routeMode,
+                true,
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "map_action");
+    }
+
+    private AgentPlan fallbackAppNavigationPlan(String message, String keyword, RouteDecision routeDecision) {
+        List<RouteIntent> intents = new ArrayList<>();
+        List<ChatAction> actions = new ArrayList<>();
+        String task = "general_chat";
+        if (wantsCommunity(message)) {
+            intents.add(RouteIntent.COMMUNITY);
+            task = "open_community";
+            actions.add(navigateAction("COMMUNITY", Map.of()));
+        } else if (wantsMap(message)) {
+            intents.add(RouteIntent.MAP);
+            task = "open_map";
+            actions.add(navigateAction("MAP", Map.of()));
+        } else if (wantsWalk(message)) {
+            intents.add(RouteIntent.WALK);
+            task = "open_walk";
+            actions.add(navigateAction("WALK", Map.of()));
+        } else if (wantsSaved(message)) {
+            intents.add(RouteIntent.SAVED);
+            task = "open_saved";
+            actions.add(navigateAction("SAVED", Map.of()));
+        } else {
+            intents.add(RouteIntent.FLOWER);
+            task = "open_flower_book";
+            actions.add(navigateAction("FLOWER_BOOK", keyword.isBlank() ? Map.of() : Map.of("query", keyword)));
         }
-        String informationTask = inferInformationTask(message, intents, actions);
-        return new AgentPlan(intents.stream().distinct().toList(), informationTask, keyword, actions, "FallbackPlanner");
+        return new AgentPlan(
+                intents,
+                "app_navigation",
+                keyword,
+                actions,
+                routeDecision.source(),
+                "app_navigation",
+                task,
+                "none",
+                0,
+                0,
+                false,
+                false,
+                "none",
+                true,
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "app_navigation");
+    }
+
+    private AgentPlan fallbackUnsupportedPlan(String message, String keyword, RouteDecision routeDecision) {
+        return new AgentPlan(
+                List.of(wantsShopRequest(message) ? RouteIntent.SHOP : RouteIntent.QUEST),
+                "unsupported",
+                keyword,
+                List.of(),
+                routeDecision.source(),
+                "unsupported",
+                wantsShopRequest(message) ? "shop_purchase" : "community_mutation",
+                "none",
+                0,
+                0,
+                false,
+                false,
+                "none",
+                false,
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "unsupported");
+    }
+
+    private AgentPlan fallbackFlowerInformationPlan(String message, String keyword, RouteDecision routeDecision) {
+        List<RouteIntent> intents = wantsFlowerGrowTips(message)
+                ? List.of(RouteIntent.FLOWER_GROW)
+                : List.of(RouteIntent.FLOWER);
+        String task = inferInformationTask(message, intents, List.of());
+        if (!isInformationTask(task)) {
+            task = "basic_info";
+        }
+        return new AgentPlan(
+                intents,
+                task,
+                keyword,
+                List.of(),
+                routeDecision.source(),
+                "flower_info",
+                task,
+                "none",
+                0,
+                0,
+                false,
+                false,
+                "none",
+                false,
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "flower_information");
     }
 
     private AgentPlan fallbackCommunityReadPlan(String message, String keyword, String task) {
@@ -1243,7 +1887,8 @@ public class ChatbotService {
                 "none",
                 needsScreen,
                 "medium",
-                "커뮤니티 최신/인기 글 fallback 분류"
+                "커뮤니티 최신/인기 글 fallback 분류",
+                "community_read"
         );
     }
 
@@ -1320,6 +1965,22 @@ public class ChatbotService {
 
     private String agentFor(ChatAction action) {
         return action.getTarget() == null ? "RouterAgent" : action.getTarget() + "Agent";
+    }
+
+    private String agentForTool(String toolName) {
+        if (toolName == null) {
+            return "RouterAgent";
+        }
+        if (toolName.startsWith("flower.")) {
+            return "FlowerAgent";
+        }
+        if (toolName.startsWith("community.")) {
+            return "CommunityAgent";
+        }
+        if (toolName.startsWith("festival.")) {
+            return "FestivalAgent";
+        }
+        return "RouterAgent";
     }
 
     private String toolFor(ChatAction action) {
@@ -1431,6 +2092,9 @@ public class ChatbotService {
         if ("festival_info".equals(answerDomain)) {
             return buildFestivalGuardedAnswer(toolResults);
         }
+        if ("community".equals(answerDomain)) {
+            return buildCommunityGuardedAnswer(toolResults, answerTask);
+        }
         return null;
     }
 
@@ -1472,6 +2136,23 @@ public class ChatbotService {
         }
         if (hasEmptyItems(festivalResult)) {
             return buildFestivalNoDataReply(festivalResult);
+        }
+        return null;
+    }
+
+    private String buildCommunityGuardedAnswer(List<ToolResult> toolResults, String answerTask) {
+        ToolResult communityResult = findFirstToolResult(toolResults,
+                "community.searchPosts",
+                "community.getLatestPosts",
+                "community.getPopularPosts");
+        if (communityResult == null) {
+            return null;
+        }
+        if (isErrorResult(communityResult)) {
+            return buildCommunityErrorReply(communityResult, answerTask);
+        }
+        if (hasEmptyItems(communityResult)) {
+            return buildCommunityNoDataReply(communityResult, answerTask);
         }
         return null;
     }
@@ -1542,6 +2223,31 @@ public class ChatbotService {
                 + "조회된 축제 데이터에서 안내드릴 일정을 찾지 못했습니다.").trim();
     }
 
+    private String buildCommunityErrorReply(ToolResult result, String answerTask) {
+        String periodPrefix = communityPeriodPrefix(result);
+        String target = "popular_posts".equals(answerTask) ? "인기글" : "최신글";
+        return (periodPrefix + "커뮤니티 " + target + "을 지금은 가져올 수 없어요. "
+                + humanizeCommunityFailureReason(result)).trim();
+    }
+
+    private String buildCommunityNoDataReply(ToolResult result, String answerTask) {
+        String periodPrefix = communityPeriodPrefix(result);
+        if ("search_posts".equals(answerTask)) {
+            String keyword = communityKeyword(result);
+            String target = keyword.isBlank() ? "관련 글" : keyword + " 관련 글";
+            return "현재 확인된 " + target + "은 없어요. 조회된 커뮤니티 게시글 데이터에서 안내드릴 항목을 찾지 못했습니다.";
+        }
+        String target = "popular_posts".equals(answerTask) ? "인기글" : "최신글";
+        return (periodPrefix + "현재 확인된 커뮤니티 " + target + "은 없어요. "
+                + "조회된 게시글 데이터에서 안내드릴 항목을 찾지 못했습니다.").trim();
+    }
+
+    private String communityKeyword(ToolResult result) {
+        Map<String, Object> data = result == null ? null : result.getData();
+        Object keyword = data == null ? null : data.get("keyword");
+        return keyword == null ? "" : sanitizePlannerKeyword(keyword.toString());
+    }
+
     private String extractAnswerSubject(String message) {
         String keyword = sanitizePlannerKeyword(extractKeyword(message));
         return keyword == null || keyword.isBlank() ? "요청하신 꽃" : "'" + keyword + "'";
@@ -1569,6 +2275,26 @@ public class ChatbotService {
         };
     }
 
+    private String communityPeriodPrefix(ToolResult result) {
+        Map<String, Object> data = result == null ? null : result.getData();
+        String dateFilter = data == null || data.get("dateFilter") == null
+                ? ""
+                : data.get("dateFilter").toString();
+        return switch (dateFilter) {
+            case "today" -> "오늘 기준으로 ";
+            case "this_week" -> "이번 주 기준으로 ";
+            case "this_month" -> "이번 달 기준으로 ";
+            case "month" -> {
+                Object keywordMonth = data.get("rangeStart");
+                if (keywordMonth instanceof String rangeStart && rangeStart.length() >= 7) {
+                    yield rangeStart.substring(5, 7).replaceFirst("^0", "") + "월 기준으로 ";
+                }
+                yield "해당 월 기준으로 ";
+            }
+            default -> "";
+        };
+    }
+
     private String humanizeFlowerFailureReason(ToolResult result) {
         String error = result == null || result.getError() == null ? "" : result.getError();
         if (!error.isBlank()) {
@@ -1579,10 +2305,24 @@ public class ChatbotService {
 
     private String humanizeFestivalFailureReason(ToolResult result) {
         String error = result == null || result.getError() == null ? "" : result.getError();
-        if (error.contains("TOUR_API_KEY is not configured")) {
+        if (error.contains("FESTIVAL_SOURCE_NOT_CONFIGURED")
+                || error.contains("TOUR_API_KEY is not configured")) {
             return "외부 연동 설정이 없어 축제 데이터를 확인하지 못했습니다.";
         }
         return "축제 정보를 확인하는 중 문제가 생겨 잠시 후 다시 시도해 주세요.";
+    }
+
+    private String humanizeCommunityFailureReason(ToolResult result) {
+        Map<String, Object> data = result == null ? null : result.getData();
+        boolean fallbackAttempted = data != null && Boolean.TRUE.equals(data.get("queryFailed"));
+        boolean periodFallbackUsed = data != null && Boolean.TRUE.equals(data.get("periodFallbackUsed"));
+        if (fallbackAttempted && periodFallbackUsed) {
+            return "기간 조건을 바꿔 다시 확인했지만 지금은 게시글 데이터를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.";
+        }
+        if (fallbackAttempted) {
+            return "안정 경로로 다시 확인했지만 지금은 게시글 데이터를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.";
+        }
+        return "게시글 정보를 확인하는 중 문제가 생겨 잠시 후 다시 시도해 주세요.";
     }
 
     String buildAnswerSystemPrompt(String answerDomain, String answerTask, ChatAction action) {
@@ -1613,9 +2353,11 @@ public class ChatbotService {
                 재배, 물주기, 햇빛, 토양, 관리 답변은 flower.getGrowGuide 결과만 근거로 사용하고 일반 원예 상식으로 보강하지 마세요.
                 월별/계절 추천은 flower.recommendByMonth 결과를 우선 사용하고 3~5개만 짧게 설명하세요.
                 모호한 설명에서 꽃 후보를 추정한 경우 flower.inferCandidates 결과만 사용하고, 확정 식별이 아니라 가능성 있는 후보라고 말하세요.
-                꽃 축제 질문은 festival.searchFlowerFestivals 결과만 근거로 사용하고, 예매/예약/결제 가능 여부를 지어내지 마세요.
+                꽃 축제 질문은 festival.searchFlowerFestivals 결과만 근거로 사용하고, Tour API 페이지나 디버그 값은 답변 근거로 사용하지 마세요.
+                축제는 DB 조회 계약 기준으로 시작일과 종료일이 모두 확인된 항목만 안내하세요. 시작일 또는 종료일 중 하나라도 없으면 추천하거나 진행 중인 축제로 표현하지 마세요.
                 커뮤니티 최신글/인기글은 community.getLatestPosts 또는 community.getPopularPosts 결과만 근거로 요약하세요.
                 "많이 본 글"처럼 조회수 기준을 묻더라도 조회수 필드가 없으므로 좋아요와 댓글 기준 인기글이라고 말하세요.
+                커뮤니티 게시글에는 제목 필드가 없습니다. 제목을 지어내거나 제목 기준으로 요약하지 말고 본문, 꽃 이름, 식물명, 주소, 작성일, 좋아요, 댓글만 근거로 사용하세요.
                 장소/지도 데이터는 꽃 정보보다 뒤에 보조로만 설명하세요. 장소 결과가 없더라도 꽃 정보가 있으면 정보부터 답하세요.
                 flower.searchFlowerSpots 결과가 비어 있으면 일반 지식으로 장소, 지역, 계절 정보를 만들어 말하지 말고 등록된 장소 데이터가 없다고만 말하세요.
                 길찾기 요청에서 장소 결과가 없으면 길찾기를 실행할 수 없다고 말하고 임의 목적지를 만들지 마세요.
@@ -1685,8 +2427,9 @@ public class ChatbotService {
                     불필요하게 장황한 격려 문구를 붙이지 말고 짧고 분명하게 안내하세요.
                     """;
             default -> """
-                    커뮤니티 답변은 검색 결과 나열보다 게시글 요약 브리핑처럼 작성하세요.
-                    사용자가 어떤 후기나 게시글을 참고할 수 있는지 먼저 짧게 정리하세요.
+                커뮤니티 답변은 검색 결과 나열보다 게시글 요약 브리핑처럼 작성하세요.
+                    사용자가 어떤 후기나 게시글을 참고할 수 있는지 본문 중심으로 먼저 짧게 정리하세요.
+                    게시글 제목은 만들지 말고, 실제 조회된 본문과 꽃 이름, 식물명, 주소 범위 안에서만 설명하세요.
                     조회 결과가 없으면 요즘 분위기, 활동량, 반응 추세를 해석하지 말고 현재 확인된 글이 없다고만 답하세요.
                     """;
         };
@@ -1695,6 +2438,7 @@ public class ChatbotService {
                 커뮤니티 도메인 답변 규칙:
                 첫 문장은 커뮤니티에서 확인된 흐름이나 게시글 성격을 바로 요약하세요.
                 본문은 게시글을 단순 열거하지 말고, 요즘 어떤 내용이 올라오는지 읽기 쉽게 정리하세요.
+                게시글에는 제목이 없으므로 제목처럼 보이는 문구를 새로 만들지 마세요.
                 조회 결과가 비어 있으면 활발하다, 잠잠하다, 반응이 적었다 같은 추정 표현을 쓰지 마세요.
                 필요할 때만 커뮤니티 화면에서 더 확인할 수 있다고 한 줄 덧붙이세요.
                 """ + "\n" + taskRule;
@@ -1717,11 +2461,14 @@ public class ChatbotService {
 
         return """
                 축제 도메인 답변 규칙:
-                첫 문장에서 언제 열리는 축제인지와 어디서 볼 수 있는지를 먼저 정리하세요.
-                본문은 장소, 일정, 문의처 순으로 묶어 설명하세요.
+                첫 문장에서 축제 기간(시작일-종료일)과 장소를 먼저 정리하세요.
+                본문은 기간, 장소, 문의처 순으로 묶어 설명하세요.
+                축제명을 언급할 때는 같은 문장이나 바로 다음 문장에 확인된 기간을 반드시 함께 말하세요.
+                도구 결과의 period, eventStartDate, eventEndDate가 비어 있는 항목은 답변 후보로 사용하지 마세요.
+                source, query, dateFilter, excludedPastCount, locationUsed 같은 계약/진단 필드는 사용자에게 직접 말하지 마세요.
                 기간 필터가 있으면 이번 주, 이번 달, 다가오는 일정 같은 자연어 표현으로 풀어 쓰세요.
                 운영 여부, 예약, 현장 상황은 조회 결과에 없으면 추정하지 마세요.
-                조회 결과가 없으면 확인된 일정이 없다고만 말하고 분위기나 개최 가능성을 추정하지 마세요.
+                조회 결과가 없으면 시작일과 종료일이 모두 확인된 축제 일정이 없다고만 말하고 분위기나 개최 가능성을 추정하지 마세요.
                 조회 실패는 정보 없음으로 바꾸지 말고 지금은 가져올 수 없다고 구분해서 설명하세요.
                 """ + "\n" + taskRule;
     }
@@ -1812,12 +2559,12 @@ public class ChatbotService {
     }
 
     private String fallbackReply(String message, String localContext, ChatAction action) {
+        if (action != null && "NAVIGATE".equals(action.getType()) && "COMMUNITY_COMPOSE".equals(action.getTarget())) {
+            return "후기 작성 화면을 열었어요. 사진과 함께 본 장소나 느낌을 편하게 남겨보세요. 글 내용은 직접 작성하고 저장해 주세요.";
+        }
         StringBuilder reply = new StringBuilder();
         reply.append("확인한 정보를 바탕으로 안내드릴게요.\n\n");
         reply.append(localContext);
-        if (action != null && "NAVIGATE".equals(action.getType()) && "COMMUNITY_COMPOSE".equals(action.getTarget())) {
-            reply.append("\n\n게시글 작성 화면을 열도록 준비했습니다. 글 내용은 생성하거나 저장하지 않았습니다.");
-        }
         return reply.toString();
     }
 
@@ -1892,6 +2639,26 @@ public class ChatbotService {
         }
     }
 
+    private String resolveRequestId(ChatMessageRequest request) {
+        String requestId = request == null ? "" : request.getRequestId();
+        return requestId == null || requestId.isBlank() ? UUID.randomUUID().toString() : requestId.trim();
+    }
+
+    private Object withRequestId(Object data, String requestId) {
+        if (data instanceof Map<?, ?> map) {
+            Map<String, Object> wrapped = new LinkedHashMap<>();
+            map.forEach((key, value) -> {
+                if (key != null) {
+                    wrapped.put(key.toString(), value);
+                }
+            });
+            wrapped.put("requestId", requestId);
+            wrapped.put("request_id", requestId);
+            return wrapped;
+        }
+        return data;
+    }
+
     private String actionStatusMessage(List<ChatAction> actions) {
         if (actions == null || actions.isEmpty()) {
             return "앱 액션을 준비하고 있어요.";
@@ -1916,6 +2683,43 @@ public class ChatbotService {
                 .status(status)
                 .message(message)
                 .build();
+    }
+
+    private String toolStepStatus(ToolResult result) {
+        return isErrorResult(result) ? "ERROR" : "SUCCESS";
+    }
+
+    private ToolResult safeToolResult(
+            String toolName,
+            String summary,
+            String userError,
+            AgentPlan plan,
+            Supplier<ToolResult> supplier
+    ) {
+        try {
+            return supplier.get();
+        } catch (Exception e) {
+            log.error("도구 실행 실패: tool={}, domain={}, task={}, route={}, reason={}",
+                    toolName,
+                    plan.domain(),
+                    plan.task(),
+                    plan.intents(),
+                    e.getClass().getSimpleName(),
+                    e);
+            return ToolResult.builder()
+                    .tool(toolName)
+                    .status("ERROR")
+                    .summary(summary)
+                    .error(userError)
+                    .data(Map.of(
+                            "failed", true,
+                            "items", List.of(),
+                            "tool", toolName,
+                            "task", plan.task() == null ? "" : plan.task(),
+                            "route", joinIntents(plan.intents() == null ? List.of() : plan.intents()),
+                            "dateFilter", plan.dateFilter() == null ? "none" : plan.dateFilter()))
+                    .build();
+        }
     }
 
     @Scheduled(fixedDelay = 300_000) // 5분마다 만료 세션 정리
@@ -1951,7 +2755,8 @@ public class ChatbotService {
             String routeMode,
             boolean needsScreen,
             String confidence,
-            String reason
+            String reason,
+            String flow
     ) {
         private AgentPlan(
                 List<RouteIntent> intents,
@@ -1960,7 +2765,7 @@ public class ChatbotService {
                 List<ChatAction> actions,
                 String source
         ) {
-            this(intents, informationTask, searchKeyword, actions, source, "", "", "none", 0, 0, false, false, "none", false, "", "");
+            this(intents, informationTask, searchKeyword, actions, source, "", "", "none", 0, 0, false, false, "none", false, "", "", "");
         }
     }
 
@@ -1989,6 +2794,35 @@ public class ChatbotService {
             String confidence,
             String reason,
             String source
+    ) {
+    }
+
+    private record RouteDecision(
+            String flow,
+            String keyword,
+            String reason,
+            String confidence,
+            String source
+    ) {
+    }
+
+    private enum EvidenceStatus {
+        SUFFICIENT,
+        INSUFFICIENT,
+        NONE,
+        ERROR
+    }
+
+    private record EvidenceCheck(
+            EvidenceStatus status,
+            String message
+    ) {
+    }
+
+    private record ToolLoopExecution(
+            List<ToolResult> toolResults,
+            EvidenceStatus evidenceStatus,
+            String evidenceMessage
     ) {
     }
 
@@ -2096,6 +2930,7 @@ public class ChatbotService {
                     appendIfPresent(context, row, "content", "내용");
                     appendIfPresent(context, row, "species", "꽃 종류");
                     appendIfPresent(context, row, "plantName", "식물명");
+                    appendIfPresent(context, row, "address", "주소");
                     appendIfPresent(context, row, "scientificName", "학명");
                     appendIfPresent(context, row, "description", "설명");
                     appendIfPresent(context, row, "shortDescription", "요약");
@@ -2106,7 +2941,6 @@ public class ChatbotService {
                     appendIfPresent(context, row, "imageUrl", "이미지");
                     appendIfPresent(context, row, "spotCount", "승인 명소 수");
                     appendIfPresent(context, row, "representativeSpotName", "대표 명소");
-                    appendIfPresent(context, row, "address", "주소");
                     appendIfPresent(context, row, "period", "기간");
                     appendIfPresent(context, row, "tel", "문의");
                     appendIfPresent(context, row, "likes", "좋아요");

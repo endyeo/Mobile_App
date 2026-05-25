@@ -126,6 +126,35 @@ public interface CommunityPostRepository extends JpaRepository<CommunityPost, Lo
             @Param("to") LocalDateTime to,
             Pageable pageable);
 
+    /**
+     * UI 검색 화면용 — 날짜 필터 없는 단순 키워드 매칭 + 최신순 정렬.
+     * 챗봇용 findLatestPosts는 from/to 파라미터를 받지만 UI에선 항상 null이라
+     * PostgreSQL의 :param IS NULL 패턴이 파라미터 타입 추론 실패를 일으킴.
+     * 따라서 날짜 조건이 아예 없는 별도 메서드로 분리.
+     */
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE :keyword = ''
+            OR LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.user.nickname, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+        ORDER BY p.createdAt DESC
+    """)
+    List<CommunityPost> searchLatest(@Param("keyword") String keyword, Pageable pageable);
+
+    /** UI 검색 화면용 — 인기순 (좋아요 + 댓글 + 최신) */
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE :keyword = ''
+            OR LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+            OR LOWER(COALESCE(p.user.nickname, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+        ORDER BY p.likeCount DESC, p.commentCount DESC, p.createdAt DESC
+    """)
+    List<CommunityPost> searchPopular(@Param("keyword") String keyword, Pageable pageable);
+
     @Modifying
     @Query("UPDATE CommunityPost p SET p.commentCount = p.commentCount + 1 WHERE p.id = :postId")
     int incrementCommentCount(@Param("postId") Long postId);

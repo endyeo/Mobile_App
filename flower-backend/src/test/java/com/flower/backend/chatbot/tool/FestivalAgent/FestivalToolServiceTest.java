@@ -1,21 +1,27 @@
 package com.flower.backend.chatbot.tool.FestivalAgent;
 
 import com.flower.backend.chatbot.dto.ToolResult;
+import com.flower.backend.festival.Festival;
+import com.flower.backend.festival.FestivalRepository;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class FestivalToolServiceTest {
@@ -81,6 +87,54 @@ class FestivalToolServiceTest {
     }
 
     @Test
+    void dateRangeRequiresBothStartAndEndDate() {
+        FestivalToolService.DateRange range = FestivalToolService.resolveDateRange("upcoming", today);
+
+        assertThat(FestivalToolService.matchesFestivalDateRange("20260601", "", range, today))
+                .isFalse();
+        assertThat(FestivalToolService.matchesFestivalDateRange("", "20260610", range, today))
+                .isFalse();
+    }
+
+    @Test
+    void chatbotFestivalToolUsesDbRepositoryBeforeTourApi() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        FestivalRepository festivalRepository = mock(FestivalRepository.class);
+        FestivalToolService service = new FestivalToolService(restTemplate, festivalRepository);
+        when(festivalRepository.searchChatbotCandidates(anyString(), any(), eq("수국"), any(Pageable.class)))
+                .thenReturn(List.of(
+                        festival("1", "수국 축제", "20991201", "20991210", "서울", "중구"),
+                        festival("missing-end", "수국 기간 미정", "20991201", "", "서울", "중구")
+                ));
+
+        ToolResult result = service.searchFlowerFestivalsResult("수국", null, false, "upcoming");
+        Map<String, Object> data = result.getData();
+
+        assertThat(result.getStatus()).isEqualTo("SUCCESS");
+        assertFestivalDbContract(data);
+        assertThat(data).containsEntry("query", "수국");
+        assertThat(items(data)).hasSize(1);
+        assertThat(items(data).get(0)).containsEntry("title", "수국 축제");
+        assertOnlyDatedFestivalItems(data);
+        verify(festivalRepository).searchChatbotCandidates(anyString(), any(), eq("수국"), any(Pageable.class));
+        verifyNoInteractions(restTemplate);
+    }
+
+    @Test
+    void genericFestivalKeywordDoesNotOverFilterDbCandidates() {
+        FestivalRepository festivalRepository = mock(FestivalRepository.class);
+        FestivalToolService service = new FestivalToolService(mock(RestTemplate.class), festivalRepository);
+        when(festivalRepository.searchChatbotCandidates(anyString(), any(), eq(""), any(Pageable.class)))
+                .thenReturn(List.of(festival("rose", "장미축제", "20991201", "20991210", "서울", "중구")));
+
+        ToolResult result = service.searchFlowerFestivalsResult("꽃", null, false, "upcoming");
+
+        assertThat(items(result.getData())).hasSize(1);
+        assertThat(items(result.getData()).get(0)).containsEntry("title", "장미축제");
+        verify(festivalRepository).searchChatbotCandidates(anyString(), any(), eq(""), any(Pageable.class));
+    }
+
+    @Test
     void searchFestival2ResultSkipsKeywordFallback() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         FestivalToolService service = service(restTemplate);
@@ -90,18 +144,20 @@ class FestivalToolServiceTest {
         ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
         Map<String, Object> data = result.getData();
 
-        assertThat(data.get("keywordFallbackUsed")).isEqualTo(false);
-        assertThat(data.get("primaryEndpoint")).isEqualTo("searchFestival2");
-        assertThat(data.get("fallbackEndpoint")).isEqualTo("searchKeyword2");
-        assertThat(data.get("rawFestivalCount")).isEqualTo(1);
-        assertThat(data.get("flowerFilteredCount")).isEqualTo(1);
+        assertFestivalDbContract(data);
+        assertThat(data).containsEntry("query", "축제");
+        assertThat(data).containsEntry("dateFilter", "upcoming");
+        assertThat(data).containsEntry("excludedPastCount", 0);
+        assertThat(data).containsEntry("locationUsed", false);
         assertThat(items(data)).hasSize(1);
+        assertOnlyDatedFestivalItems(data);
+        assertThat(items(data).get(0)).containsEntry("source", "festival_db");
         assertThat((String) items(data).get(0).get("imageUrl")).startsWith("https://");
         verify(restTemplate, times(1)).getForObject(anyString(), eq(String.class));
     }
 
     @Test
-    void emptySearchFestival2UsesSixKeywordFallbacksAndDedupes() {
+    void emptySearchFestival2UsesTwoKeywordFallbacksAndDedupes() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         FestivalToolService service = service(restTemplate);
         when(restTemplate.getForObject(anyString(), eq(String.class))).thenAnswer(invocation -> {
@@ -109,17 +165,132 @@ class FestivalToolServiceTest {
             if (uri.contains("searchFestival2")) {
                 return emptyResponse();
             }
+            if (uri.contains("detailIntro2")) {
+                return detailIntroResponse("20991201", "20991210");
+            }
             return responseArray(item("same", "장미축제", "20991201", "20991210", ""));
         });
 
         ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
         Map<String, Object> data = result.getData();
 
-        assertThat(data.get("keywordFallbackUsed")).isEqualTo(true);
-        assertThat(data.get("rawFestivalCount")).isEqualTo(1);
-        assertThat(data.get("flowerFilteredCount")).isEqualTo(1);
+        assertFestivalDbContract(data);
         assertThat(items(data)).hasSize(1);
-        verify(restTemplate, times(7)).getForObject(anyString(), eq(String.class));
+        assertOnlyDatedFestivalItems(data);
+        verify(restTemplate, times(3)).getForObject(anyString(), eq(String.class));
+    }
+
+    @Test
+    void enrichesMissingDatesFromDetailIntro2BeforeReturningFestival() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        FestivalToolService service = service(restTemplate);
+        when(restTemplate.getForObject(anyString(), eq(String.class))).thenAnswer(invocation -> {
+            String uri = invocation.getArgument(0);
+            if (uri.contains("searchFestival2")) {
+                return emptyResponse();
+            }
+            if (uri.contains("searchKeyword2")) {
+                return responseArray(item("same", "장미축제", "", "", ""));
+            }
+            if (uri.contains("detailIntro2")) {
+                return detailIntroResponse("20991201", "20991210");
+            }
+            return emptyResponse();
+        });
+
+        ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
+        Map<String, Object> data = result.getData();
+
+        assertFestivalDbContract(data);
+        assertThat(items(data)).hasSize(1);
+        assertThat(items(data).get(0)).containsEntry("eventStartDate", "20991201");
+        assertThat(items(data).get(0)).containsEntry("eventEndDate", "20991210");
+        assertOnlyDatedFestivalItems(data);
+    }
+
+    @Test
+    void keepsFestivalExcludedWhenDetailIntro2DoesNotProvideDates() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        FestivalToolService service = service(restTemplate);
+        when(restTemplate.getForObject(anyString(), eq(String.class))).thenAnswer(invocation -> {
+            String uri = invocation.getArgument(0);
+            if (uri.contains("searchFestival2")) {
+                return emptyResponse();
+            }
+            if (uri.contains("searchKeyword2")) {
+                return responseArray(item("same", "장미축제", "", "", ""));
+            }
+            if (uri.contains("detailIntro2")) {
+                return detailIntroResponse("", "");
+            }
+            return emptyResponse();
+        });
+
+        ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
+        Map<String, Object> data = result.getData();
+
+        assertFestivalDbContract(data);
+        assertThat(items(data)).isEmpty();
+    }
+
+    @Test
+    void keepsFestivalExcludedWhenDetailIntro2ProvidesOnlyOneDate() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        FestivalToolService service = service(restTemplate);
+        when(restTemplate.getForObject(anyString(), eq(String.class))).thenAnswer(invocation -> {
+            String uri = invocation.getArgument(0);
+            if (uri.contains("searchFestival2")) {
+                return emptyResponse();
+            }
+            if (uri.contains("searchKeyword2")) {
+                return responseArray(item("same", "장미축제", "", "", ""));
+            }
+            if (uri.contains("detailIntro2")) {
+                return detailIntroResponse("20991201", "");
+            }
+            return emptyResponse();
+        });
+
+        ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
+        Map<String, Object> data = result.getData();
+
+        assertFestivalDbContract(data);
+        assertThat(items(data)).isEmpty();
+    }
+
+    @Test
+    void timeoutReturnsErrorWithDiagnostics() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        FestivalToolService service = service(restTemplate);
+        when(restTemplate.getForObject(anyString(), eq(String.class)))
+                .thenThrow(new ResourceAccessException("Read timed out"));
+
+        ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
+
+        assertThat(result.getStatus()).isEqualTo("ERROR");
+        assertFestivalDbContract(result.getData());
+        assertThat(result.getData()).containsEntry("query", "축제");
+        assertThat(result.getData()).containsEntry("dateFilter", "upcoming");
+        assertThat((List<?>) result.getData().get("items")).isEmpty();
+    }
+
+    @Test
+    void fallbackTimeoutWithNoItemsReturnsError() {
+        RestTemplate restTemplate = mock(RestTemplate.class);
+        FestivalToolService service = service(restTemplate);
+        when(restTemplate.getForObject(anyString(), eq(String.class))).thenAnswer(invocation -> {
+            String uri = invocation.getArgument(0);
+            if (uri.contains("searchFestival2")) {
+                return emptyResponse();
+            }
+            throw new ResourceAccessException("Read timed out");
+        });
+
+        ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
+
+        assertThat(result.getStatus()).isEqualTo("ERROR");
+        assertFestivalDbContract(result.getData());
+        assertThat((List<?>) result.getData().get("items")).isEmpty();
     }
 
     @Test
@@ -131,8 +302,10 @@ class FestivalToolServiceTest {
 
         ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
 
+        assertFestivalDbContract(result.getData());
         assertThat(items(result.getData())).hasSize(1);
         assertThat(items(result.getData()).get(0).get("title")).isEqualTo("국화축제");
+        assertOnlyDatedFestivalItems(result.getData());
     }
 
     @Test
@@ -151,9 +324,11 @@ class FestivalToolServiceTest {
         ToolResult result = service.searchFlowerFestivalsResult("축제", null, false, "upcoming");
         Map<String, Object> data = result.getData();
 
+        assertFestivalDbContract(data);
         assertThat(data.get("excludedPastCount")).isEqualTo(1);
         assertThat(items(data)).hasSize(1);
         assertThat(items(data).get(0).get("title")).isEqualTo("오늘 꽃축제");
+        assertOnlyDatedFestivalItems(data);
     }
 
     private FestivalToolService service(RestTemplate restTemplate) {
@@ -162,9 +337,72 @@ class FestivalToolServiceTest {
         return service;
     }
 
+    private Festival festival(
+            String id,
+            String title,
+            String startDate,
+            String endDate,
+            String addr1,
+            String addr2
+    ) {
+        return Festival.builder()
+                .contentId(id)
+                .title(title)
+                .addr1(addr1)
+                .addr2(addr2)
+                .mapX(126.9780)
+                .mapY(37.5665)
+                .firstImage("http://example.com/a.jpg")
+                .firstImage2("")
+                .tel("02-0000-0000")
+                .eventStartDate(startDate)
+                .eventEndDate(endDate)
+                .build();
+    }
+
     @SuppressWarnings("unchecked")
     private List<Map<String, Object>> items(Map<String, Object> data) {
         return (List<Map<String, Object>>) data.get("items");
+    }
+
+    private void assertFestivalDbContract(Map<String, Object> data) {
+        assertThat(data).containsKeys("source", "items", "dateFilter", "query", "excludedPastCount", "locationUsed");
+        assertThat(data).containsEntry("source", "festival_db");
+        assertThat(data).doesNotContainKeys(
+                "primaryEndpoint",
+                "fallbackEndpoint",
+                "keywordFallbackUsed",
+                "apiTimedOut",
+                "fallbackLimited",
+                "attemptedEndpoints",
+                "elapsedMs",
+                "detailIntroAttemptedCount",
+                "detailIntroEnrichedCount",
+                "detailIntroFailedCount",
+                "detailIntroLimited",
+                "rawFestivalCount",
+                "flowerFilteredCount",
+                "excludedDateCount",
+                "excludedUnknownDateCount",
+                "rawSamples",
+                "pageSamples",
+                "failureReason",
+                "lat",
+                "lng",
+                "nearby",
+                "keyword",
+                "today",
+                "rangeStart",
+                "rangeEnd"
+        );
+    }
+
+    private void assertOnlyDatedFestivalItems(Map<String, Object> data) {
+        for (Map<String, Object> item : items(data)) {
+            assertThat((String) item.get("eventStartDate")).isNotBlank();
+            assertThat((String) item.get("eventEndDate")).isNotBlank();
+            assertThat((String) item.get("period")).isNotBlank();
+        }
     }
 
     private String emptyResponse() {
@@ -183,6 +421,12 @@ class FestivalToolServiceTest {
         return """
                 {"response":{"body":{"items":{"item":%s}}}}
                 """.formatted(item);
+    }
+
+    private String detailIntroResponse(String eventStartDate, String eventEndDate) {
+        return """
+                {"response":{"body":{"items":{"item":{"eventstartdate":"%s","eventenddate":"%s"}}}}}
+                """.formatted(eventStartDate, eventEndDate);
     }
 
     private String item(String id, String title, String startDate, String endDate, String imageUrl) {

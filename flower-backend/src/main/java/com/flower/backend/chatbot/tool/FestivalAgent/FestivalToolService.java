@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.flower.backend.chatbot.dto.ChatMessageRequest;
 import com.flower.backend.chatbot.dto.ToolResult;
+import com.flower.backend.festival.Festival;
+import com.flower.backend.festival.FestivalRepository;
+import java.time.Duration;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -16,34 +19,63 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class FestivalToolService {
 
     private static final ObjectMapper JSON_MAPPER = new ObjectMapper();
     private static final String BASE_URL = "https://apis.data.go.kr/B551011/KorService2";
     private static final DateTimeFormatter TOUR_DATE = DateTimeFormatter.BASIC_ISO_DATE;
     private static final ZoneId KOREA_ZONE = ZoneId.of("Asia/Seoul");
+    private static final Duration CONNECT_TIMEOUT = Duration.ofSeconds(2);
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(3);
+    private static final long TOTAL_TIME_BUDGET_MS = 9_000L;
+    private static final long MIN_FALLBACK_REMAINING_MS = 4_000L;
+    private static final long MIN_DETAIL_INTRO_REMAINING_MS = 2_500L;
+    private static final int DETAIL_INTRO_MAX_ATTEMPTS = 5;
+    private static final int SEARCH_FESTIVAL_MAX_PAGES = 3;
+    private static final int SEARCH_FESTIVAL_ROWS_PER_PAGE = 60;
     private static final List<String> FLOWER_KEYWORDS = List.of(
             "꽃", "벚꽃", "진달래", "매화", "수국", "장미", "개나리", "철쭉", "국화",
             "해바라기", "코스모스", "동백", "유채", "flower"
     );
-    private static final List<String> PRIORITY_FESTIVAL_KEYWORDS = List.of(
-            "꽃", "벚꽃", "매화", "유채", "장미", "국화"
-    );
+    private static final List<String> PRIORITY_FESTIVAL_KEYWORDS = List.of("꽃", "벚꽃", "매화", "유채", "장미", "국화");
+    private static final List<String> GENERIC_FESTIVAL_KEYWORDS = List.of("꽃", "축제", "행사", "페스티벌");
 
     private final RestTemplate restTemplate;
+    private final FestivalRepository festivalRepository;
 
     @Value("${tour.api-key:${TOUR_API_KEY:}}")
     private String tourApiKey;
+
+    public FestivalToolService(FestivalRepository festivalRepository) {
+        this(createTimeoutRestTemplate(), festivalRepository);
+    }
+
+    FestivalToolService(RestTemplate restTemplate) {
+        this(restTemplate, null);
+    }
+
+    FestivalToolService(RestTemplate restTemplate, FestivalRepository festivalRepository) {
+        this.restTemplate = restTemplate;
+        this.festivalRepository = festivalRepository;
+    }
+
+    private static RestTemplate createTimeoutRestTemplate() {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout((int) CONNECT_TIMEOUT.toMillis());
+        requestFactory.setReadTimeout((int) READ_TIMEOUT.toMillis());
+        return new RestTemplate(requestFactory);
+    }
 
     public ToolResult searchFlowerFestivalsResult(
             String keyword,
@@ -66,6 +98,11 @@ public class FestivalToolService {
         String effectiveDateFilter = normalizeDateFilter(dateFilter);
         LocalDate today = LocalDate.now(KOREA_ZONE);
         DateRange dateRange = resolveDateRange(effectiveDateFilter, today);
+        if (festivalRepository != null) {
+            return searchFlowerFestivalsFromDbResult(sanitized, location, nearby, effectiveDateFilter, dateRange, today);
+        }
+        long startedAt = System.currentTimeMillis();
+        List<String> attemptedEndpoints = new ArrayList<>();
 
         if (tourApiKey == null || tourApiKey.isBlank()) {
             Map<String, Object> data = diagnosticData(
@@ -73,36 +110,47 @@ public class FestivalToolService {
                     nearby,
                     location,
                     effectiveDateFilter,
-                    dateRange,
-                    today,
-                    false,
-                    0,
-                    0,
-                    0,
-                    0,
                     0
             );
             return ToolResult.builder()
                     .tool("festival.searchFlowerFestivals")
                     .status("ERROR")
-                    .summary("Tour API 키가 없어 축제 정보를 조회할 수 없습니다.")
-                    .error("TOUR_API_KEY is not configured.")
+                    .summary("축제 정보 조회 설정이 없어 축제 정보를 조회할 수 없습니다.")
+                    .error("FESTIVAL_SOURCE_NOT_CONFIGURED")
                     .data(data)
                     .build();
         }
 
         try {
-            List<FestivalItem> rawItems = fetchUpcomingFestivals(today.minusMonths(3));
+            FetchResult primaryFetch = fetchUpcomingFestivalPages(primaryFestivalStartDate(dateRange, today), attemptedEndpoints, startedAt);
+            List<FestivalItem> rawItems = primaryFetch.items();
             FestivalSelection selection = selectFestivals(rawItems, dateRange, today, location, nearby);
-            boolean keywordFallbackUsed = false;
+            boolean apiTimedOut = primaryFetch.timedOut();
+            DetailIntroStats detailIntroStats = DetailIntroStats.empty();
 
-            if (selection.flowerFilteredCount() == 0) {
-                keywordFallbackUsed = true;
-                rawItems = fetchPriorityKeywordFestivals();
+            if (selection.items().isEmpty() && shouldUseKeywordFallback(sanitized)) {
+                long remainingMs = remainingMs(startedAt);
+                if (remainingMs >= MIN_FALLBACK_REMAINING_MS) {
+                    FetchResult fallbackFetch = fetchPriorityKeywordFestivals(attemptedEndpoints, startedAt);
+                    rawItems = mergeAndDedupe(rawItems, fallbackFetch.items());
+                    DetailIntroEnrichment enrichment = enrichFestivalDates(rawItems, attemptedEndpoints, startedAt);
+                    rawItems = enrichment.items();
+                    detailIntroStats = enrichment.stats();
+                    selection = selectFestivals(rawItems, dateRange, today, location, nearby);
+                    apiTimedOut = apiTimedOut || fallbackFetch.timedOut();
+                }
+            }
+            if (selection.excludedUnknownDateCount() > 0
+                    && detailIntroStats.detailIntroAttemptedCount() == 0
+                    && remainingMs(startedAt) >= MIN_DETAIL_INTRO_REMAINING_MS) {
+                DetailIntroEnrichment enrichment = enrichFestivalDates(rawItems, attemptedEndpoints, startedAt);
+                rawItems = enrichment.items();
+                detailIntroStats = detailIntroStats.plus(enrichment.stats());
                 selection = selectFestivals(rawItems, dateRange, today, location, nearby);
             }
 
             List<Map<String, Object>> rows = selection.items().stream()
+                    .filter(FestivalItem::hasUsableDate)
                     .limit(5)
                     .map(festival -> festival.toItem(location))
                     .toList();
@@ -112,16 +160,19 @@ public class FestivalToolService {
                     nearby,
                     location,
                     effectiveDateFilter,
-                    dateRange,
-                    today,
-                    keywordFallbackUsed,
-                    selection.rawFestivalCount(),
-                    selection.flowerFilteredCount(),
-                    selection.excludedPastCount(),
-                    selection.excludedDateCount(),
-                    selection.excludedUnknownDateCount()
+                    selection.excludedPastCount()
             );
             data.put("items", rows);
+
+            if (rows.isEmpty() && apiTimedOut) {
+                return ToolResult.builder()
+                        .tool("festival.searchFlowerFestivals")
+                        .status("ERROR")
+                        .summary("축제 정보 조회가 지연되어 결과를 가져오지 못했습니다.")
+                        .error("축제 정보 조회가 지연되어 결과를 가져오지 못했습니다.")
+                        .data(data)
+                        .build();
+            }
 
             return ToolResult.builder()
                     .tool("festival.searchFlowerFestivals")
@@ -137,26 +188,73 @@ public class FestivalToolService {
                     nearby,
                     location,
                     effectiveDateFilter,
-                    dateRange,
-                    today,
-                    false,
-                    0,
-                    0,
-                    0,
-                    0,
                     0
             );
             return ToolResult.builder()
                     .tool("festival.searchFlowerFestivals")
                     .status("ERROR")
                     .summary("축제 정보 조회에 실패했습니다.")
-                    .error("Tour API 축제 조회 중 오류가 발생했습니다.")
+                    .error("축제 정보 조회 중 오류가 발생했습니다.")
                     .data(data)
                     .build();
         }
     }
 
-    private List<FestivalItem> fetchByKeyword(String keyword) throws Exception {
+    private ToolResult searchFlowerFestivalsFromDbResult(
+            String keyword,
+            ChatMessageRequest.LocationContext location,
+            boolean nearby,
+            String dateFilter,
+            DateRange dateRange,
+            LocalDate today
+    ) {
+        try {
+            String effectiveKeyword = shouldApplyKeywordFilter(keyword) ? keyword : "";
+            List<FestivalItem> rawItems = festivalRepository.searchChatbotCandidates(
+                            dateRange.start().format(TOUR_DATE),
+                            dateRange.end() == null ? null : dateRange.end().format(TOUR_DATE),
+                            effectiveKeyword,
+                            PageRequest.of(0, 100))
+                    .stream()
+                    .map(FestivalItem::from)
+                    .toList();
+            FestivalSelection selection = selectFestivals(rawItems, dateRange, today, location, nearby);
+            List<Map<String, Object>> rows = selection.items().stream()
+                    .filter(FestivalItem::hasUsableDate)
+                    .limit(5)
+                    .map(festival -> festival.toItem(location))
+                    .toList();
+
+            Map<String, Object> data = diagnosticData(
+                    keyword,
+                    nearby,
+                    location,
+                    dateFilter,
+                    selection.excludedPastCount()
+            );
+            data.put("items", rows);
+
+            return ToolResult.builder()
+                    .tool("festival.searchFlowerFestivals")
+                    .status("SUCCESS")
+                    .summary(dateRange.label() + " 기준 '" + keyword + "' DB 축제 검색 결과 "
+                            + rows.size() + "건을 찾았습니다.")
+                    .data(data)
+                    .build();
+        } catch (Exception e) {
+            log.warn("[Tool:festival] DB 축제 조회 실패: {}", e.getMessage());
+            return ToolResult.builder()
+                    .tool("festival.searchFlowerFestivals")
+                    .status("ERROR")
+                    .summary("축제 정보 조회에 실패했습니다.")
+                    .error("축제 DB 조회 중 오류가 발생했습니다.")
+                    .data(diagnosticData(keyword, nearby, location, dateFilter, 0))
+                    .build();
+        }
+    }
+
+    private FetchResult fetchByKeyword(String keyword, List<String> attemptedEndpoints) throws Exception {
+        attemptedEndpoints.add("searchKeyword2:" + keyword);
         String uri = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/searchKeyword2")
                 .queryParam("serviceKey", tourApiKey)
                 .queryParam("numOfRows", 30)
@@ -168,36 +266,155 @@ public class FestivalToolService {
                 .queryParam("contentTypeId", "15")
                 .build(false)
                 .toUriString();
-        return parseFestivalList(restTemplate.getForObject(uri, String.class));
+        return new FetchResult(parseFestivalList(restTemplate.getForObject(uri, String.class)), false, false);
     }
 
-    private List<FestivalItem> fetchPriorityKeywordFestivals() {
+    private FetchResult fetchPriorityKeywordFestivals(List<String> attemptedEndpoints, long startedAt) {
         List<FestivalItem> merged = new ArrayList<>();
+        boolean apiTimedOut = false;
+        boolean fallbackLimited = false;
         for (String keyword : PRIORITY_FESTIVAL_KEYWORDS) {
+            if (remainingMs(startedAt) < MIN_FALLBACK_REMAINING_MS) {
+                fallbackLimited = true;
+                break;
+            }
             try {
-                merged.addAll(fetchByKeyword(keyword));
+                FetchResult fetchResult = fetchByKeyword(keyword, attemptedEndpoints);
+                merged.addAll(fetchResult.items());
+                apiTimedOut = apiTimedOut || fetchResult.timedOut();
             } catch (Exception e) {
+                apiTimedOut = apiTimedOut || isTimeoutException(e);
                 log.warn("[Tool:festival] Tour API 키워드 축제 조회 실패(keyword={}): {}", keyword, e.getMessage());
             }
         }
-        return merged;
+        return new FetchResult(merged, apiTimedOut, fallbackLimited);
     }
 
-    private List<FestivalItem> fetchUpcomingFestivals(LocalDate eventStartDateValue) throws Exception {
+    private LocalDate primaryFestivalStartDate(DateRange dateRange, LocalDate today) {
+        if ("this_week".equals(dateRange.filter()) || "this_month".equals(dateRange.filter())) {
+            return dateRange.start();
+        }
+        return today;
+    }
+
+    private FetchResult fetchUpcomingFestivalPages(
+            LocalDate eventStartDateValue,
+            List<String> attemptedEndpoints,
+            long startedAt
+    ) {
+        List<FestivalItem> merged = new ArrayList<>();
+        boolean apiTimedOut = false;
+        boolean limited = false;
+        for (int pageNo = 1; pageNo <= SEARCH_FESTIVAL_MAX_PAGES; pageNo++) {
+            if (remainingMs(startedAt) < MIN_FALLBACK_REMAINING_MS) {
+                limited = true;
+                break;
+            }
+            try {
+                FetchResult pageFetch = fetchUpcomingFestivals(eventStartDateValue, pageNo, attemptedEndpoints);
+                merged.addAll(pageFetch.items());
+            } catch (Exception e) {
+                apiTimedOut = apiTimedOut || isTimeoutException(e);
+                log.warn("[Tool:festival] Tour API 축제 목록 조회 실패(page={}): {}", pageNo, e.getMessage());
+            }
+        }
+        return new FetchResult(dedupe(merged), apiTimedOut, limited);
+    }
+
+    private FetchResult fetchUpcomingFestivals(
+            LocalDate eventStartDateValue,
+            int pageNo,
+            List<String> attemptedEndpoints
+    ) throws Exception {
         String eventStartDate = eventStartDateValue.format(TOUR_DATE);
-        // searchFestival2는 축제 전용 엔드포인트라 contentTypeId 파라미터를 거부함.
-        // 검색 키워드 엔드포인트(searchKeyword2)에서만 contentTypeId를 사용한다.
+        attemptedEndpoints.add("searchFestival2:" + pageNo);
         String uri = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/searchFestival2")
                 .queryParam("serviceKey", tourApiKey)
-                .queryParam("numOfRows", 60)
-                .queryParam("pageNo", 1)
+                .queryParam("numOfRows", SEARCH_FESTIVAL_ROWS_PER_PAGE)
+                .queryParam("pageNo", pageNo)
                 .queryParam("MobileOS", "ETC")
                 .queryParam("MobileApp", "FlowerApp")
                 .queryParam("_type", "json")
                 .queryParam("eventStartDate", eventStartDate)
                 .build(false)
                 .toUriString();
-        return parseFestivalList(restTemplate.getForObject(uri, String.class));
+        return new FetchResult(parseFestivalList(restTemplate.getForObject(uri, String.class)), false, false);
+    }
+
+    private DetailIntroEnrichment enrichFestivalDates(
+            List<FestivalItem> rawItems,
+            List<String> attemptedEndpoints,
+            long startedAt
+    ) {
+        List<FestivalItem> deduped = dedupe(rawItems);
+        Map<String, FestivalItem> enrichedByKey = new LinkedHashMap<>();
+        int attempted = 0;
+        int enriched = 0;
+        int failed = 0;
+        boolean limited = false;
+
+        for (FestivalItem festival : deduped) {
+            String key = festivalKey(festival);
+            FestivalItem current = festival;
+            if (festival.hasLocation() && festival.isFlowerFestival() && !festival.hasUsableDate()) {
+                if (attempted >= DETAIL_INTRO_MAX_ATTEMPTS || remainingMs(startedAt) < MIN_DETAIL_INTRO_REMAINING_MS) {
+                    limited = true;
+                } else {
+                    attempted++;
+                    try {
+                        attemptedEndpoints.add("detailIntro2:" + festival.contentId());
+                        current = fetchFestivalDetailIntro(festival);
+                        if (current.hasUsableDate()) {
+                            enriched++;
+                        } else {
+                            failed++;
+                        }
+                    } catch (Exception e) {
+                        failed++;
+                        log.warn("[Tool:festival] detailIntro2 보강 실패(contentId={}): {}", festival.contentId(), e.getMessage());
+                    }
+                }
+            }
+            enrichedByKey.putIfAbsent(key, current);
+        }
+
+        return new DetailIntroEnrichment(
+                new ArrayList<>(enrichedByKey.values()),
+                new DetailIntroStats(attempted, enriched, failed, limited)
+        );
+    }
+
+    private FestivalItem fetchFestivalDetailIntro(FestivalItem festival) throws Exception {
+        if (festival.contentId().isBlank()) {
+            return festival;
+        }
+        String uri = UriComponentsBuilder.fromHttpUrl(BASE_URL + "/detailIntro2")
+                .queryParam("serviceKey", tourApiKey)
+                .queryParam("contentId", festival.contentId())
+                .queryParam("contentTypeId", "15")
+                .queryParam("MobileOS", "ETC")
+                .queryParam("MobileApp", "FlowerApp")
+                .queryParam("_type", "json")
+                .build(false)
+                .toUriString();
+        return mergeFestivalDates(festival, restTemplate.getForObject(uri, String.class));
+    }
+
+    private FestivalItem mergeFestivalDates(FestivalItem festival, String responseBody) throws Exception {
+        if (responseBody == null || responseBody.isBlank()) {
+            return festival;
+        }
+        JsonNode root = JSON_MAPPER.readTree(responseBody);
+        JsonNode item = root.path("response").path("body").path("items").path("item");
+        if (item.isArray()) {
+            item = item.size() > 0 ? item.get(0) : null;
+        }
+        if (item == null || item.isMissingNode() || item.isNull()) {
+            return festival;
+        }
+        String eventStartDate = FestivalItem.text(item, "eventstartdate");
+        String eventEndDate = FestivalItem.text(item, "eventenddate");
+        return festival.withDates(eventStartDate, eventEndDate);
     }
 
     static String normalizeDateFilter(String dateFilter) {
@@ -293,14 +510,8 @@ public class FestivalToolService {
     static boolean matchesFestivalDateRange(String eventStartDate, String eventEndDate, DateRange dateRange, LocalDate today) {
         LocalDate startDate = parseTourDate(eventStartDate);
         LocalDate endDate = parseTourDate(eventEndDate);
-        if (startDate == null && endDate == null) {
+        if (startDate == null || endDate == null) {
             return false;
-        }
-        if (startDate == null) {
-            startDate = endDate;
-        }
-        if (endDate == null) {
-            endDate = startDate;
         }
         if (endDate.isBefore(today)) {
             return false;
@@ -316,36 +527,15 @@ public class FestivalToolService {
             boolean nearby,
             ChatMessageRequest.LocationContext location,
             String dateFilter,
-            DateRange dateRange,
-            LocalDate today,
-            boolean keywordFallbackUsed,
-            int rawFestivalCount,
-            int flowerFilteredCount,
-            int excludedPastCount,
-            int excludedDateCount,
-            int excludedUnknownDateCount
+            int excludedPastCount
     ) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("items", List.of());
-        data.put("source", "Tour API");
-        data.put("keyword", keyword);
-        data.put("nearby", nearby);
+        data.put("source", "festival_db");
+        data.put("query", keyword);
         data.put("dateFilter", dateFilter);
-        data.put("rangeStart", dateRange.start().toString());
-        data.put("rangeEnd", dateRange.end() == null ? "" : dateRange.end().toString());
-        data.put("today", today.toString());
-        data.put("primaryEndpoint", "searchFestival2");
-        data.put("fallbackEndpoint", "searchKeyword2");
-        data.put("keywordFallbackUsed", keywordFallbackUsed);
-        data.put("rawFestivalCount", rawFestivalCount);
-        data.put("flowerFilteredCount", flowerFilteredCount);
         data.put("excludedPastCount", excludedPastCount);
-        data.put("excludedDateCount", excludedDateCount);
-        data.put("excludedUnknownDateCount", excludedUnknownDateCount);
-        if (location != null && location.getLat() != null && location.getLng() != null) {
-            data.put("lat", location.getLat());
-            data.put("lng", location.getLng());
-        }
+        data.put("locationUsed", nearby && location != null && location.getLat() != null && location.getLng() != null);
         return data;
     }
 
@@ -381,6 +571,30 @@ public class FestivalToolService {
         return new ArrayList<>(deduped.values());
     }
 
+    private List<FestivalItem> mergeAndDedupe(List<FestivalItem> left, List<FestivalItem> right) {
+        List<FestivalItem> merged = new ArrayList<>(left);
+        merged.addAll(right);
+        return dedupe(merged);
+    }
+
+    private boolean shouldUseKeywordFallback(String keyword) {
+        String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return GENERIC_FESTIVAL_KEYWORDS.stream()
+                .noneMatch(generic -> normalized.equals(generic.toLowerCase(Locale.ROOT)));
+    }
+
+    private boolean shouldApplyKeywordFilter(String keyword) {
+        String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isBlank()) {
+            return false;
+        }
+        return GENERIC_FESTIVAL_KEYWORDS.stream()
+                .noneMatch(generic -> normalized.equals(generic.toLowerCase(Locale.ROOT)));
+    }
+
     private String sanitizeKeyword(String keyword) {
         if (keyword == null) {
             return "";
@@ -389,6 +603,36 @@ public class FestivalToolService {
                 .replaceAll("\\s+", " ")
                 .trim();
         return sanitized.length() > 50 ? sanitized.substring(0, 50) : sanitized;
+    }
+
+    private String festivalKey(FestivalItem festival) {
+        return !festival.contentId().isBlank()
+                ? festival.contentId()
+                : festival.title() + "_" + festival.mapX() + "_" + festival.mapY();
+    }
+
+    private long elapsedMs(long startedAt) {
+        return Math.max(0, System.currentTimeMillis() - startedAt);
+    }
+
+    private long remainingMs(long startedAt) {
+        return TOTAL_TIME_BUDGET_MS - elapsedMs(startedAt);
+    }
+
+    private boolean isTimeoutException(Exception e) {
+        if (e instanceof ResourceAccessException) {
+            return true;
+        }
+        Throwable cause = e.getCause();
+        while (cause != null) {
+            if (cause instanceof java.net.SocketTimeoutException
+                    || cause instanceof java.net.http.HttpTimeoutException
+                    || cause instanceof java.net.ConnectException) {
+                return true;
+            }
+            cause = cause.getCause();
+        }
+        return false;
     }
 
     private record FestivalItem(
@@ -418,14 +662,46 @@ public class FestivalToolService {
             );
         }
 
+        static FestivalItem from(Festival festival) {
+            return new FestivalItem(
+                    emptyIfNull(festival.getContentId()),
+                    emptyIfNull(festival.getTitle()),
+                    joinAddress(emptyIfNull(festival.getAddr1()), emptyIfNull(festival.getAddr2())),
+                    normalizeImageUrl(!emptyIfNull(festival.getFirstImage2()).isBlank()
+                            ? emptyIfNull(festival.getFirstImage2())
+                            : emptyIfNull(festival.getFirstImage())),
+                    emptyIfNull(festival.getTel()),
+                    emptyIfNull(festival.getEventStartDate()),
+                    emptyIfNull(festival.getEventEndDate()),
+                    festival.getMapX() == null ? 0 : festival.getMapX(),
+                    festival.getMapY() == null ? 0 : festival.getMapY()
+            );
+        }
+
         boolean hasLocation() {
             return mapX != 0 && mapY != 0;
         }
 
         boolean isFlowerFestival() {
-            String normalized = title.toLowerCase(Locale.ROOT);
+            String normalized = (title + " " + address).toLowerCase(Locale.ROOT);
             return FLOWER_KEYWORDS.stream()
                     .anyMatch(keyword -> normalized.contains(keyword.toLowerCase(Locale.ROOT)));
+        }
+
+        FestivalItem withDates(String startDate, String endDate) {
+            String normalizedStart = !startDate.isBlank() ? startDate : eventStartDate;
+            String normalizedEnd = !endDate.isBlank() ? endDate : eventEndDate;
+            return new FestivalItem(
+                    contentId,
+                    title,
+                    address,
+                    imageUrl,
+                    tel,
+                    normalizedStart,
+                    normalizedEnd,
+                    mapX,
+                    mapY
+            );
         }
 
         boolean isPast(LocalDate today) {
@@ -438,7 +714,7 @@ public class FestivalToolService {
         }
 
         boolean hasUsableDate() {
-            return parseDate(eventStartDate) != null || parseDate(eventEndDate) != null;
+            return parseDate(eventStartDate) != null && parseDate(eventEndDate) != null;
         }
 
         boolean matchesDateRange(DateRange dateRange, LocalDate today) {
@@ -458,7 +734,7 @@ public class FestivalToolService {
             item.put("imageUrl", imageUrl);
             item.put("lat", mapY);
             item.put("lng", mapX);
-            item.put("source", "Tour API");
+            item.put("source", "festival_db");
             if (location != null && location.getLat() != null && location.getLng() != null) {
                 item.put("distanceKm", Math.round(distanceMeters(location.getLat(), location.getLng()) / 100.0) / 10.0);
             }
@@ -468,10 +744,10 @@ public class FestivalToolService {
         String period() {
             String start = formatDate(eventStartDate);
             String end = formatDate(eventEndDate);
-            if (start.isBlank()) {
+            if (start.isBlank() || end.isBlank()) {
                 return "";
             }
-            return end.isBlank() ? start : start + " - " + end;
+            return start + " - " + end;
         }
 
         double distanceMeters(double latitude, double longitude) {
@@ -512,6 +788,10 @@ public class FestivalToolService {
                 return "https://" + value.substring(7);
             }
             return value;
+        }
+
+        private static String emptyIfNull(String value) {
+            return value == null ? "" : value.trim();
         }
 
         private static LocalDate parseDate(String value) {
@@ -560,5 +840,41 @@ public class FestivalToolService {
             LocalDate end,
             String label
     ) {
+    }
+
+    record FetchResult(
+            List<FestivalItem> items,
+            boolean timedOut,
+            boolean limited
+    ) {
+    }
+
+    record DetailIntroEnrichment(
+            List<FestivalItem> items,
+            DetailIntroStats stats
+    ) {
+    }
+
+    record DetailIntroStats(
+            int detailIntroAttemptedCount,
+            int detailIntroEnrichedCount,
+            int detailIntroFailedCount,
+            boolean detailIntroLimited
+    ) {
+        static DetailIntroStats empty() {
+            return new DetailIntroStats(0, 0, 0, false);
+        }
+
+        DetailIntroStats plus(DetailIntroStats other) {
+            if (other == null) {
+                return this;
+            }
+            return new DetailIntroStats(
+                    detailIntroAttemptedCount + other.detailIntroAttemptedCount(),
+                    detailIntroEnrichedCount + other.detailIntroEnrichedCount(),
+                    detailIntroFailedCount + other.detailIntroFailedCount(),
+                    detailIntroLimited || other.detailIntroLimited()
+            );
+        }
     }
 }

@@ -2,31 +2,31 @@
   {
     "id": "C001",
     "message": "수국 후기 찾아줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.searchPosts"]
   },
   {
     "id": "C002",
     "message": "벚꽃 커뮤니티 글 보여줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.searchPosts"]
   },
   {
     "id": "C003",
     "message": "장미 게시글 검색해줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.searchPosts"]
   },
   {
     "id": "C004",
     "message": "라벤더 본 사람 후기 있어?",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.searchPosts"]
   },
   {
     "id": "C005",
     "message": "커뮤니티 열어줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["app_navigation"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -38,7 +38,7 @@
   {
     "id": "C006",
     "message": "꽃 후기 보고 싶어",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -49,8 +49,8 @@
   },
   {
     "id": "C007",
-    "message": "수국 후기 글 써줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "message": "축제 후기 글 써줘",
+    "expectedRoutes": ["community_write"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -62,7 +62,7 @@
   {
     "id": "C008",
     "message": "커뮤니티에 글 올릴래",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_write"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -74,38 +74,42 @@
   {
     "id": "C009",
     "message": "글 내용까지 대신 저장해줘",
+    "expectedRoutes": ["unsupported"],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
     "id": "C010",
     "message": "이 게시글 좋아요 눌러줘",
+    "expectedRoutes": ["unsupported"],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
     "id": "C011",
     "message": "댓글 대신 달아줘",
+    "expectedRoutes": ["unsupported"],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
     "id": "C012",
     "message": "게시글 삭제해줘",
+    "expectedRoutes": ["unsupported"],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
     "id": "C013",
     "message": "최신 글들은 어떤 걸 소개 해?",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.getLatestPosts"],
     "forbiddenTools": ["community.searchPosts"]
   },
   {
     "id": "C014",
     "message": "최근 커뮤니티 글 보여줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -118,21 +122,21 @@
   {
     "id": "C015",
     "message": "오늘 올라온 글 있어?",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.getLatestPosts"],
     "forbiddenTools": ["community.searchPosts"]
   },
   {
     "id": "C016",
     "message": "인기글 알려줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.getPopularPosts"],
     "forbiddenTools": ["community.searchPosts"]
   },
   {
     "id": "C017",
     "message": "이번 주 인기글 보여줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -145,14 +149,14 @@
   {
     "id": "C018",
     "message": "3월 인기글 보여줘",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.getPopularPosts"],
     "forbiddenTools": ["community.searchPosts"]
   },
   {
     "id": "C019",
     "message": "장미 인기글 있어?",
-    "expectedRoutes": ["COMMUNITY"],
+    "expectedRoutes": ["community_read"],
     "expectedTools": ["community.getPopularPosts"],
     "forbiddenTools": ["community.searchPosts"]
   }

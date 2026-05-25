@@ -2,38 +2,36 @@
   {
     "id": "F001",
     "message": "이번 주 꽃 축제 알려줘",
-    "expectedRoutes": ["FESTIVAL"],
+    "expectedRoutes": ["festival_information"],
     "expectedTools": ["festival.searchFlowerFestivals"],
     "expectedToolData": {
       "festival.searchFlowerFestivals": {
-        "dateFilter": "this_week",
-        "primaryEndpoint": "searchFestival2",
-        "fallbackEndpoint": "searchKeyword2"
+        "dateFilter": "this_week"
       }
     }
   },
   {
     "id": "F002",
     "message": "서울 근처 꽃 축제 있어?",
-    "expectedRoutes": ["FESTIVAL"],
+    "expectedRoutes": ["festival_information"],
     "expectedTools": ["festival.searchFlowerFestivals"]
   },
   {
     "id": "F003",
     "message": "벚꽃 축제 찾아줘",
-    "expectedRoutes": ["FESTIVAL"],
+    "expectedRoutes": ["festival_information"],
     "expectedTools": ["festival.searchFlowerFestivals"]
   },
   {
     "id": "F004",
     "message": "수국 축제 알려줘",
-    "expectedRoutes": ["FESTIVAL"],
+    "expectedRoutes": ["festival_information"],
     "expectedTools": ["festival.searchFlowerFestivals"]
   },
   {
     "id": "F005",
     "message": "꽃 축제 지도에서 보여줘",
-    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedRoutes": ["festival_information"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -45,7 +43,7 @@
   {
     "id": "F006",
     "message": "근처 축제 지도 열어줘",
-    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedRoutes": ["festival_information"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -57,7 +55,7 @@
   {
     "id": "F007",
     "message": "이번 달 갈 만한 꽃 행사 추천해줘",
-    "expectedRoutes": ["FESTIVAL"],
+    "expectedRoutes": ["festival_information"],
     "expectedTools": ["festival.searchFlowerFestivals"],
     "expectedToolData": {
       "festival.searchFlowerFestivals": {
@@ -68,26 +66,28 @@
   {
     "id": "F008",
     "message": "축제 티켓 예매해줘",
+    "expectedRoutes": ["unsupported"],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
     "id": "F009",
     "message": "축제 대신 예약해줘",
+    "expectedRoutes": ["unsupported"],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
     "id": "F010",
     "message": "안녕",
-    "expectedRoutes": ["GENERAL"],
+    "expectedRoutes": ["simple_chat"],
     "expectedTools": [],
     "expectedActions": []
   },
   {
     "id": "F011",
     "message": "이번 달 꽃 행사 추천해줘",
-    "expectedRoutes": ["FESTIVAL"],
+    "expectedRoutes": ["festival_information"],
     "expectedTools": ["festival.searchFlowerFestivals"],
     "expectedToolData": {
       "festival.searchFlowerFestivals": {
@@ -98,7 +98,7 @@
   {
     "id": "F012",
     "message": "다가오는 꽃 축제 알려줘",
-    "expectedRoutes": ["FESTIVAL"],
+    "expectedRoutes": ["festival_information"],
     "expectedTools": ["festival.searchFlowerFestivals"],
     "expectedToolData": {
       "festival.searchFlowerFestivals": {

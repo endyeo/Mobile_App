@@ -2,7 +2,7 @@
   {
     "id": "M001",
     "message": "꽃 지도 열어줘",
-    "expectedRoutes": ["MAP"],
+    "expectedRoutes": ["app_navigation"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -15,7 +15,7 @@
   {
     "id": "M002",
     "message": "벚꽃 지도에서 보여줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -34,7 +34,7 @@
   {
     "id": "M003",
     "message": "수국 명소 어디 있어?",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [],
     "expectedTools": ["flower.searchFlowerSpots"],
     "forbiddenActions": ["*"]
@@ -42,7 +42,7 @@
   {
     "id": "M004",
     "message": "근처 꽃 명소 추천해줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -60,7 +60,7 @@
   {
     "id": "M005",
     "message": "주변 꽃길 찾아줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -78,7 +78,7 @@
   {
     "id": "M006",
     "message": "라벤더 볼 수 있는 곳 알려줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [],
     "expectedTools": ["flower.searchFlowerSpots"],
     "forbiddenActions": ["*"]
@@ -86,7 +86,7 @@
   {
     "id": "M007",
     "message": "장미 정보 알려줘",
-    "expectedRoutes": ["FLOWER"],
+    "expectedRoutes": ["flower_information"],
     "expectedActions": [],
     "expectedTools": ["flower.getBasicInfo"],
     "forbiddenActions": ["*"],
@@ -95,7 +95,7 @@
   {
     "id": "M008",
     "message": "장미 가는 길 알려줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -114,7 +114,7 @@
   {
     "id": "M009",
     "message": "장미까지 대중교통 길찾기",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -133,7 +133,7 @@
   {
     "id": "M010",
     "message": "벚꽃 도보 길찾기",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -152,7 +152,7 @@
   {
     "id": "M011",
     "message": "수국 자동차 길찾기",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -171,7 +171,7 @@
   {
     "id": "M012",
     "message": "장미 지도에서 보여줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -191,7 +191,7 @@
   {
     "id": "M013",
     "message": "축제 지도에서 보여줘",
-    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedRoutes": ["festival_information"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -203,7 +203,7 @@
   {
     "id": "M014",
     "message": "행사 지도 열어줘",
-    "expectedRoutes": ["FESTIVAL", "MAP"],
+    "expectedRoutes": ["festival_information"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -215,13 +215,14 @@
   {
     "id": "M015",
     "message": "상점에서 지도 아이템 사줘",
+    "expectedRoutes": ["unsupported"],
     "expectedTools": ["app.unsupported"],
     "forbiddenActions": ["*"]
   },
   {
     "id": "M016",
     "message": "수국 위치 지도 열어줘",
-    "expectedRoutes": ["MAP", "FLOWER"],
+    "expectedRoutes": ["map_action"],
     "expectedActions": [
       {
         "type": "NAVIGATE",
@@ -240,7 +241,7 @@
   {
     "id": "M017",
     "message": "안녕",
-    "expectedRoutes": ["GENERAL"],
+    "expectedRoutes": ["simple_chat"],
     "expectedTools": [],
     "expectedActions": [],
     "forbiddenActions": ["*"]

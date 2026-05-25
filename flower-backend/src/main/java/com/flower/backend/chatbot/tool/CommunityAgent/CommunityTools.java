@@ -5,6 +5,7 @@ import com.flower.backend.chatbot.dto.ToolResult;
 import com.flower.backend.chatbot.tool.ChatbotActionContext;
 import com.flower.backend.community.CommunityPost;
 import com.flower.backend.community.CommunityPostRepository;
+import java.util.Comparator;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -31,6 +32,15 @@ import org.springframework.transaction.annotation.Transactional;
 public class CommunityTools {
 
     private static final ZoneId KOREA_ZONE = ZoneId.of("Asia/Seoul");
+    private static final int FALLBACK_SCAN_LIMIT = 500;
+    private static final int RESULT_LIMIT = 5;
+    private static final Comparator<CommunityPost> LATEST_ORDER =
+            Comparator.comparing(CommunityPost::getCreatedAt,
+                    Comparator.nullsLast(Comparator.reverseOrder()));
+    private static final Comparator<CommunityPost> POPULAR_ORDER =
+            Comparator.comparingInt(CommunityPost::getLikeCount).reversed()
+                    .thenComparing(Comparator.comparingInt(CommunityPost::getCommentCount).reversed())
+                    .thenComparing(LATEST_ORDER);
 
     private final CommunityPostRepository postRepository;
     private final ChatbotActionContext actionContext;
@@ -49,8 +59,8 @@ public class CommunityTools {
 
         try {
             List<CommunityPost> results = sanitized.isBlank()
-                    ? postRepository.findFeed(PageRequest.of(0, 5))
-                    : postRepository.searchByKeyword(sanitized, PageRequest.of(0, 5));
+                    ? postRepository.findFeed(PageRequest.of(0, RESULT_LIMIT))
+                    : postRepository.searchByKeyword(sanitized, PageRequest.of(0, RESULT_LIMIT));
 
             return ToolResult.builder()
                     .tool("community.searchPosts")
@@ -156,6 +166,7 @@ public class CommunityTools {
                     item.put("content", nullToDash(post.getContent()));
                     item.put("species", nullToDash(post.getFlowerSpecies()));
                     item.put("plantName", nullToDash(post.getPlantName()));
+                    item.put("address", nullToDash(post.getAddress()));
                     item.put("likes", post.getLikeCount());
                     item.put("comments", post.getCommentCount());
                     item.put("createdAt", post.getCreatedAt() == null ? "" : post.getCreatedAt().toString());
@@ -174,38 +185,120 @@ public class CommunityTools {
     ) {
         String sanitized = sanitizeKeyword(query, 100);
         PeriodRange range = resolvePeriod(dateFilter, month, year);
+        boolean periodFilterRequested = range.from() != null || range.to() != null;
 
         try {
             List<CommunityPost> results = "community.getPopularPosts".equals(toolName)
-                    ? postRepository.findPopularPosts(sanitized, range.from(), range.to(), PageRequest.of(0, 5))
-                    : postRepository.findLatestPosts(sanitized, range.from(), range.to(), PageRequest.of(0, 5));
+                    ? postRepository.findPopularPosts(sanitized, range.from(), range.to(), PageRequest.of(0, RESULT_LIMIT))
+                    : postRepository.findLatestPosts(sanitized, range.from(), range.to(), PageRequest.of(0, RESULT_LIMIT));
 
-            Map<String, Object> data = new LinkedHashMap<>();
-            data.put("items", toItems(results));
-            data.put("keyword", sanitized);
-            data.put("dateFilter", range.dateFilter());
-            data.put("rangeStart", range.from() == null ? "" : range.from().toString());
-            data.put("rangeEnd", range.to() == null ? "" : range.to().toString());
-            data.put("rankingBasis", "community.getPopularPosts".equals(toolName)
-                    ? "likeCount DESC, commentCount DESC, createdAt DESC"
-                    : "createdAt DESC");
+            return successResult(toolName, label, sanitized, range, results, false, false);
+        } catch (Exception primaryFailure) {
+            log.warn("[Tool:{}] 전용 조회 실패. 안정 경로로 재시도합니다.", toolName, primaryFailure);
+            boolean queryFailed = true;
+            boolean periodFallbackUsed = periodFilterRequested;
+            try {
+                List<CommunityPost> fallbackSource = postRepository.findFeed(PageRequest.of(0, FALLBACK_SCAN_LIMIT));
+                List<CommunityPost> fallbackResults = fallbackSource.stream()
+                        .filter(post -> matchesKeyword(post, sanitized))
+                        .filter(post -> withinRange(post, range))
+                        .sorted(sortOrder(toolName))
+                        .limit(RESULT_LIMIT)
+                        .toList();
 
-            return ToolResult.builder()
-                    .tool(toolName)
-                    .status("SUCCESS")
-                    .summary("'" + displayKeyword(sanitized) + "' " + range.label() + " " + label
-                            + " 커뮤니티 글 " + results.size() + "건을 찾았습니다.")
-                    .data(data)
-                    .build();
-        } catch (Exception e) {
-            log.error("[Tool:{}] 커뮤니티 {}글 조회 실패", toolName, label, e);
-            return ToolResult.builder()
-                    .tool(toolName)
-                    .status("ERROR")
-                    .summary("커뮤니티 " + label + "글 조회에 실패했습니다.")
-                    .error(label + "글 조회 중 오류가 발생했습니다.")
-                    .build();
+                return successResult(toolName, label, sanitized, range, fallbackResults, periodFallbackUsed, queryFailed);
+            } catch (Exception fallbackFailure) {
+                log.error("[Tool:{}] 커뮤니티 {}글 조회 실패", toolName, label, fallbackFailure);
+                Map<String, Object> data = diagnosticData(
+                        toolName,
+                        sanitized,
+                        range,
+                        periodFallbackUsed,
+                        queryFailed,
+                        List.of());
+                data.put("failureStage", "fallback_feed");
+                data.put("failureReason", fallbackFailure.getClass().getSimpleName());
+                return ToolResult.builder()
+                        .tool(toolName)
+                        .status("ERROR")
+                        .summary("커뮤니티 " + label + "글 조회에 실패했습니다.")
+                        .data(data)
+                        .error(label + "글 조회 중 오류가 발생했습니다.")
+                        .build();
+            }
         }
+    }
+
+    private ToolResult successResult(
+            String toolName,
+            String label,
+            String sanitized,
+            PeriodRange range,
+            List<CommunityPost> results,
+            boolean periodFallbackUsed,
+            boolean queryFailed
+    ) {
+        return ToolResult.builder()
+                .tool(toolName)
+                .status("SUCCESS")
+                .summary("'" + displayKeyword(sanitized) + "' " + range.label() + " " + label
+                        + " 커뮤니티 글 " + results.size() + "건을 찾았습니다.")
+                .data(diagnosticData(toolName, sanitized, range, periodFallbackUsed, queryFailed, results))
+                .build();
+    }
+
+    private Map<String, Object> diagnosticData(
+            String toolName,
+            String sanitized,
+            PeriodRange range,
+            boolean periodFallbackUsed,
+            boolean queryFailed,
+            List<CommunityPost> results
+    ) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("items", toItems(results));
+        data.put("keyword", sanitized);
+        data.put("dateFilter", range.dateFilter());
+        data.put("rangeStart", range.from() == null ? "" : range.from().toString());
+        data.put("rangeEnd", range.to() == null ? "" : range.to().toString());
+        data.put("periodFallbackUsed", periodFallbackUsed);
+        data.put("queryFailed", queryFailed);
+        data.put("rankingBasis", "community.getPopularPosts".equals(toolName)
+                ? "likeCount DESC, commentCount DESC, createdAt DESC"
+                : "createdAt DESC");
+        return data;
+    }
+
+    private Comparator<CommunityPost> sortOrder(String toolName) {
+        return "community.getPopularPosts".equals(toolName) ? POPULAR_ORDER : LATEST_ORDER;
+    }
+
+    private boolean matchesKeyword(CommunityPost post, String keyword) {
+        if (keyword == null || keyword.isBlank()) {
+            return true;
+        }
+        return containsIgnoreCase(post.getContent(), keyword)
+                || containsIgnoreCase(post.getFlowerSpecies(), keyword)
+                || containsIgnoreCase(post.getPlantName(), keyword)
+                || containsIgnoreCase(post.getAddress(), keyword);
+    }
+
+    private boolean withinRange(CommunityPost post, PeriodRange range) {
+        LocalDateTime createdAt = post.getCreatedAt();
+        if (createdAt == null) {
+            return false;
+        }
+        if (range.from() != null && createdAt.isBefore(range.from())) {
+            return false;
+        }
+        if (range.to() != null && createdAt.isAfter(range.to())) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean containsIgnoreCase(String value, String keyword) {
+        return value != null && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT));
     }
 
     private PeriodRange resolvePeriod(String dateFilter, int month, int year) {

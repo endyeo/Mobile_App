@@ -2,9 +2,10 @@
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 SSE 스트림, 음성 입력, GENERAL/fallback 라우팅, flower_book 조회 규칙을 반영함. -->
 <!-- 반영: 2026-05-21 13:24 - planner domain/task 구조, 축제 도메인, 길찾기 액션, 꽃 정보 도구 확장, 로컬 보정 제거, ChatFloatingButton 위치 전달 반영 -->
 <!-- 반영: 2026-05-22 automation - ChatbotService 프롬프트 계층 분리와 docs/chatbot 프롬프트 명세 연결을 현재 코드 기준으로 반영함. -->
+<!-- 반영: 2026-05-25 sync - RouteDecision/flow 라우팅, Evidence Check, executeInformationToolLoop, requestId 왕복, OpenAI 키 단일화, COMMUNITY_COMPOSE→CreateFlowerSpotScreen, 커뮤니티 최신/인기 도구, 축제 DB 전환 반영 -->
 
-- 문서 버전: v1.4.1
-- 최종 반영일: 2026-05-22
+- 문서 버전: v1.5.0
+- 최종 반영일: 2026-05-25
 
 ## 1. 목적
 
@@ -36,36 +37,38 @@ AI 챗봇은 사용자의 자연어 요청을 분석해 꽃 데이터, 커뮤니
 백엔드 구성:
 
 - `ChatbotController`: `/chatbot/message`, `/chatbot/message/stream`, `/chatbot/session/{sessionId}` 제공
-- `ChatbotService`: 세션 관리, planner `domain/task` 기반 라우팅, 도구 실행, Spring AI 응답 생성. 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()`로 나뉘고, answer prompt는 다시 base/format/domain style 조합으로 생성된다. <!-- 반영: 2026-05-22 automation -->
+- `ChatbotService`: 세션 관리, planner `domain/task` 기반 라우팅, 도구 실행, Spring AI 응답 생성. 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()`로 나뉘고, answer prompt는 다시 base/format/domain style 조합으로 생성된다. planner 결과를 `RouteDecision(flow, keyword, reason, confidence, source)` 경계로 수신한 뒤 flow별 실행 경로를 분기한다. <!-- 반영: 2026-05-22 automation --> <!-- 반영: 2026-05-25 sync - RouteDecision 구조 추가 -->
 - `ChatActionValidator`: planner가 만든 액션만 허용 목록 기준으로 정규화하고 중복을 제거
 - `RouteIntent`: `GENERAL`, `MAP`, `FLOWER`, `FLOWER_GROW`, `COMMUNITY`, `WALK`, `SAVED`, `QUEST`, `SHOP`, `FESTIVAL` <!-- 반영: 2026-05-21 13:24 -->
 - `ChatbotActionContext`: request scope 도구 실행 상태와 액션 저장
-- `FestivalToolService`: Tour API 기반 축제 검색 도구 <!-- 반영: 2026-05-21 13:24 -->
+- `FestivalToolService`: 축제 검색 도구. `FestivalRepository`가 주입되면 DB 우선 조회, 없으면 Tour API fallback <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - DB 우선 조회 반영 -->
 
 Flutter 구성:
 
 - `ChatbotService`: `/chatbot/message` 단건 호출과 `/chatbot/message/stream` SSE 호출, 이벤트 파싱
 - `ChatAction`: 앱 액션 모델
 - `AppActionRuntime`: 액션 목록을 실제 화면 이동으로 실행
-- `ChatFloatingButton`: 실제 플로팅 챗봇 UI, SSE 진행 상태/도구 결과/최종 답변 처리, 가능한 경우 Geolocator로 현재 위치를 context에 전달 <!-- 반영: 2026-05-21 13:24 -->
+- `ChatFloatingButton`: 실제 플로팅 챗봇 UI, SSE 진행 상태/도구 결과/최종 답변 처리, 가능한 경우 Geolocator로 현재 위치를 context에 전달. 요청별 `requestId`를 생성해 이전 요청의 SSE 이벤트가 현재 답변을 덮지 않도록 필터링하며, 새 요청 시작 시 기존 stream subscription과 cancel token을 정리하는 replacement cancel을 수행한다. 입력창 열림, 대화 내역 열림, 입력 중 텍스트 상태를 정적(static) 변수로 보존해 화면 전환 후에도 초기화되지 않는다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - requestId 필터링, replacement cancel, 정적 상태 보존 반영 -->
 - `MainActivity`: `flower_app/speech` MethodChannel로 Android 음성 인식과 권한 확인/요청 처리
 - `MainScreen`, `ChatScreen`: 챗봇 요청 진입점
 
 ## 3. 대화 처리 흐름
 
-1. Flutter는 일반 호출에서는 `/chatbot/message`, 플로팅 UI에서는 `/chatbot/message/stream`으로 사용자 메시지, `session_id`, 선택 위치 context를 전송한다.
-2. 서버가 `session_id`가 없으면 UUID를 생성한다.
+1. Flutter는 일반 호출에서는 `/chatbot/message`, 플로팅 UI에서는 `/chatbot/message/stream`으로 사용자 메시지, `session_id`, `request_id`, 선택 위치 context를 전송한다. <!-- 반영: 2026-05-25 sync - request_id 추가 -->
+2. 서버가 `session_id`가 없으면 UUID를 생성한다. `request_id`가 없으면 서버가 UUID를 생성해 모든 SSE 이벤트에 `requestId`와 `request_id`를 삽입하며, 응답 DTO에도 `requestId`를 왕복한다. <!-- 반영: 2026-05-25 sync -->
 3. 스트림 시작 시 서버는 `CONNECTED` 이벤트와 한국어 상태 메시지를 먼저 전송한다.
-4. `ChatbotService`가 Spring AI 기반 AI planner를 호출해 `domain`, `task`, `keyword`, `needs_screen`, `date_filter`, `nearby`, `route_request`, `route_mode` 등을 결정한다. <!-- 반영: 2026-05-21 13:24 -->
-5. planner 출력 `domain`은 `flower_info`, `festival_info`, `community`, `map_place`, `app_navigation`, `unsupported`, `general` 중 하나다. 서버가 이를 기존 `RouteIntent`, 정보 도구, 앱 action으로 변환한다. <!-- 반영: 2026-05-21 13:24 -->
-6. planner JSON이 계약을 어기면 한 번만 repair prompt로 재요청한다. OpenAI API key가 없거나 planner가 실패하면 fallback으로 `GENERAL` intent와 빈 `actions`만 반환한다. <!-- 반영: 2026-05-21 13:24 -->
+4. `ChatbotService`가 Spring AI 기반 AI planner를 호출해 `domain`, `task`, `keyword`, `needs_screen`, `date_filter`, `nearby`, `route_request`, `route_mode` 등을 결정하고, 결과를 `RouteDecision(flow, keyword, reason, confidence, source)`로 수신한다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - RouteDecision 수신 반영 -->
+5. planner 출력 `domain`은 `flower_info`, `festival_info`, `community`, `map_place`, `app_navigation`, `unsupported`, `general` 중 하나다. 서버가 이를 기존 `RouteIntent`, 정보 도구, 앱 action으로 변환한다. `community_write` flow는 planner 세부 판단이나 검색 도구 실행 없이 `NAVIGATE COMMUNITY_COMPOSE` action만 생성한다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - community_write 단순화 반영 -->
+6. planner JSON이 계약을 어기면 한 번만 repair prompt로 재요청한다. OpenAI API key(`spring.ai.openai.api-key` 단일 설정)가 없거나 planner가 실패하면 fallback으로 `GENERAL` intent와 빈 `actions`만 반환한다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - OpenAI 키 단일화 반영 -->
 7. 서버는 planner 결과에 로컬 intent/action을 강제로 추가하지 않는다. 이전의 `reinforcePlanWithLocalSignals` 로컬 보정은 제거되었다. <!-- 반영: 2026-05-21 13:24 -->
 8. `ChatActionValidator`는 planner가 제안한 액션만 허용 목록 기준으로 정규화하고, 중복 `NAVIGATE MAP`을 제거하며, `MAP_SET_SEARCH_QUERY`는 `MAP+FLOWER+keyword`일 때만 유지한다.
-9. `flower_info` domain에서는 `task`에 따라 `flower.getBasicInfo`, `flower.getMeaningAndBloom`, `flower.getGrowGuide`, `flower.recommendByMonth`, `flower.inferCandidates` 중 하나를 선택한다. <!-- 반영: 2026-05-21 13:24 -->
-10. `community` domain에서는 `task`(`search_posts`, `open_community`, `open_composer`)에 따라 커뮤니티 검색 도구 또는 화면 이동 액션을 실행한다. `unsupported/community_mutation`은 `app.unsupported`만 반환한다. <!-- 반영: 2026-05-21 13:24 -->
-11. `festival_info` domain에서는 `festival.searchFlowerFestivals` 도구를 실행한다. <!-- 반영: 2026-05-21 13:24 -->
-12. `map_place` domain에서는 꽃 명소 검색 후 지도 액션을 만들고, `route_request`가 true이면 길찾기 액션(`MAP_OPEN_ROUTE_CHOOSER` 또는 `MAP_START_ROUTE`)을 추가한다. <!-- 반영: 2026-05-21 13:24 -->
-13. 서버는 `STATUS`, `ACTION`, `TOOL_RESULT`, `FINAL_ANSWER`, `DONE` 이벤트를 순차 전송한다.
+9. 정보성 flow(`flower_information`, `community_read`, `festival_information`)에서는 `executeInformationToolLoop`를 적용한다. 첫 도구 호출은 항상 1회 실행하고, Evidence Check가 `INSUFFICIENT`일 때만 2차 호출을 허용한다(최대 2회). Evidence Check 상태는 `SUFFICIENT`, `INSUFFICIENT`, `NONE`, `ERROR`로 구분되며 agent trace에 기록된다. <!-- 반영: 2026-05-25 sync -->
+10. `flower_info` domain에서는 `task`에 따라 `flower.getBasicInfo`, `flower.getMeaningAndBloom`, `flower.getGrowGuide`, `flower.recommendByMonth`, `flower.inferCandidates` 중 하나를 선택한다. 복합 꽃 정보 요청(특징+키우는 법)은 기본 정보 조회 후 evidence가 부족할 때 재배 정보 조회를 1회 추가할 수 있다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - 복합 조회 반영 -->
+11. `community` domain에서는 `task`(`search_posts`, `latest_posts`, `popular_posts`, `open_community`, `open_composer`)에 따라 커뮤니티 검색/최신/인기 도구 또는 화면 이동 액션을 실행한다. `unsupported/community_mutation`은 `app.unsupported`만 반환한다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - latest_posts, popular_posts 추가 -->
+12. `festival_info` domain에서는 `festival.searchFlowerFestivals` 도구를 실행한다. <!-- 반영: 2026-05-21 13:24 -->
+13. `map_place` domain에서는 꽃 명소 검색 후 지도 액션을 만들고, `route_request`가 true이면 길찾기 액션(`MAP_OPEN_ROUTE_CHOOSER` 또는 `MAP_START_ROUTE`)을 추가한다. <!-- 반영: 2026-05-21 13:24 -->
+14. 서버는 `STATUS`, `ACTION`, `TOOL_RESULT`, `FINAL_ANSWER`, `DONE` 이벤트를 순차 전송한다. 각 이벤트에 `requestId`가 포함된다. <!-- 반영: 2026-05-25 sync -->
+15. Flutter는 `FINAL_ANSWER` 또는 `DONE` 수신 후 들어온 error가 정상 답변을 덮지 않도록 보호한다. <!-- 반영: 2026-05-25 sync -->
 11. Flutter는 `ACTION` 수신 시 즉시 `AppActionRuntime.execute()`를 실행하고, `FINAL_ANSWER` 수신 후 마지막 말풍선을 최종 답변으로 교체한다.
 12. 사용자가 정지 버튼을 누르면 Flutter가 SSE 요청을 취소하고 진행 중 말풍선을 제거하며 최종 답변을 표시하지 않는다.
 
@@ -142,7 +145,7 @@ Flutter 실행 규칙:
 - 지도 액션이 하나라도 있으면 `KakaoMapScreen(initialActions: mapActions)`로 이동한다.
 - 지도 액션이 없으면 첫 번째 화면 액션만 실행한다.
 - `COMMUNITY`는 `CommunityFeedScreen`으로 이동한다.
-- `COMMUNITY_COMPOSE`는 `CreatePostScreen`으로 이동한다.
+- `COMMUNITY_COMPOSE`는 `CreateFlowerSpotScreen`으로 이동한다. <!-- 반영: 2026-05-25 sync - 기존 CreatePostScreen에서 변경 -->
 - `WALK`/`PEDOMETER`는 `PedometerScreen`으로 이동한다.
 - `FLOWER`, `FLOWER_BOOK`, `BOOK`은 `FlowerBookPage`로 이동한다.
 - `SAVED`, `BOOKMARK`, `BOOKMARKS`는 `SavedPage`로 이동한다.

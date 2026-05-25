@@ -18,6 +18,10 @@ public class ChatMessageRequest {
     @JsonProperty("session_id")
     private String sessionId;
 
+    /** 클라이언트 요청 ID. SSE stale event 방지에 사용한다. */
+    @JsonProperty("request_id")
+    private String requestId;
+
     /** 사용자 현재 위치. */
     private LocationContext context;
 

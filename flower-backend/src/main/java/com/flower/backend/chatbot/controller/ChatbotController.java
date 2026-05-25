@@ -56,16 +56,23 @@ public class ChatbotController {
                 emitter.complete();
             } catch (Exception e) {
                 log.error("SSE 챗봇 스트림 처리 실패", e);
+                String requestId = request.getRequestId() == null ? "" : request.getRequestId();
                 try {
                     emitter.send(SseEmitter.event()
                             .name("ERROR")
                             .data(Map.of(
                                     "stage", "ERROR",
-                                    "message", "챗봇 처리 중 오류가 발생했습니다."
+                                    "message", "챗봇 처리 중 오류가 발생했습니다.",
+                                    "requestId", requestId,
+                                    "request_id", requestId
                             )));
                     emitter.send(SseEmitter.event()
                             .name("DONE")
-                            .data(Map.of("reason", "error")));
+                            .data(Map.of(
+                                    "reason", "error",
+                                    "requestId", requestId,
+                                    "request_id", requestId
+                            )));
                     emitter.complete();
                 } catch (Exception sendError) {
                     emitter.completeWithError(sendError);

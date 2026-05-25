@@ -23,6 +23,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -59,8 +60,10 @@ class ChatbotServiceTest {
                 .thenReturn(tool("flower.inferCandidates"));
         when(flowerToolService.searchFlowerSpotsResult(anyString()))
                 .thenReturn(tool("flower.searchFlowerSpots"));
+        when(flowerToolService.searchFlowerSpotsResult(anyString(), any(), anyBoolean()))
+                .thenReturn(tool("flower.searchFlowerSpots"));
         when(communityTools.searchPosts(anyString()))
-                .thenReturn(tool("community.searchPosts"));
+                .thenAnswer(invocation -> communitySearchTool(invocation.getArgument(0)));
         when(communityTools.getLatestPosts(anyString(), anyString(), anyInt(), anyInt()))
                 .thenReturn(tool("community.getLatestPosts"));
         when(communityTools.getPopularPosts(anyString(), anyString(), anyInt(), anyInt()))
@@ -71,20 +74,21 @@ class ChatbotServiceTest {
     void fallbackRoutesFlowerMapRequestToMapSearchAction() {
         ChatMessageResponse response = chatbotService.chat(request("벚꽃 지도에서 보여줘"));
 
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("MAP_FLOWER");
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("map_action");
         assertThat(response.getActions()).extracting(ChatAction::getType)
                 .contains("NAVIGATE", "MAP_SET_SEARCH_QUERY");
         assertThat(response.getActions().get(1).getParams()).containsEntry("query", "벚꽃");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
-                .containsExactly("flower.getBasicInfo");
-        verify(flowerToolService).getBasicInfoResult("벚꽃", false);
+                .containsExactly("flower.searchFlowerSpots");
+        verify(flowerToolService).searchFlowerSpotsResult("벚꽃", null, false);
     }
 
     @Test
     void fallbackUsesSeasonalRecommendationToolForMonthlyRecommendation() {
         ChatMessageResponse response = chatbotService.chat(request("이번 달에 볼 만한 꽃 추천해줘"));
 
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("FLOWER");
+        assertThat(response.getRequestId()).isEqualTo("test-request");
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("flower_information");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
                 .containsExactly("flower.recommendByMonth");
         verify(flowerToolService).recommendByMonthResult(any());
@@ -94,7 +98,7 @@ class ChatbotServiceTest {
     void fallbackUsesGrowTipToolForCareQuestion() {
         ChatMessageResponse response = chatbotService.chat(request("장미 키우는 법 알려줘"));
 
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("FLOWER_GROW");
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("flower_information");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
                 .containsExactly("flower.getGrowGuide");
         assertThat(response.getReply()).contains("'장미' 재배 정보를 바로 안내드리기 어려워요.");
@@ -103,13 +107,61 @@ class ChatbotServiceTest {
     }
 
     @Test
+    void flowerMeaningAndBloomUsesSingleInformationToolCall() {
+        when(flowerToolService.getMeaningAndBloomResult(anyString(), anyBoolean()))
+                .thenReturn(toolWithItem("flower.getMeaningAndBloom"));
+
+        ChatMessageResponse response = chatbotService.chat(request("수국 꽃말이랑 언제 피는지 알려줘"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("flower_information");
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("flower.getMeaningAndBloom");
+        assertThat(response.getAgentRun().getSteps()).anySatisfy(step -> {
+            assertThat(step.getAgent()).isEqualTo("EvidenceCheck");
+            assertThat(step.getStatus()).isEqualTo("SUFFICIENT");
+        });
+        verify(flowerToolService).getMeaningAndBloomResult("수국", false);
+        verify(flowerToolService, never()).getGrowGuideResult(anyString(), anyBoolean());
+    }
+
+    @Test
+    void flowerBasicAndGrowQuestionAllowsOnlyOneAdditionalToolCall() {
+        when(flowerToolService.getBasicInfoResult(anyString(), anyBoolean()))
+                .thenReturn(toolWithItem("flower.getBasicInfo"));
+        when(flowerToolService.getGrowGuideResult(anyString(), anyBoolean()))
+                .thenReturn(toolWithItem("flower.getGrowGuide"));
+
+        ChatMessageResponse response = chatbotService.chat(request("장미 특징이랑 키우는 법 알려줘"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("flower_information");
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("flower.getBasicInfo", "flower.getGrowGuide");
+        assertThat(response.getToolResults()).hasSizeLessThanOrEqualTo(2);
+        assertThat(response.getAgentRun().getSteps()).anySatisfy(step -> {
+            assertThat(step.getAgent()).isEqualTo("EvidenceCheck");
+            assertThat(step.getStatus()).isEqualTo("SUFFICIENT");
+        });
+        verify(flowerToolService).getBasicInfoResult("장미", false);
+        verify(flowerToolService).getGrowGuideResult("장미", false);
+    }
+
+    @Test
     void communitySearchPassesQueryToActionAndTool() {
         ChatMessageResponse response = chatbotService.chat(request("수국 후기 찾아줘"));
 
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("community_read");
         assertThat(response.getActions()).hasSize(1);
         assertThat(response.getActions().get(0).getTarget()).isEqualTo("COMMUNITY");
         assertThat(response.getActions().get(0).getParams()).containsEntry("query", "수국");
+        assertThat(response.getToolResults()).hasSize(1);
+        assertThat(response.getToolResults().get(0).getStatus()).isEqualTo("SUCCESS");
+        assertThat(response.getReply()).contains("현재 확인된 수국 관련 글은 없어요.");
+        assertThat(response.getReply()).doesNotContain("가져오지 못했습니다");
+        assertThat(response.getReply()).doesNotContain("실패");
+        assertThat(response.getAgentRun().getSteps()).anySatisfy(step -> {
+            assertThat(step.getAgent()).isEqualTo("EvidenceCheck");
+            assertThat(step.getStatus()).isEqualTo("NONE");
+        });
         verify(communityTools).searchPosts("수국");
     }
 
@@ -117,9 +169,24 @@ class ChatbotServiceTest {
     void communityComposeDoesNotSearchOrGenerateDraft() {
         ChatMessageResponse response = chatbotService.chat(request("수국 후기 글 써줘"));
 
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("community_write");
         assertThat(response.getActions()).hasSize(1);
+        assertThat(response.getActions().get(0).getType()).isEqualTo("NAVIGATE");
         assertThat(response.getActions().get(0).getTarget()).isEqualTo("COMMUNITY_COMPOSE");
         assertThat(response.getToolResults()).isEmpty();
+        assertThat(response.getReply()).contains("후기 작성 화면을 열었어요.");
+        assertThat(response.getReply()).doesNotContain("대신 저장");
+        verify(communityTools, never()).searchPosts(anyString());
+    }
+
+    @Test
+    void communityWriteAutoSaveRequestIsUnsupportedWithoutAction() {
+        ChatMessageResponse response = chatbotService.chat(request("글 내용까지 대신 저장해줘"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("unsupported");
+        assertThat(response.getActions()).isEmpty();
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("app.unsupported");
         verify(communityTools, never()).searchPosts(anyString());
     }
 
@@ -127,9 +194,10 @@ class ChatbotServiceTest {
     void latestCommunityRequestUsesLatestToolWithoutKeywordSearch() {
         ChatMessageResponse response = chatbotService.chat(request("최신 글들은 어떤 걸 소개 해?"));
 
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("community_read");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
                 .containsExactly("community.getLatestPosts");
+        assertThat(response.getReply()).contains("현재 확인된 커뮤니티 최신글은 없어요.");
         verify(communityTools).getLatestPosts("", "none", 0, 0);
         verify(communityTools, never()).searchPosts(anyString());
     }
@@ -138,7 +206,7 @@ class ChatbotServiceTest {
     void popularCommunityRequestUsesPopularToolWithPeriod() {
         ChatMessageResponse response = chatbotService.chat(request("이번 주 인기글 보여줘"));
 
-        assertThat(response.getAgentRun().getRoute()).isEqualTo("COMMUNITY");
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("community_read");
         assertThat(response.getActions()).extracting(ChatAction::getTarget)
                 .contains("COMMUNITY");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
@@ -158,9 +226,44 @@ class ChatbotServiceTest {
     }
 
     @Test
+    void communityToolExceptionReturnsErrorToolResultAndNonEmptyReply() {
+        reset(communityTools);
+        when(communityTools.getPopularPosts(anyString(), anyString(), anyInt(), anyInt()))
+                .thenThrow(new RuntimeException("db failure"));
+
+        ChatMessageResponse response = chatbotService.chat(request("인기글 알려줘"));
+
+        assertThat(response.getReply()).isNotBlank();
+        assertThat(response.getToolResults()).hasSize(1);
+        assertThat(response.getToolResults().get(0).getTool()).isEqualTo("community.getPopularPosts");
+        assertThat(response.getToolResults().get(0).getStatus()).isEqualTo("ERROR");
+        assertThat(response.getToolResults().get(0).getData()).containsEntry("failed", true);
+        assertThat(response.getReply()).doesNotContain("RuntimeException");
+        assertThat(response.getReply()).doesNotContain("db failure");
+    }
+
+    @Test
+    void festivalToolExceptionReturnsErrorToolResultAndNonEmptyReply() {
+        when(festivalToolService.searchFlowerFestivalsResult(anyString(), any(), anyBoolean(), anyString()))
+                .thenThrow(new RuntimeException("timeout detail"));
+
+        ChatMessageResponse response = chatbotService.chat(request("이번 주 꽃 축제 알려줘"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("festival_information");
+        assertThat(response.getReply()).isNotBlank();
+        assertThat(response.getToolResults()).hasSize(1);
+        assertThat(response.getToolResults().get(0).getTool()).isEqualTo("festival.searchFlowerFestivals");
+        assertThat(response.getToolResults().get(0).getStatus()).isEqualTo("ERROR");
+        assertThat(response.getToolResults().get(0).getData()).containsEntry("failed", true);
+        assertThat(response.getReply()).doesNotContain("RuntimeException");
+        assertThat(response.getReply()).doesNotContain("timeout detail");
+    }
+
+    @Test
     void unsupportedShopRequestReturnsNoAction() {
         ChatMessageResponse response = chatbotService.chat(request("상점에서 아이템 사줘"));
 
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("unsupported");
         assertThat(response.getActions()).isEmpty();
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
                 .containsExactly("app.unsupported");
@@ -187,6 +290,8 @@ class ChatbotServiceTest {
         assertThat(prompt).contains("게시글 요약 브리핑");
         assertThat(prompt).contains("좋아요와 댓글 기준으로 반응이 좋은 글처럼 설명하세요.");
         assertThat(prompt).contains("조회수 정보는 없으므로 조회수 기준이라고 말하지 마세요.");
+        assertThat(prompt).contains("커뮤니티 게시글에는 제목 필드가 없습니다.");
+        assertThat(prompt).contains("게시글에는 제목이 없으므로 제목처럼 보이는 문구를 새로 만들지 마세요.");
         assertThat(prompt).contains("조회 결과가 없으면 반응이 적었다거나 잠잠하다는 해석을 붙이지 말고");
         assertThat(prompt).contains("활발하다, 잠잠하다, 반응이 적었다 같은 추정 표현을 쓰지 마세요.");
     }
@@ -196,10 +301,14 @@ class ChatbotServiceTest {
         String prompt = chatbotService.buildAnswerSystemPrompt("festival_info", "open_festival_map", null);
 
         assertThat(prompt).contains("축제 도메인 답변 규칙:");
-        assertThat(prompt).contains("언제 열리는 축제인지와 어디서 볼 수 있는지를 먼저 정리하세요.");
-        assertThat(prompt).contains("장소, 일정, 문의처 순으로 묶어 설명하세요.");
+        assertThat(prompt).contains("꽃 축제 질문은 festival.searchFlowerFestivals 결과만 근거로 사용하고, Tour API 페이지나 디버그 값은 답변 근거로 사용하지 마세요.");
+        assertThat(prompt).contains("축제 기간(시작일-종료일)과 장소를 먼저 정리하세요.");
+        assertThat(prompt).contains("기간, 장소, 문의처 순으로 묶어 설명하세요.");
+        assertThat(prompt).contains("축제명을 언급할 때는 같은 문장이나 바로 다음 문장에 확인된 기간을 반드시 함께 말하세요.");
+        assertThat(prompt).contains("period, eventStartDate, eventEndDate가 비어 있는 항목은 답변 후보로 사용하지 마세요.");
+        assertThat(prompt).contains("source, query, dateFilter, excludedPastCount, locationUsed 같은 계약/진단 필드는 사용자에게 직접 말하지 마세요.");
         assertThat(prompt).contains("화면 이동 언급은 마지막에만 짧게 덧붙이세요.");
-        assertThat(prompt).contains("조회 결과가 없으면 확인된 일정이 없다고만 말하고");
+        assertThat(prompt).contains("시작일과 종료일이 모두 확인된 축제 일정이 없다고만 말하고");
         assertThat(prompt).contains("조회 실패는 정보 없음으로 바꾸지 말고");
     }
 
@@ -239,7 +348,7 @@ class ChatbotServiceTest {
                 .tool("festival.searchFlowerFestivals")
                 .status("ERROR")
                 .summary("festival error")
-                .error("TOUR_API_KEY is not configured.")
+                .error("FESTIVAL_SOURCE_NOT_CONFIGURED")
                 .data(Map.of(
                         "items", List.of(),
                         "dateFilter", "this_month"
@@ -255,6 +364,7 @@ class ChatbotServiceTest {
         assertThat(reply).contains("이번 달 기준으로 꽃 축제 정보를 지금은 가져올 수 없어요.");
         assertThat(reply).contains("외부 연동 설정이 없어 축제 데이터를 확인하지 못했습니다.");
         assertThat(reply).doesNotContain("TOUR_API_KEY");
+        assertThat(reply).doesNotContain("FESTIVAL_SOURCE_NOT_CONFIGURED");
     }
 
     @Test
@@ -277,7 +387,7 @@ class ChatbotServiceTest {
     }
 
     private ChatMessageRequest request(String message) {
-        return new ChatMessageRequest(message, "test-session", null);
+        return new ChatMessageRequest(message, "test-session", "test-request", null);
     }
 
     private ToolResult tool(String name) {
@@ -286,6 +396,26 @@ class ChatbotServiceTest {
                 .status("SUCCESS")
                 .summary(name + " ok")
                 .data(Map.of("items", List.of()))
+                .build();
+    }
+
+    private ToolResult toolWithItem(String name) {
+        return ToolResult.builder()
+                .tool(name)
+                .status("SUCCESS")
+                .summary(name + " ok")
+                .data(Map.of("items", List.of(Map.of("name", "장미", "description", "확인된 정보"))))
+                .build();
+    }
+
+    private ToolResult communitySearchTool(String keyword) {
+        return ToolResult.builder()
+                .tool("community.searchPosts")
+                .status("SUCCESS")
+                .summary("community.searchPosts ok")
+                .data(Map.of(
+                        "keyword", keyword == null ? "" : keyword,
+                        "items", List.of()))
                 .build();
     }
 

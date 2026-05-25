@@ -58,6 +58,8 @@ public class SecurityConfig {
                     "/uploads/**",
                     "/chatbot/**",
                     "/api/v1/flowers/**",
+                    "/api/v1/festivals",
+                    "/api/v1/festivals/refresh",
                     "/api/v1/map/transit-route",
                     "/api/v1/map/routes",
                     "/api/v1/flower-spots",
