@@ -14,7 +14,6 @@ class AuthApiService {
   static const String callbackUrl = 'https://ourt.kro.kr/oauth/callback';
 
   // ─── 카카오 인증 URL 생성 ───────────────────────────────────
-
   static String getKakaoAuthUrl(String clientId) {
     return 'https://kauth.kakao.com/oauth/authorize'
         '?client_id=$clientId'

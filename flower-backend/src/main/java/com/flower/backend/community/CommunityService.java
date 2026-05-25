@@ -54,6 +54,39 @@ public class CommunityService {
                 .build();
     }
 
+    /**
+     * 키워드로 게시글 검색 (내용/꽃 종류/식물명 매칭).
+     * sort: "latest"(최신순) 또는 "popular"(인기순).
+     * page는 0부터 시작.
+     */
+    @Transactional(readOnly = true)
+    public FeedResponse searchPosts(Long userId, String keyword, String sort, int page, int limit) {
+        var pageable = PageRequest.of(page, limit);
+        String safeKeyword = keyword == null ? "" : keyword.trim();
+
+        List<CommunityPost> posts;
+        if ("popular".equalsIgnoreCase(sort)) {
+            posts = postRepository.searchPopular(safeKeyword, pageable);
+        } else {
+            posts = postRepository.searchLatest(safeKeyword, pageable);
+        }
+
+        Set<Long> postIds = posts.stream().map(CommunityPost::getId).collect(Collectors.toSet());
+        Set<Long> likedIds = userId != null && !postIds.isEmpty()
+                ? likeRepository.findLikedPostIds(userId, postIds)
+                : Set.of();
+        Set<Long> savedIds = userId != null && !postIds.isEmpty()
+                ? savedPostRepository.findSavedPostIds(userId, postIds)
+                : Set.of();
+
+        boolean hasNext = posts.size() == limit;
+        return FeedResponse.builder()
+                .posts(posts.stream().map(p -> toResponse(p, likedIds, savedIds)).collect(Collectors.toList()))
+                .nextCursor(hasNext ? (long) (page + 1) : null)
+                .hasNext(hasNext)
+                .build();
+    }
+
     /** 사용자가 좋아요 누른 게시글을 최근 좋아요 순으로 조회. page는 0부터 시작. */
     @Transactional(readOnly = true)
     public FeedResponse getLikedPosts(Long userId, int page, int limit) {

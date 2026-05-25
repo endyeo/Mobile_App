@@ -1,12 +1,9 @@
-import '../widgets/chat_floating_button.dart';
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:pedometer/pedometer.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/season_theme.dart';
-import '../services/step_notification_service.dart';
+import '../services/step_counter_service.dart';
 import '../services/walk_api_service.dart';
+import '../widgets/chat_floating_button.dart';
 
 class PedometerScreen extends StatefulWidget {
   const PedometerScreen({super.key});
@@ -17,20 +14,12 @@ class PedometerScreen extends StatefulWidget {
 
 class _PedometerScreenState extends State<PedometerScreen>
     with SingleTickerProviderStateMixin {
-  int _steps = 0;
-  final int _goalSteps = 10000;
-  int _pointBalance = 0;
-  List<WalkRecord> _weeklyData = [];
-  List<PointHistory> _pointHistory = [];
-  bool _isLoading = true;
-  bool _isSensorReady = false;
-  String? _sensorMessage;
-  DateTime? _lastSyncAt;
-  StreamSubscription<StepCount>? _stepSubscription;
-  StreamSubscription<PedestrianStatus>? _statusSubscription;
+  final StepCounterService _service = StepCounterService.instance;
 
   late AnimationController _animController;
-  late Animation<double> _progressAnim;
+  Animation<double> _progressAnim = const AlwaysStoppedAnimation(0);
+  int _lastSteps = 0;
+  bool _initializing = true;
 
   @override
   void initState() {
@@ -39,199 +28,158 @@ class _PedometerScreenState extends State<PedometerScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1200),
     );
-    _progressAnim = Tween<double>(begin: 0, end: 0).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
-    );
-    _loadData();
+    _service.stepsNotifier.addListener(_onStepsChanged);
+    _bootstrap();
   }
 
   @override
   void dispose() {
-    _stepSubscription?.cancel();
-    _statusSubscription?.cancel();
+    _service.stepsNotifier.removeListener(_onStepsChanged);
     _animController.dispose();
     super.dispose();
   }
 
-  Future<void> _loadData() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final token = prefs.getString('accessToken') ?? '';
-      final weekly = await WalkApiService.getWeeklyRecords(token);
-      final points = await WalkApiService.getPointBalance(token);
-      if (!mounted) return;
-      final todaySteps = weekly.isNotEmpty ? weekly.last.stepCount : 0;
-      setState(() {
-        _weeklyData = weekly;
-        _pointBalance = points;
-        _steps = todaySteps;
-        _pointHistory = [];
-        _isLoading = false;
-        _updateProgressAnimation(0, _steps);
-      });
-      _animController.forward();
-      await StepNotificationService.showSteps(
-        steps: _steps,
-        goalSteps: _goalSteps,
-      );
-      await _startPedometer();
-    } catch (e) {
-      debugPrint('[Walk] 데이터 로드 실패: $e');
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _sensorMessage = '서버 기록을 불러오지 못했습니다. 기기 걸음 수를 확인합니다.';
-      });
-      await _startPedometer();
-    }
-  }
-
-  Future<void> _startPedometer() async {
-    try {
-      final PermissionStatus activityStatus = await Permission
-          .activityRecognition
-          .request();
-      final PermissionStatus notificationStatus = await Permission.notification
-          .request();
-
-      if (!activityStatus.isGranted) {
-        if (!mounted) return;
-        setState(() {
-          _isSensorReady = false;
-          _sensorMessage = '걸음 수 권한이 필요합니다.';
-        });
-        return;
-      }
-
-      setState(() {
-        _isSensorReady = true;
-        _sensorMessage = notificationStatus.isGranted
-            ? null
-            : '알림 권한이 없어 알림 패널 표시가 제한될 수 있습니다.';
-      });
-
-      _stepSubscription?.cancel();
-      _stepSubscription = Pedometer.stepCountStream.listen(
-        _handleStepCount,
-        onError: _handlePedometerError,
-        cancelOnError: false,
-      );
-
-      _statusSubscription?.cancel();
-      _statusSubscription = Pedometer.pedestrianStatusStream.listen(
-        (_) {},
-        onError: (_) {},
-        cancelOnError: false,
-      );
-    } catch (e) {
-      debugPrint('[Walk] 만보기 시작 실패: $e');
-      if (mounted) {
-        setState(() {
-          _isSensorReady = false;
-          _sensorMessage = '이 기기에서 걸음 수 센서를 사용할 수 없습니다.';
-        });
-      }
-    }
-  }
-
-  Future<void> _handleStepCount(StepCount event) async {
-    final int nextSteps = await _stepsForToday(event.steps);
+  Future<void> _bootstrap() async {
+    await _service.initialize();
+    _lastSteps = _service.stepsNotifier.value;
     if (!mounted) return;
-    if (nextSteps == _steps) return;
-    final int previous = _steps;
     setState(() {
-      _steps = nextSteps;
-      _pointBalance = (_pointBalance < (_steps / 100).floor())
-          ? (_steps / 100).floor()
-          : _pointBalance;
-      _updateProgressAnimation(previous, _steps);
-      _weeklyData = _mergeTodayIntoWeeklyData(_weeklyData, _steps);
+      _progressAnim = _buildAnim(0, _lastSteps);
+      _initializing = false;
+    });
+    _animController.forward();
+
+    if (_service.runningNotifier.value) {
+      await _service.refreshWeekly();
+    } else {
+      await _service.start();
+    }
+
+    if (mounted && await _service.shouldShowBatteryHint()) {
+      await _service.markBatteryHintShown();
+      if (mounted) await _showBatteryHint();
+    }
+  }
+
+  Future<void> _showBatteryHint() async {
+    final colors = SeasonTheme.getColors();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('백그라운드 카운트 안내'),
+        content: const Text(
+          '걸음 수를 끊김 없이 측정하려면 OurT가 배터리 절약 모드에서 잠들지 않게 허용해야 해요.\n\n'
+          '"허용하기"를 누르면 시스템 설정 화면이 떠요.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('나중에'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: colors.primary),
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _service.requestIgnoreBatteryOptimization();
+            },
+            child: const Text('허용하기'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onStepsChanged() {
+    final next = _service.stepsNotifier.value;
+    if (next == _lastSteps) return;
+    if (!mounted) {
+      _lastSteps = next;
+      return;
+    }
+    setState(() {
+      _progressAnim = _buildAnim(_lastSteps, next);
+      _lastSteps = next;
     });
     _animController
       ..reset()
       ..forward();
-    await StepNotificationService.showSteps(
-      steps: _steps,
-      goalSteps: _goalSteps,
-    );
-    await _syncStepsIfNeeded();
   }
 
-  void _handlePedometerError(Object error) {
-    debugPrint('[Walk] 센서 오류: $error');
-    if (!mounted) return;
+  Animation<double> _buildAnim(int from, int to) {
+    final goal = _service.goalNotifier.value;
+    return Tween<double>(begin: from / goal, end: to / goal).animate(
+      CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
+    );
+  }
+
+  Future<void> _showGoalDialog() async {
+    final colors = SeasonTheme.getColors();
+    final controller = TextEditingController(
+      text: _service.goalNotifier.value.toString(),
+    );
+    final int? result = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('목표 걸음 수 설정'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              decoration: const InputDecoration(
+                suffixText: '걸음',
+                hintText: '1,000 ~ 50,000',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '권장: 성인 하루 8,000~10,000보',
+              style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('취소'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: colors.primary),
+            onPressed: () {
+              final raw = controller.text.replaceAll(',', '').trim();
+              final v = int.tryParse(raw);
+              if (v != null && v >= 1000 && v <= 50000) {
+                Navigator.pop(ctx, v);
+              } else {
+                ScaffoldMessenger.of(ctx).showSnackBar(
+                  const SnackBar(content: Text('1,000 ~ 50,000 사이로 입력해주세요')),
+                );
+              }
+            },
+            child: const Text('저장'),
+          ),
+        ],
+      ),
+    );
+    if (result == null || !mounted) return;
+    await _service.setGoal(result);
     setState(() {
-      _isSensorReady = false;
-      _sensorMessage = '걸음 수 센서 데이터를 가져오지 못했습니다.';
+      _progressAnim = _buildAnim(_lastSteps, _lastSteps);
     });
-  }
-
-  Future<int> _stepsForToday(int rawSteps) async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final DateTime now = DateTime.now();
-    final String todayKey =
-        '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final String? baselineDate = prefs.getString('stepBaselineDate');
-    if (baselineDate != todayKey) {
-      await prefs.setString('stepBaselineDate', todayKey);
-      await prefs.setInt('stepBaselineValue', rawSteps);
-      return 0;
-    }
-
-    final int baseline = prefs.getInt('stepBaselineValue') ?? rawSteps;
-    if (rawSteps < baseline) {
-      await prefs.setInt('stepBaselineValue', rawSteps);
-      return 0;
-    }
-    return rawSteps - baseline;
-  }
-
-  Future<void> _syncStepsIfNeeded() async {
-    final DateTime now = DateTime.now();
-    if (_lastSyncAt != null && now.difference(_lastSyncAt!).inSeconds < 30) {
-      return;
-    }
-    _lastSyncAt = now;
-    try {
-      final SharedPreferences prefs = await SharedPreferences.getInstance();
-      final String token = prefs.getString('accessToken') ?? '';
-      if (token.isEmpty) return;
-      await WalkApiService.syncSteps(token, _steps);
-    } catch (e) {
-      debugPrint('[Walk] 동기화 실패: $e');
-    }
-  }
-
-  void _updateProgressAnimation(int previousSteps, int nextSteps) {
-    _progressAnim =
-        Tween<double>(
-          begin: previousSteps / _goalSteps,
-          end: nextSteps / _goalSteps,
-        ).animate(
-          CurvedAnimation(parent: _animController, curve: Curves.easeOutCubic),
-        );
-  }
-
-  List<WalkRecord> _mergeTodayIntoWeeklyData(
-    List<WalkRecord> records,
-    int steps,
-  ) {
-    final DateTime now = DateTime.now();
-    final String today = '${now.month}/${now.day}';
-    if (records.isEmpty) {
-      return <WalkRecord>[WalkRecord(day: today, stepCount: steps)];
-    }
-    final List<WalkRecord> next = List<WalkRecord>.from(records);
-    next[next.length - 1] = WalkRecord(
-      day: next.last.day.isEmpty ? today : next.last.day,
-      stepCount: steps,
-    );
-    return next;
   }
 
   @override
   Widget build(BuildContext context) {
     final colors = SeasonTheme.getColors();
+    if (_initializing) {
+      return Scaffold(
+        backgroundColor: colors.background,
+        body: Center(child: CircularProgressIndicator(color: colors.primary)),
+      );
+    }
     return Scaffold(
       backgroundColor: colors.background,
       floatingActionButton: const ChatFloatingButton(),
@@ -248,59 +196,47 @@ class _PedometerScreenState extends State<PedometerScreen>
           style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold),
         ),
         actions: [
-          Container(
-            margin: const EdgeInsets.only(right: 16),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFFF3E0),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(
-                  Icons.monetization_on,
-                  color: Color(0xFFFF9800),
-                  size: 18,
-                ),
-                const SizedBox(width: 4),
-                Text(
-                  '$_pointBalance P',
-                  style: const TextStyle(
-                    color: Color(0xFFE65100),
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
-                  ),
-                ),
-              ],
-            ),
+          IconButton(
+            tooltip: '목표 걸음 수 설정',
+            icon: Icon(Icons.tune, color: colors.primary),
+            onPressed: _showGoalDialog,
           ),
         ],
       ),
-      body: _isLoading
-          ? Center(child: CircularProgressIndicator(color: colors.primary))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                children: [
-                  _buildCircularProgress(colors),
-                  if (_sensorMessage != null) ...[
-                    const SizedBox(height: 12),
-                    _buildSensorMessage(colors),
-                  ],
-                  const SizedBox(height: 24),
-                  _buildSensorStatus(colors),
-                  const SizedBox(height: 28),
-                  _buildWeeklyChart(colors),
-                  const SizedBox(height: 28),
-                  _buildPointHistory(colors),
+      body: ListenableBuilder(
+        listenable: Listenable.merge([
+          _service.goalNotifier,
+          _service.weeklyNotifier,
+          _service.runningNotifier,
+          _service.errorNotifier,
+        ]),
+        builder: (context, _) {
+          final goal = _service.goalNotifier.value;
+          final weekly = _service.weeklyNotifier.value;
+          final running = _service.runningNotifier.value;
+          final error = _service.errorNotifier.value;
+          return SingleChildScrollView(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              children: [
+                _buildCircularProgress(colors, goal),
+                if (error != null) ...[
+                  const SizedBox(height: 12),
+                  _buildErrorMessage(colors, error),
                 ],
-              ),
+                const SizedBox(height: 24),
+                _buildSensorStatus(colors, running),
+                const SizedBox(height: 28),
+                _buildWeeklyChart(colors, weekly),
+              ],
             ),
+          );
+        },
+      ),
     );
   }
 
-  Widget _buildCircularProgress(SeasonColors colors) {
+  Widget _buildCircularProgress(SeasonColors colors, int goal) {
     return AnimatedBuilder(
       animation: _progressAnim,
       builder: (context, child) {
@@ -347,7 +283,7 @@ class _PedometerScreenState extends State<PedometerScreen>
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '$_steps',
+                          '$_lastSteps',
                           style: TextStyle(
                             fontSize: 36,
                             fontWeight: FontWeight.bold,
@@ -355,7 +291,7 @@ class _PedometerScreenState extends State<PedometerScreen>
                           ),
                         ),
                         Text(
-                          '/ $_goalSteps 걸음',
+                          '/ $goal 걸음',
                           style: TextStyle(
                             fontSize: 14,
                             color: Colors.grey[500],
@@ -371,10 +307,14 @@ class _PedometerScreenState extends State<PedometerScreen>
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
                   _statItem('달성률', '${(progress * 100).toInt()}%', colors),
-                  _statItem('적립 포인트', '+${(_steps / 100).floor()}P', colors),
                   _statItem(
                     '거리',
-                    '${(_steps * 0.7 / 1000).toStringAsFixed(1)}km',
+                    '${(_lastSteps * 0.7 / 1000).toStringAsFixed(1)}km',
+                    colors,
+                  ),
+                  _statItem(
+                    '남은 걸음',
+                    _lastSteps >= goal ? '달성!' : '${goal - _lastSteps}',
                     colors,
                   ),
                 ],
@@ -403,11 +343,11 @@ class _PedometerScreenState extends State<PedometerScreen>
     );
   }
 
-  Widget _buildSensorStatus(SeasonColors colors) {
+  Widget _buildSensorStatus(SeasonColors colors, bool running) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        color: _isSensorReady
+        color: running
             ? colors.primary.withAlpha(20)
             : Colors.orange.withAlpha(24),
         borderRadius: BorderRadius.circular(14),
@@ -416,15 +356,15 @@ class _PedometerScreenState extends State<PedometerScreen>
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(
-            _isSensorReady ? Icons.sensors : Icons.sensors_off,
-            color: _isSensorReady ? colors.primary : Colors.orange[700],
+            running ? Icons.sensors : Icons.sensors_off,
+            color: running ? colors.primary : Colors.orange[700],
             size: 18,
           ),
           const SizedBox(width: 8),
           Text(
-            _isSensorReady ? '기기 걸음 수를 측정 중입니다' : '걸음 수 센서를 준비 중입니다',
+            running ? '백그라운드에서 걸음 수를 측정 중입니다' : '걸음 수 센서를 준비 중입니다',
             style: TextStyle(
-              color: _isSensorReady ? colors.primary : Colors.orange[800],
+              color: running ? colors.primary : Colors.orange[800],
               fontWeight: FontWeight.w700,
               fontSize: 13,
             ),
@@ -434,30 +374,66 @@ class _PedometerScreenState extends State<PedometerScreen>
     );
   }
 
-  Widget _buildSensorMessage(SeasonColors colors) {
+  Widget _buildErrorMessage(SeasonColors colors, String message) {
+    final bool needsSettings = message.contains('권한');
+    final bool permanent = message.contains('영구');
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: colors.primary.withAlpha(35)),
       ),
-      child: Text(
-        _sensorMessage!,
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Colors.grey[700],
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
+      child: Column(
+        children: [
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.grey[700],
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          if (needsSettings) ...[
+            const SizedBox(height: 10),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (!permanent) ...[
+                  TextButton.icon(
+                    onPressed: () => _service.start(),
+                    icon: const Icon(Icons.refresh, size: 16),
+                    label: const Text('다시 요청'),
+                  ),
+                  const SizedBox(width: 4),
+                ],
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: colors.primary,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 6,
+                    ),
+                  ),
+                  onPressed: () async {
+                    await openAppSettings();
+                  },
+                  icon: const Icon(Icons.settings, size: 16),
+                  label: const Text('앱 설정 열기'),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
     );
   }
 
-  Widget _buildWeeklyChart(SeasonColors colors) {
-    if (_weeklyData.isEmpty) return const SizedBox.shrink();
-    final maxSteps = _weeklyData
+  Widget _buildWeeklyChart(SeasonColors colors, List<WalkRecord> weekly) {
+    if (weekly.isEmpty) return const SizedBox.shrink();
+    final maxSteps = weekly
         .map((e) => e.stepCount)
         .reduce((a, b) => a > b ? a : b);
     return Container(
@@ -486,9 +462,9 @@ class _PedometerScreenState extends State<PedometerScreen>
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               crossAxisAlignment: CrossAxisAlignment.end,
-              children: _weeklyData.map((d) {
-                final ratio = d.stepCount / maxSteps;
-                final isToday = d == _weeklyData.last;
+              children: weekly.map((d) {
+                final ratio = maxSteps == 0 ? 0.0 : d.stepCount / maxSteps;
+                final isToday = d == weekly.last;
                 return Column(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
@@ -523,99 +499,6 @@ class _PedometerScreenState extends State<PedometerScreen>
               }).toList(),
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildPointHistory(SeasonColors colors) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: colors.primary.withAlpha(20), blurRadius: 10),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            '포인트 내역',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: colors.primary,
-            ),
-          ),
-          const SizedBox(height: 12),
-          ..._pointHistory.map((p) {
-            final isPositive = p.amount > 0;
-            IconData icon;
-            switch (p.type) {
-              case 'QUEST':
-                icon = Icons.emoji_events;
-                break;
-              case 'SHOP':
-                icon = Icons.shopping_bag;
-                break;
-              default:
-                icon = Icons.directions_walk;
-            }
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: isPositive
-                          ? colors.primary.withAlpha(25)
-                          : const Color(0xFFFFEBEE),
-                      shape: BoxShape.circle,
-                    ),
-                    child: Icon(
-                      icon,
-                      size: 18,
-                      color: isPositive ? colors.primary : Colors.red[400],
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          p.desc,
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        Text(
-                          p.time,
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Colors.grey[500],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  Text(
-                    '${isPositive ? "+" : ""}${p.amount}P',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: isPositive ? colors.primary : Colors.red[400],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }),
         ],
       ),
     );

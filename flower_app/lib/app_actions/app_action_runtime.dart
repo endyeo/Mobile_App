@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/chat_action.dart';
 import '../screens/community_feed_screen.dart';
-import '../screens/create_post_screen.dart';
+import '../screens/create_flower_spot_screen.dart';
 import '../screens/flower_book_page.dart';
 import '../screens/kakao_map_screen.dart';
 import '../screens/pedometer_screen.dart';
@@ -30,7 +30,9 @@ class AppActionRuntime {
       if (screen == null) {
         if (!context.mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('${action.target ?? action.type} 화면은 아직 준비 중입니다.')),
+          SnackBar(
+            content: Text('${action.target ?? action.type} 화면은 아직 준비 중입니다.'),
+          ),
         );
         return;
       }
@@ -41,9 +43,9 @@ class AppActionRuntime {
         final target = actions.isEmpty
             ? '화면'
             : actions.first.target ?? actions.first.type;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$target 이동에 실패했습니다.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$target 이동에 실패했습니다.')));
       }
     }
   }
@@ -55,7 +57,7 @@ class AppActionRuntime {
       await Navigator.push(
         context,
         PageRouteBuilder(
-          pageBuilder: (_, __, ___) => screen,
+          pageBuilder: (context, animation, secondaryAnimation) => screen,
           transitionDuration: Duration.zero,
           reverseTransitionDuration: Duration.zero,
         ),
@@ -63,17 +65,16 @@ class AppActionRuntime {
       return;
     }
 
-    await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => screen),
-    );
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
   }
 
   static bool _isMapAction(ChatAction action) {
     return action.target == 'MAP' ||
         action.type == 'MAP_SET_SEARCH_QUERY' ||
         action.type == 'MAP_SHOW_FLOWER' ||
-        action.type == 'MAP_OPEN_FLOWER_PREVIEW';
+        action.type == 'MAP_OPEN_FLOWER_PREVIEW' ||
+        action.type == 'MAP_OPEN_ROUTE_CHOOSER' ||
+        action.type == 'MAP_START_ROUTE';
   }
 
   static bool _isScreenAction(ChatAction action) {
@@ -81,15 +82,16 @@ class AppActionRuntime {
   }
 
   static Widget? _screenFor(ChatAction action) {
-    if (action.type == 'PREPARE_DRAFT' && (action.target ?? '').toUpperCase() == 'COMMUNITY') {
-      return const CreatePostScreen();
+    if (action.type == 'PREPARE_DRAFT' &&
+        (action.target ?? '').toUpperCase() == 'COMMUNITY') {
+      return const CreateFlowerSpotScreen();
     }
 
     switch ((action.target ?? '').toUpperCase()) {
       case 'COMMUNITY':
         return CommunityFeedScreen(initialQuery: _stringParam(action, 'query'));
       case 'COMMUNITY_COMPOSE':
-        return const CreatePostScreen();
+        return const CreateFlowerSpotScreen();
       case 'WALK':
       case 'PEDOMETER':
         return const PedometerScreen();

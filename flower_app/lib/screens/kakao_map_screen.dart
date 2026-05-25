@@ -62,6 +62,8 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
   List<FestivalData> _festivals = <FestivalData>[];
   List<TouristSpotData> _touristSpots = <TouristSpotData>[];
 
+  bool get _hasActiveMapSearch => _searchController.text.trim().isNotEmpty;
+
   @override
   void initState() {
     super.initState();
@@ -89,6 +91,8 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
+      ..clearCache()
+      ..clearLocalStorage()
       ..setOnConsoleMessage((JavaScriptConsoleMessage message) {
         debugPrint('[MapWebView] ${message.level.name}: ${message.message}');
       })
@@ -523,9 +527,16 @@ $app
   }
 
   Future<void> setSearchQuery(String query) async {
-    final String escaped = query.replaceAll(r'\', r'\\').replaceAll("'", r"\'");
+    final String trimmed = query.trim();
+    if (_searchController.text != trimmed) {
+      _searchController.text = trimmed;
+    }
+    if (mounted) {
+      setState(() {});
+    }
+    final String encoded = jsonEncode(trimmed);
     await _controller?.runJavaScript(
-      "if(window.FlowerMap) window.FlowerMap.setSearchQuery('$escaped');",
+      'if(window.FlowerMap) window.FlowerMap.setSearchQuery($encoded);',
     );
   }
 
@@ -830,12 +841,16 @@ $app
       body: Stack(
         children: <Widget>[
           Positioned.fill(child: _buildMapBody(colors)),
-          _buildFestivalOverlay(colors),
+          // 검색 활성 시: WebView 안에서 슬라이드 sheet 형태로 결과 패널이 뜨므로
+          // Flutter 오버레이(축제 캐러셀·줌 컨트롤·챗봇 FAB)는 숨겨 겹침 방지.
+          if (!_hasActiveMapSearch) _buildFestivalOverlay(colors),
           _buildTopBar(colors),
-          _buildZoomControls(colors),
+          if (!_hasActiveMapSearch) _buildZoomControls(colors),
         ],
       ),
-      floatingActionButton: const ChatFloatingButton(),
+      floatingActionButton: _hasActiveMapSearch
+          ? null
+          : const ChatFloatingButton(),
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: const AppBottomNavigation(currentTab: AppNavTab.map),
     );

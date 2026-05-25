@@ -1,5 +1,5 @@
 # HAR_FLOWER API 현황 요약
-<!-- 반영: 2026-05-21 13:24 - /chatbot/message/stream, /api/v1/map/routes, /api/v1/map/transit-route 반영 -->
+<!-- 반영: 2026-05-25 13:24 - /chatbot/message/stream, /api/v1/map/routes, /api/v1/map/transit-route, OpenAI API 키 단일화 반영 -->
 
 ## 1. 기준
 
@@ -116,6 +116,7 @@ Flutter에서 직접 호출하는 외부 API:
 
 백엔드 환경값:
 
+- `spring.ai.openai.api-key` / `OPENAI_API_KEY`: OpenAI API 키 (챗봇 planner/답변 생성 사용, 기존 `chatbot.openai.api-key` 중복 설정은 제거됨) <!-- 반영: 2026-05-25 sync -->
 - `tour.api-key` / `TOUR_API_KEY`: Tour API 액세스 키 (축제 도구 사용) <!-- 반영: 2026-05-21 13:24 -->
 
 비밀키 값은 문서에 기록하지 않는다.

@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/auth_api_service.dart';
+import '../services/step_counter_service.dart';
 import '../theme/season_theme.dart';
 import '../widgets/app_bottom_navigation.dart';
 import '../widgets/chat_floating_button.dart';
+import '../widgets/permission_sheet.dart';
 import 'login_screen.dart';
 import 'profile_detail_screen.dart';
 
@@ -64,6 +66,9 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
 
       // 서버에 FCM 토큰 초기화 알림 (실패해도 진행)
       await AuthApiService.logout(accessToken: accessToken);
+
+      // 만보기 Foreground Service 정지
+      await StepCounterService.instance.stop();
 
       // 로컬 토큰·세션 정보 삭제
       await prefs.remove('accessToken');
@@ -182,6 +187,14 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              _SettingsTile(
+                colors: colors,
+                icon: Icons.shield_outlined,
+                title: '권한 관리',
+                subtitle: '걸음 수, 알림, 위치, 카메라',
+                onTap: () => PermissionSheet.show(context),
+              ),
               const Spacer(),
               SizedBox(
                 width: double.infinity,
@@ -227,6 +240,80 @@ class _MyInfoScreenState extends State<MyInfoScreen> {
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       bottomNavigationBar: const AppBottomNavigation(
         currentTab: AppNavTab.myInfo,
+      ),
+    );
+  }
+}
+
+class _SettingsTile extends StatelessWidget {
+  final SeasonColors colors;
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _SettingsTile({
+    required this.colors,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: colors.primary.withValues(alpha: 0.10),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: colors.primary.withValues(alpha: 0.14),
+                child: Icon(icon, color: colors.primary, size: 22),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      subtitle,
+                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: Colors.grey[400]),
+            ],
+          ),
+        ),
       ),
     );
   }

@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:dio/dio.dart';
 import 'package:http/http.dart' as http;
 
 import '../api_config.dart';
+import 'api_client.dart';
 
 class TourApiService {
   TourApiService({http.Client? client}) : _client = client ?? http.Client();
@@ -48,62 +50,38 @@ class TourApiService {
     'garden',
     'park',
   ];
-  static const List<String> _priorityFestivalKeywords = <String>[
-    '\uAF43',
-    '\uBC9A\uAF43',
-    '\uB9E4\uD654',
-    '\uC720\uCC44',
-    '\uC7A5\uBBF8',
-    '\uAD6D\uD654',
-  ];
-
   final http.Client _client;
 
+  /// 백엔드 DB 캐시(/api/v1/festivals)에서 진행·예정 꽃 축제를 가져온다.
+  /// 외부 TourAPI 직접 호출은 백엔드의 FestivalCacheService가 주 1회만 수행.
   Future<List<FestivalData>> getFlowerFestivals({
     DateTime? eventStartDate,
     DateTime? today,
     int pageNo = 1,
     int numOfRows = 60,
   }) async {
-    final DateTime startDate = eventStartDate ?? _defaultEventStartDate();
     final DateTime localToday = _dateOnly(today ?? DateTime.now());
-    final Map<String, String> params = <String, String>{
-      'serviceKey': serviceKey,
-      'numOfRows': '$numOfRows',
-      'pageNo': '$pageNo',
-      'MobileOS': 'ETC',
-      'MobileApp': 'FlowerApp',
-      '_type': 'json',
-      'eventStartDate': _formatApiDate(startDate),
-      'contentTypeId': '15',
-    };
+    try {
+      final Response<dynamic> response = await ApiClient.dio.get(
+        '/api/v1/festivals',
+        queryParameters: <String, dynamic>{'limit': numOfRows},
+      );
+      if (response.statusCode != 200 || response.data is! Map)
+        return <FestivalData>[];
 
-    final Uri uri = Uri.parse(
-      '$_baseUrl/searchFestival2',
-    ).replace(queryParameters: params);
-    final http.Response response = await _client
-        .get(uri)
-        .timeout(const Duration(seconds: 15));
-
-    if (response.statusCode != 200) {
-      throw Exception('TourAPI request failed: ${response.statusCode}');
+      final Map data = (response.data as Map)['data'] as Map;
+      final List items = (data['items'] as List?) ?? const <dynamic>[];
+      final List<FestivalData> festivals = items
+          .whereType<Map<String, dynamic>>()
+          .map(FestivalData.fromApi)
+          .where(
+            (FestivalData f) => f.hasValidLocation && !f.isPast(localToday),
+          )
+          .toList();
+      return _dedupeFestivals(festivals);
+    } catch (error) {
+      throw Exception('Festival backend request failed: $error');
     }
-
-    final List<FestivalData> broadMatches = _parseFestivalList(
-      response.body,
-      today: localToday,
-    );
-    if (broadMatches.isNotEmpty) {
-      return _dedupeFestivals(broadMatches);
-    }
-
-    final List<FestivalData> keywordMatches =
-        await _fetchFlowerKeywordFestivals(
-          today: localToday,
-          pageNo: pageNo,
-          numOfRows: math.min(numOfRows, 30),
-        );
-    return _dedupeFestivals(keywordMatches);
   }
 
   Future<List<FestivalData>> searchFlowerFestivals({
@@ -218,30 +196,6 @@ class TourApiService {
         : results;
   }
 
-  Future<List<FestivalData>> _fetchFlowerKeywordFestivals({
-    required DateTime today,
-    required int pageNo,
-    required int numOfRows,
-  }) async {
-    final List<FestivalData> merged = <FestivalData>[];
-
-    for (final String keyword in _priorityFestivalKeywords) {
-      try {
-        final List<FestivalData> matches = await searchFlowerFestivals(
-          keyword: keyword,
-          today: today,
-          pageNo: pageNo,
-          numOfRows: numOfRows,
-        );
-        merged.addAll(matches);
-      } catch (_) {
-        // Keep partial results from other keywords.
-      }
-    }
-
-    return merged;
-  }
-
   List<FestivalData> _dedupeFestivals(List<FestivalData> festivals) {
     final Map<String, FestivalData> deduped = <String, FestivalData>{};
 
@@ -328,17 +282,6 @@ class TourApiService {
     }
 
     return deduped.values.toList();
-  }
-
-  DateTime _defaultEventStartDate() {
-    final DateTime now = DateTime.now();
-    return DateTime(now.year, now.month - 3, now.day);
-  }
-
-  String _formatApiDate(DateTime date) {
-    return '${date.year}'
-        '${date.month.toString().padLeft(2, '0')}'
-        '${date.day.toString().padLeft(2, '0')}';
   }
 
   DateTime _dateOnly(DateTime value) {

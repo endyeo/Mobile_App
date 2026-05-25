@@ -1,9 +1,10 @@
 # 챗봇 API 명세
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 SSE 스트림 엔드포인트, 이벤트 계약, flower_book 조회 데이터 필드를 반영함. -->
 <!-- 반영: 2026-05-21 13:24 - 길찾기 액션, 축제 도구 결과, 새 꽃 정보 도구명, planner domain/task 개념 반영 -->
+<!-- 반영: 2026-05-25 sync - request_id 요청/응답 왕복, 축제 ToolResult data 계약 변경(DB 전환/debug 필드 제거) 반영 -->
 
-- 문서 버전: v1.4.0
-- 최종 반영일: 2026-05-21
+- 문서 버전: v1.5.0
+- 최종 반영일: 2026-05-25
 
 ## 1. 공통
 
@@ -58,6 +59,7 @@ Base path:
 
 - `message`: 필수, blank 불가
 - `session_id`: 선택, 없으면 서버가 UUID 생성
+- `request_id`: 선택, 없으면 서버가 UUID 생성. 응답과 모든 SSE 이벤트에 `requestId`/`request_id`로 왕복된다. <!-- 반영: 2026-05-25 sync -->
 - `context.lat`: 선택, 사용자 현재 위도
 - `context.lng`: 선택, 사용자 현재 경도
 
@@ -316,7 +318,7 @@ DONE
 
 월/계절 추천 도구 `flower.recommendByMonth` (`flower.recommendSeasonalFlowers`는 호환 wrapper)은 `data.month`, `data.items`, `data.source`를 반환한다. 각 item은 꽃 도감 id, 꽃 이름, 개화일, 꽃말, 출처, 승인 명소 수와 대표 명소 정보를 포함할 수 있다. <!-- 반영: 2026-05-21 13:24 -->
 
-축제 도구 `festival.searchFlowerFestivals`는 `data.items`, `data.source`, `data.dateFilter`, `data.rangeStart`, `data.rangeEnd`, `data.today`, `data.primaryEndpoint`, `data.fallbackEndpoint`, `data.keywordFallbackUsed`, `data.rawFestivalCount`, `data.flowerFilteredCount` 등 진단값을 반환한다. 각 item은 `contentId`, `title`, `address`, `period`, `eventStartDate`, `eventEndDate`, `imageUrl`, `lat`, `lng`, `source`, `distanceKm`를 포함할 수 있다. <!-- 반영: 2026-05-21 13:24 -->
+축제 도구 `festival.searchFlowerFestivals`는 `data.items`, `data.source`(`festival_db` 또는 `Tour API`), `data.query`, `data.dateFilter`, `data.excludedPastCount`, `data.locationUsed`를 반환한다. Tour API 진단용 필드(`primaryEndpoint`, `fallbackEndpoint`, `rawFestivalCount` 등)는 응답에 포함하지 않는다. 각 item은 `contentId`, `title`, `address`, `period`, `eventStartDate`, `eventEndDate`, `imageUrl`, `lat`, `lng`, `source`, `distanceKm`를 포함할 수 있다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - DB 전환, debug 필드 제거 반영 -->
 
 상점, 구매, 퀘스트, 미션, 인증, 포인트 지급처럼 v1에서 직접 실행하지 않는 요청은 `app.unsupported` ToolResult로 반환되며 앱 액션은 비어 있다.
 

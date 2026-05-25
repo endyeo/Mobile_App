@@ -4,7 +4,10 @@ import '../theme/season_theme.dart';
 import '../services/community_api_service.dart';
 import '../widgets/app_bottom_navigation.dart';
 import '../widgets/chat_floating_button.dart';
+import '../widgets/fullscreen_image.dart';
+import 'community_search_screen.dart';
 import 'create_flower_spot_screen.dart';
+import 'flower_book_page.dart';
 import 'kakao_map_screen.dart';
 import '../models/chat_action.dart';
 import '../widgets/comment_bottom_sheet.dart';
@@ -185,6 +188,12 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
     }
   }
 
+  void _openFlowerBookForSpecies(String species) {
+    // 도감 페이지로 진입하지 않고 검색 → 첫 결과의 상세 시트를 바로 띄움.
+    // 결과 없으면 도감 헬퍼가 SnackBar로 안내.
+    showFlowerDetailByKeyword(context, species);
+  }
+
   void _openMapForPost(CommunityPost post) {
     if (post.latitude == null || post.longitude == null) return;
     Navigator.push(
@@ -240,6 +249,14 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
           style: TextStyle(color: colors.primary, fontWeight: FontWeight.bold),
         ),
         actions: [
+          IconButton(
+            icon: Icon(Icons.search, color: colors.primary),
+            tooltip: '게시글 검색',
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const CommunitySearchScreen()),
+            ),
+          ),
           IconButton(
             icon: Icon(Icons.add_circle_outline, color: colors.primary),
             onPressed: _openCreatePost,
@@ -424,18 +441,30 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
             ),
           ),
           if (post.imageUrl != null)
-            Image.network(
-              post.imageUrl!,
-              height: 200,
-              width: double.infinity,
-              fit: BoxFit.cover,
-              errorBuilder: (_, __, ___) => Container(
-                height: 200,
-                color: flowerColors[index % flowerColors.length].withAlpha(80),
-                child: const Icon(
-                  Icons.broken_image,
-                  size: 48,
-                  color: Colors.grey,
+            GestureDetector(
+              onTap: () => FullscreenImage.show(
+                context,
+                post.imageUrl!,
+                heroTag: 'feed-${post.id}',
+              ),
+              child: Hero(
+                tag: 'feed-${post.id}',
+                child: Image.network(
+                  post.imageUrl!,
+                  height: 200,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, _, _) => Container(
+                    height: 200,
+                    color: flowerColors[index % flowerColors.length].withAlpha(
+                      80,
+                    ),
+                    child: const Icon(
+                      Icons.broken_image,
+                      size: 48,
+                      color: Colors.grey,
+                    ),
+                  ),
                 ),
               ),
             )
@@ -460,33 +489,48 @@ class _CommunityFeedScreenState extends State<CommunityFeedScreen> {
                 runSpacing: 6,
                 children: [
                   if (post.displaySpecies != null)
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: colors.primary.withAlpha(20),
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.local_florist,
-                            size: 14,
-                            color: colors.primary,
+                    InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () =>
+                          _openFlowerBookForSpecies(post.displaySpecies!),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 6,
+                        ),
+                        decoration: BoxDecoration(
+                          color: colors.primary.withAlpha(20),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: colors.primary.withAlpha(60),
+                            width: 1,
                           ),
-                          const SizedBox(width: 4),
-                          Text(
-                            post.displaySpecies!,
-                            style: TextStyle(
-                              fontSize: 12,
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(
+                              Icons.local_florist,
+                              size: 14,
                               color: colors.primary,
-                              fontWeight: FontWeight.w600,
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 4),
+                            Text(
+                              post.displaySpecies!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: colors.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 14,
+                              color: colors.primary,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   if (post.latitude != null && post.longitude != null)

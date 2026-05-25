@@ -2,9 +2,10 @@
 <!-- 2026-05-15 automation: REPORT/records와 실제 코드 기준으로 챗봇 SSE 스트림, 음성 입력, flower_book 조회 반영 상태를 갱신함. -->
 <!-- 반영: 2026-05-21 13:24 - 축제 도메인, 꽃 정보 도구 확장, 길찾기 액션, TransitRouteController, CommunityPostRepository, focusFlowerById, 위치 전달 반영 -->
 <!-- 반영: 2026-05-22 automation - ChatbotService 프롬프트 계층과 docs/chatbot 프롬프트 명세 문서 연결을 현재 코드 기준으로 갱신함. -->
+<!-- 반영: 2026-05-25 sync - RouteDecision/flow, Evidence Check, requestId, OpenAI 키 단일화, 커뮤니티 최신/인기 도구, 축제 DB 전환, COMMUNITY_COMPOSE→CreateFlowerSpotScreen 반영 -->
 
-- 문서 버전: v1.3.1
-- 최종 반영일: 2026-05-22
+- 문서 버전: v1.4.0
+- 최종 반영일: 2026-05-25
 
 ## 1. 프로젝트 개요
 
@@ -68,9 +69,9 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 
 ### AI 챗봇
 
-챗봇은 사용자 메시지를 받아 planner의 `domain/task` 계약으로 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영한다. `ChatbotService` 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()` 계층으로 분리되어 있으며, 구조/문장 규칙 상세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_KO_SPEC.md`를 함께 따른다. <!-- 반영: 2026-05-22 automation -->
+챗봇은 사용자 메시지를 받아 planner의 `domain/task` 계약으로 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. planner 결과는 `RouteDecision(flow, keyword, reason, confidence, source)`로 수신하며, 정보성 flow에는 `executeInformationToolLoop`를 적용해 Evidence Check(`SUFFICIENT`/`INSUFFICIENT`/`NONE`/`ERROR`) 기반으로 최대 2회 도구를 호출한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영하며, 요청별 `requestId`로 이전 SSE 이벤트가 현재 답변을 덮지 않도록 필터링한다. `ChatbotService` 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()` 계층으로 분리되어 있으며, 구조/문장 규칙 상세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_KO_SPEC.md`를 함께 따른다. OpenAI API 키는 `spring.ai.openai.api-key` 단일 설정으로 통합되었다. <!-- 반영: 2026-05-22 automation --> <!-- 반영: 2026-05-25 sync - RouteDecision, Evidence Check, requestId, OpenAI 키 단일화 반영 -->
 
-planner domain은 `flower_info`, `festival_info`, `community`, `map_place`, `app_navigation`, `unsupported`, `general`이며, 꽃 정보 도구는 `flower.getBasicInfo`, `flower.getMeaningAndBloom`, `flower.getGrowGuide`, `flower.recommendByMonth`, `flower.inferCandidates`를 포함한다. 축제 도구는 Tour API 기반 `festival.searchFlowerFestivals`를 사용한다. <!-- 반영: 2026-05-21 13:24 -->
+planner domain은 `flower_info`, `festival_info`, `community`, `map_place`, `app_navigation`, `unsupported`, `general`이며, 꽃 정보 도구는 `flower.getBasicInfo`, `flower.getMeaningAndBloom`, `flower.getGrowGuide`, `flower.recommendByMonth`, `flower.inferCandidates`를 포함한다. 커뮤니티 도구는 `community.searchPosts`, `community.getLatestPosts`, `community.getPopularPosts`를 포함한다. 축제 도구는 `FestivalRepository` DB 우선 조회 기반 `festival.searchFlowerFestivals`를 사용한다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - 커뮤니티 최신/인기, 축제 DB 반영 -->
 
 Flutter의 플로팅 챗봇 입력창은 Android `flower_app/speech` MethodChannel로 음성 인식을 연결한다. 실행 순서는 마이크 권한 확인, 권한 요청, 음성 인식 시작이며, 응답 대기 중 전송 버튼은 정지 버튼으로 바뀌고 사용자가 중지하면 SSE 연결을 취소한다.
 
@@ -86,7 +87,7 @@ Flutter의 플로팅 챗봇 입력창은 Android `flower_app/speech` MethodChann
 
 ### 커뮤니티
 
-백엔드 `CommunityController`는 피드 조회, 게시글 작성, 좋아요, 저장 토글을 제공한다. Flutter의 `CommunityApiService`가 access token을 포함해 호출한다. 챗봇 커뮤니티 도구는 `CommunityPostRepository`의 `searchByKeyword` 쿼리로 커뮤니티 글 검색과 화면 이동/작성 화면 이동 액션만 담당하며 실제 글 저장이나 초안 생성은 수행하지 않는다. 커뮤니티 좋아요/댓글/삭제/자동 저장 요청은 `app.unsupported`로 차단된다. 현재 글 작성 요청은 `NAVIGATE COMMUNITY_COMPOSE`로 `CreatePostScreen` 연결까지만 수행한다. <!-- 반영: 2026-05-21 13:24 -->
+백엔드 `CommunityController`는 피드 조회, 게시글 작성, 좋아요, 저장 토글을 제공한다. Flutter의 `CommunityApiService`가 access token을 포함해 호출한다. 챗봇 커뮤니티 도구는 `CommunityPostRepository`의 `searchByKeyword` 쿼리로 커뮤니티 글 검색과 화면 이동/작성 화면 이동 액션만 담당하며 실제 글 저장이나 초안 생성은 수행하지 않는다. 커뮤니티 좋아요/댓글/삭제/자동 저장 요청은 `app.unsupported`로 차단된다. 현재 글 작성 요청은 `NAVIGATE COMMUNITY_COMPOSE`로 `CreateFlowerSpotScreen` 연결까지만 수행한다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - CreateFlowerSpotScreen 반영 -->
 
 # 커뮤니티 아이디어 - 하단 네비게이션으로 커뮤니티 들어오면 게시글 | 인기글 | 댓글 내역 으로 네비게이션 변경
 

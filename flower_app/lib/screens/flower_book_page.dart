@@ -3,11 +3,15 @@ import '../theme/season_theme.dart';
 import '../services/flower_book_api_service.dart';
 
 class FlowerBookPage extends StatefulWidget {
+  /// 진입 시 자동으로 검색할 키워드. 결과가 비어있지 않으면 첫 번째 꽃의
+  /// 상세 시트가 자동으로 열린다 (커뮤니티 게시물에서 꽃 이름 탭 시 사용).
+  final String? initialKeyword;
   final String? initialQuery;
   final int? initialFlowerBookId;
 
   const FlowerBookPage({
     super.key,
+    this.initialKeyword,
     this.initialQuery,
     this.initialFlowerBookId,
   });
@@ -23,14 +27,16 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
   int _selectedMonth = DateTime.now().month;
   final TextEditingController _searchController = TextEditingController();
   bool _isSearching = false;
+  bool _initialDetailShown = false;
 
   @override
   void initState() {
     super.initState();
-    final query = widget.initialQuery?.trim();
-    if (query != null && query.isNotEmpty) {
-      _searchController.text = query;
-      _search(query);
+    final String? initial = (widget.initialKeyword ?? widget.initialQuery)
+        ?.trim();
+    if (initial != null && initial.isNotEmpty) {
+      _searchController.text = initial;
+      _search(initial, autoOpenDetail: true);
     } else {
       _loadFlowers();
     }
@@ -65,7 +71,7 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
     }
   }
 
-  Future<void> _search(String keyword) async {
+  Future<void> _search(String keyword, {bool autoOpenDetail = false}) async {
     if (keyword.trim().isEmpty) {
       _loadFlowers();
       return;
@@ -76,11 +82,20 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
     });
     try {
       final results = await FlowerBookApiService.search(keyword.trim());
-      if (mounted)
-        setState(() {
-          _flowers = results;
-          _isLoading = false;
+      if (!mounted) return;
+      setState(() {
+        _flowers = results;
+        _isLoading = false;
+      });
+
+      // 초기 키워드로 진입한 경우 첫 번째 결과의 상세 시트를 자동으로 띄움
+      if (autoOpenDetail && !_initialDetailShown && results.isNotEmpty) {
+        _initialDetailShown = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _showFlowerDetail(results.first, SeasonTheme.getColors());
         });
+      }
     } catch (e) {
       if (mounted)
         setState(() {
@@ -384,7 +399,7 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => _FlowerDetailSheet(
+      builder: (context) => FlowerDetailSheet(
         flower: flower,
         colors: colors,
         cardColor: _categoryColor(flower.categoryName),
@@ -429,22 +444,23 @@ class _FlowerBookPageState extends State<FlowerBookPage> {
   }
 }
 
-class _FlowerDetailSheet extends StatefulWidget {
+class FlowerDetailSheet extends StatefulWidget {
   final FlowerBookItem flower;
   final SeasonColors colors;
   final Color cardColor;
 
-  const _FlowerDetailSheet({
+  const FlowerDetailSheet({
+    super.key,
     required this.flower,
     required this.colors,
     required this.cardColor,
   });
 
   @override
-  State<_FlowerDetailSheet> createState() => _FlowerDetailSheetState();
+  State<FlowerDetailSheet> createState() => FlowerDetailSheetState();
 }
 
-class _FlowerDetailSheetState extends State<_FlowerDetailSheet> {
+class FlowerDetailSheetState extends State<FlowerDetailSheet> {
   FlowerBookDetail? _detail;
   bool _loadingDetail = true;
 
@@ -620,5 +636,64 @@ class _FlowerDetailSheetState extends State<_FlowerDetailSheet> {
         ),
       ),
     );
+  }
+}
+
+/// 도감 카테고리 이름에 따라 카드 배경색 반환 (헬퍼 함수에서 재사용).
+Color flowerCategoryColor(String? category) {
+  if (category == null) return const Color(0xFF81C784);
+  if (category.contains('벚꽃')) return const Color(0xFFFFB7C5);
+  if (category.contains('장미')) return const Color(0xFFEC407A);
+  if (category.contains('튤립')) return const Color(0xFFFF6B6B);
+  if (category.contains('해바라기')) return const Color(0xFFFFCA28);
+  if (category.contains('국화')) return const Color(0xFFFFA726);
+  if (category.contains('코스모스')) return const Color(0xFFFF8A65);
+  if (category.contains('수국')) return const Color(0xFF7E57C2);
+  if (category.contains('동백')) return const Color(0xFFE53935);
+  if (category.contains('라벤더')) return const Color(0xFFAB47BC);
+  if (category.contains('무궁화')) return const Color(0xFFE91E63);
+  if (category.contains('매화')) return const Color(0xFFBDBDBD);
+  if (category.contains('진달래')) return const Color(0xFFE8A0BF);
+  return const Color(0xFF81C784);
+}
+
+/// 도감 페이지 진입 없이 키워드로 검색해서 첫 번째 꽃의 상세 시트를 바로 띄움.
+/// 결과가 없으면 SnackBar로 "도감에 없는 꽃이에요" 안내.
+///
+/// 게시물 카드의 꽃 이름 배지 등에서 사용.
+Future<void> showFlowerDetailByKeyword(
+  BuildContext context,
+  String keyword,
+) async {
+  final String trimmed = keyword.trim();
+  if (trimmed.isEmpty) return;
+
+  try {
+    final List<FlowerBookItem> results = await FlowerBookApiService.search(
+      trimmed,
+    );
+    if (!context.mounted) return;
+    if (results.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('도감에 없는 꽃이에요: $trimmed')));
+      return;
+    }
+    final flower = results.first;
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => FlowerDetailSheet(
+        flower: flower,
+        colors: SeasonTheme.getColors(),
+        cardColor: flowerCategoryColor(flower.categoryName),
+      ),
+    );
+  } catch (e) {
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('도감 조회 실패')));
   }
 }

@@ -31,9 +31,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       // 시스템 브라우저에서 카카오 로그인 → 콜백 딥링크 수신
+      // intentFlags 옵션으로 카카오톡 앱이 인증 URL 인텐트를 가로채지 않게 막음
+      // (가로채면 redirect_uri를 무시해서 우리 백엔드로 callback 안 옴)
       final result = await FlutterWebAuth2.authenticate(
         url: AuthApiService.getKakaoAuthUrl(clientId),
         callbackUrlScheme: AuthApiService.callbackUrlScheme,
+        options: const FlutterWebAuth2Options(
+          intentFlags: ephemeralIntentFlags,
+          timeout: 60,
+        ),
       );
 
       final code = Uri.parse(result).queryParameters['code'];
@@ -63,8 +69,10 @@ class _LoginScreenState extends State<LoginScreen> {
           await prefs.setString('accessToken', accessToken);
           await prefs.setString('refreshToken', data['refreshToken'] ?? '');
           final user = data['user'] as Map<String, dynamic>?;
-          if (user?['nickname'] != null) await prefs.setString('nickname', user!['nickname']);
-          if (user?['profileImageUrl'] != null) await prefs.setString('profileImageUrl', user!['profileImageUrl']);
+          if (user?['nickname'] != null)
+            await prefs.setString('nickname', user!['nickname']);
+          if (user?['profileImageUrl'] != null)
+            await prefs.setString('profileImageUrl', user!['profileImageUrl']);
 
           // FCM 토큰 백엔드에 전송
           final fcmToken = prefs.getString('fcmToken');
@@ -174,10 +182,7 @@ class _LoginScreenState extends State<LoginScreen> {
         const SizedBox(height: 8),
         Text(
           '${colors.name}의 꽃과 함께 산책해요',
-          style: TextStyle(
-            fontSize: 15,
-            color: Colors.grey[600],
-          ),
+          style: TextStyle(fontSize: 15, color: Colors.grey[600]),
         ),
       ],
     );

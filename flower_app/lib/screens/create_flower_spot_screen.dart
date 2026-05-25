@@ -30,9 +30,38 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
   final TextEditingController _contentController = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // 안드로이드: 카메라 인텐트 중 OS가 우리 액티비티를 메모리 회수했다가
+    // 복귀하면 onActivityResult를 못 받음 → LostDataResponse로 복구.
+    _retrieveLostCameraImage();
+  }
+
+  @override
   void dispose() {
     _contentController.dispose();
     super.dispose();
+  }
+
+  Future<void> _retrieveLostCameraImage() async {
+    try {
+      final LostDataResponse response = await ImagePicker().retrieveLostData();
+      if (response.isEmpty) return;
+      final XFile? file = response.file;
+      if (file == null) return;
+      final picked = File(file.path);
+      if (!mounted) return;
+      setState(() {
+        _image = picked;
+        _imageFromGallery = false;
+        _capturedPosition = null;
+        _plantName = null;
+        _plantConfidence = null;
+      });
+      await _identifyPlant(picked);
+    } catch (e) {
+      debugPrint('[ImagePicker] lost data 복구 실패: $e');
+    }
   }
 
   Future<void> _takePicture() async {
@@ -46,22 +75,14 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
     if (picked == null) return;
 
     final file = File(picked.path);
-    Position? capturedPos;
-    if (_shareLocation) {
-      capturedPos = await _captureCurrentPosition();
-      if (capturedPos == null && mounted) {
-        // GPS 못 잡았으면 위치 공유 강제 해제 (가짜 위치 등록 차단)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('위치를 잡지 못해 위치 공유 없이 등록됩니다.')),
-        );
-      }
-    }
+    // 토글 상태와 무관하게 GPS 캡처 시도 — 권한 없으면 조용히 null.
+    // 게시 시점에 토글 ON + GPS 있음일 때만 서버로 전송한다.
+    final Position? capturedPos = await _captureCurrentPositionIfAllowed();
 
     setState(() {
       _image = file;
       _imageFromGallery = false; // 카메라 촬영
       _capturedPosition = capturedPos;
-      if (capturedPos == null) _shareLocation = false;
       _plantName = null;
       _plantConfidence = null;
     });
@@ -103,6 +124,22 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
     }
   }
 
+  /// 권한이 이미 허용된 경우에만 GPS를 잡는다.
+  /// 권한이 없는 상태에서 매번 사용자에게 권한 다이얼로그를 띄우지 않기 위함.
+  /// 사용자가 위치 공유 토글을 ON으로 켤 때 권한 요청을 진행한다.
+  Future<Position?> _captureCurrentPositionIfAllowed() async {
+    try {
+      final LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        return null;
+      }
+      return await _captureCurrentPosition();
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _identifyPlant(File file) async {
     setState(() => _isIdentifying = true);
     try {
@@ -126,7 +163,6 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
 
   Future<void> _toggleLocationShare(bool value) async {
     if (value) {
-      // 위치 공유는 권한 체크만. 실제 GPS는 사진 찍을 때 캡처.
       try {
         LocationPermission permission = await Geolocator.checkPermission();
         if (permission == LocationPermission.denied) {
@@ -139,14 +175,11 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
         if (mounted) await promptAlwaysLocation(context);
 
         final hadGalleryImage = _imageFromGallery;
-        final hadCameraImageNoGps =
-            _image != null && !_imageFromGallery && _capturedPosition == null;
 
         setState(() {
           _shareLocation = true;
-          // 갤러리 사진 → 위치 검증 불가 → 제거
-          // 카메라 사진인데 촬영 시점 GPS가 없으면 → 다시 찍어야 함
-          if (_imageFromGallery || hadCameraImageNoGps) {
+          // 갤러리 사진 → 위치 검증 불가 → 제거 (위치 공유 시엔 카메라만)
+          if (_imageFromGallery) {
             _image = null;
             _imageFromGallery = false;
             _capturedPosition = null;
@@ -155,16 +188,13 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
           }
         });
 
-        if (mounted) {
-          if (hadGalleryImage) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('위치 공유 시 카메라로 촬영해주세요.')),
-            );
-          } else if (hadCameraImageNoGps) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('위치 기록을 위해 사진을 다시 촬영해주세요.')),
-            );
-          }
+        // 카메라 사진은 이미 찍힐 때 GPS도 같이 잡혀있을 수 있음 → 그대로 유지.
+        // GPS가 없는 경우 게시 시점에 안내한다.
+
+        if (mounted && hadGalleryImage) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('위치 공유 시 카메라로 촬영해주세요.')));
         }
       } catch (e) {
         if (mounted) _showLocationDeniedDialog();
@@ -172,7 +202,7 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
     } else {
       setState(() {
         _shareLocation = false;
-        _capturedPosition = null;
+        // capturedPosition은 비우지 않음 — 다시 토글 ON 시 그대로 사용 가능
         _notifyOthers = false;
       });
     }
@@ -242,11 +272,11 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
       ).showSnackBar(const SnackBar(content: Text('식물 인식 중입니다. 잠시 기다려주세요.')));
       return;
     }
+    // 토글 ON 인데 사진 찍은 시점의 GPS가 없으면 안내만 표시하고 위치 없이 진행
     if (_shareLocation && _capturedPosition == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('위치 공유를 위해 카메라로 사진을 다시 찍어주세요.')),
+        const SnackBar(content: Text('위치를 잡지 못해 위치 공유 없이 등록됩니다.')),
       );
-      return;
     }
 
     // 사진 찍은 위치에서 멀리 이동했으면 확인 다이얼로그
@@ -490,7 +520,7 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
                   style: TextStyle(fontWeight: FontWeight.w600, fontSize: 15),
                 ),
                 Text(
-                  '사진 찍은 그 위치가 기록됨 (갤러리 불가)',
+                  'ON일 때만 사진 찍은 위치가 서버로 전송 (갤러리 사진은 비공유)',
                   style: TextStyle(fontSize: 11, color: Colors.grey),
                 ),
               ],

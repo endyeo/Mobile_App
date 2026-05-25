@@ -101,13 +101,17 @@ class _ChatScreenState extends State<ChatScreen> {
       final response = await _chatbotService.sendMessage(
         message: text,
         sessionId: _sessionId,
+        requestId: const Uuid().v4(),
         lat: 37.5665,
         lng: 126.9780,
       );
 
       setState(() {
         _messages.removeAt(0);
-        _messages.insert(0, ChatMessage.bot(response.reply, action: response.action));
+        _messages.insert(
+          0,
+          ChatMessage.bot(response.reply, action: response.action),
+        );
         _isLoading = false;
         _currentAgentRun = response.agentRun;
         _currentToolResults = response.toolResults;
@@ -161,7 +165,11 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 const SizedBox(height: 76),
                 if (_currentAgentRun != null)
-                  _buildAgentActivityPanel(_currentAgentRun!, _currentToolResults, colors),
+                  _buildAgentActivityPanel(
+                    _currentAgentRun!,
+                    _currentToolResults,
+                    colors,
+                  ),
                 Expanded(
                   child: ListView.builder(
                     controller: _scrollController,
@@ -208,20 +216,32 @@ class _ChatScreenState extends State<ChatScreen> {
             color: Colors.white.withAlpha(224),
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
-              BoxShadow(color: Colors.black.withAlpha(20), blurRadius: 12, offset: const Offset(0, 3)),
+              BoxShadow(
+                color: Colors.black.withAlpha(20),
+                blurRadius: 12,
+                offset: const Offset(0, 3),
+              ),
             ],
           ),
           child: Row(
             children: [
               IconButton(
-                icon: Icon(Icons.arrow_back_ios_new, color: colors.primary, size: 18),
+                icon: Icon(
+                  Icons.arrow_back_ios_new,
+                  color: colors.primary,
+                  size: 18,
+                ),
                 tooltip: '뒤로가기',
                 onPressed: () => Navigator.pop(context),
               ),
               CircleAvatar(
                 radius: 18,
                 backgroundColor: colors.primary.withAlpha(38),
-                child: Icon(Icons.smart_toy_outlined, color: colors.primary, size: 20),
+                child: Icon(
+                  Icons.smart_toy_outlined,
+                  color: colors.primary,
+                  size: 20,
+                ),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -229,8 +249,17 @@ class _ChatScreenState extends State<ChatScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text('FLOWER 챗봇', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                    Text('${colors.name} 탐험 도우미', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+                    const Text(
+                      'FLOWER 챗봇',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      '${colors.name} 탐험 도우미',
+                      style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                    ),
                   ],
                 ),
               ),
@@ -253,20 +282,30 @@ class _ChatScreenState extends State<ChatScreen> {
         title: const Text('대화 초기화'),
         content: const Text('현재 대화 내용을 지우고 세션을 초기화할까요?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('취소')),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소'),
+          ),
           TextButton(
             onPressed: () {
               Navigator.pop(context);
               _resetSession();
             },
-            child: const Text('초기화', style: TextStyle(color: Color(0xFFE07B54))),
+            child: const Text(
+              '초기화',
+              style: TextStyle(color: Color(0xFFE07B54)),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAgentActivityPanel(AgentRunTrace agentRun, List<ToolResult> toolResults, SeasonColors colors) {
+  Widget _buildAgentActivityPanel(
+    AgentRunTrace agentRun,
+    List<ToolResult> toolResults,
+    SeasonColors colors,
+  ) {
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -274,7 +313,13 @@ class _ChatScreenState extends State<ChatScreen> {
       decoration: BoxDecoration(
         color: Colors.white.withAlpha(232),
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withAlpha(14), blurRadius: 10, offset: const Offset(0, 3))],
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(14),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -282,26 +327,40 @@ class _ChatScreenState extends State<ChatScreen> {
         children: [
           Text(
             'AI 작업 진행: ${_routeLabel(agentRun.route)}',
-            style: TextStyle(color: colors.primary, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 8),
-          ...agentRun.steps.take(6).map(
-            (step) => Padding(
-              padding: const EdgeInsets.only(bottom: 4),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('${step.step}. ', style: TextStyle(color: colors.primary, fontWeight: FontWeight.w700)),
-                  Expanded(
-                    child: Text(
-                      _stepLabel(step),
-                      style: const TextStyle(color: Color(0xFF315C4B), fontSize: 12),
-                    ),
-                  ),
-                ],
-              ),
+            style: TextStyle(
+              color: colors.primary,
+              fontWeight: FontWeight.w700,
             ),
           ),
+          const SizedBox(height: 8),
+          ...agentRun.steps
+              .take(6)
+              .map(
+                (step) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${step.step}. ',
+                        style: TextStyle(
+                          color: colors.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          _stepLabel(step),
+                          style: const TextStyle(
+                            color: Color(0xFF315C4B),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           if (toolResults.isNotEmpty)
             Text(
               toolResults.map(_toolResultLabel).join(' / '),
@@ -338,83 +397,160 @@ class _ChatScreenState extends State<ChatScreen> {
 
   String _agentLabel(String agent) {
     switch (agent) {
-      case 'RouterAgent': return '라우팅 AI';
-      case 'MapAgent': case 'MAPAgent': return '지도 AI';
-      case 'FlowerAgent': case 'FLOWER_BOOKAgent': return '꽃 AI';
-      case 'CommunityAgent': case 'COMMUNITYAgent': return '커뮤니티 AI';
-      case 'WALKAgent': return '산책 AI';
-      default: return '전문 AI';
+      case 'RouterAgent':
+        return '라우팅 AI';
+      case 'MapAgent':
+      case 'MAPAgent':
+        return '지도 AI';
+      case 'FlowerAgent':
+      case 'FLOWER_BOOKAgent':
+        return '꽃 AI';
+      case 'CommunityAgent':
+      case 'COMMUNITYAgent':
+        return '커뮤니티 AI';
+      case 'WALKAgent':
+        return '산책 AI';
+      default:
+        return '전문 AI';
     }
   }
 
   String _toolLabel(String tool) {
     switch (tool) {
-      case 'routeAndPlan': return '의도 파악과 계획 수립';
-      case 'searchFlowerSpots': case 'flower.searchFlowerSpots': return '꽃 명소 검색';
-      case 'flower.recommendSeasonalFlowers': return '계절 꽃 추천';
-      case 'lookupFlowerDescriptionSource': case 'flower.lookupDescriptionSource': return '꽃 설명 조회';
-      case 'lookupFlowerGrowTipsSource': case 'flower.lookupGrowTipsSource': return '꽃 재배 팁 조회';
-      case 'searchCommunityPosts': case 'community.searchPosts': return '커뮤니티 글 검색';
-      case 'NAVIGATE': return '관련 화면 열기';
-      case 'app.openFlowerBook': return '꽃 도감 열기';
-      case 'app.openMap': case 'app.openMapWithFlowerQuery': return '지도 열기';
-      case 'app.openCommunityWithQuery': return '커뮤니티 열기';
-      case 'app.openCommunityComposer': return '커뮤니티 글 작성 화면 열기';
-      case 'app.openSaved': return '저장 화면 열기';
-      case 'app.openWalk': return '산책 화면 열기';
-      case 'app.unsupported': return '지원하지 않는 요청 확인';
-      case 'MAP_SET_SEARCH_QUERY': return '지도 검색어 적용';
-      case 'MAP_SHOW_FLOWER': return '지도 꽃 위치 표시';
-      case 'MAP_OPEN_FLOWER_PREVIEW': return '지도 꽃 미리보기';
-      case 'PREPARE_DRAFT': return '커뮤니티 글 작성 화면 열기';
-      case 'buildDefaultContext': return '기본 정보 확인';
-      default: return tool;
+      case 'routeAndPlan':
+        return '의도 파악과 계획 수립';
+      case 'searchFlowerSpots':
+      case 'flower.searchFlowerSpots':
+        return '꽃 명소 검색';
+      case 'flower.recommendSeasonalFlowers':
+        return '계절 꽃 추천';
+      case 'lookupFlowerDescriptionSource':
+      case 'flower.lookupDescriptionSource':
+        return '꽃 설명 조회';
+      case 'lookupFlowerGrowTipsSource':
+      case 'flower.lookupGrowTipsSource':
+        return '꽃 재배 팁 조회';
+      case 'searchCommunityPosts':
+      case 'community.searchPosts':
+        return '커뮤니티 글 검색';
+      case 'NAVIGATE':
+        return '관련 화면 열기';
+      case 'app.openFlowerBook':
+        return '꽃 도감 열기';
+      case 'app.openMap':
+      case 'app.openMapWithFlowerQuery':
+        return '지도 열기';
+      case 'app.openCommunityWithQuery':
+        return '커뮤니티 열기';
+      case 'app.openCommunityComposer':
+        return '커뮤니티 글 작성 화면 열기';
+      case 'app.openSaved':
+        return '저장 화면 열기';
+      case 'app.openWalk':
+        return '산책 화면 열기';
+      case 'app.unsupported':
+        return '지원하지 않는 요청 확인';
+      case 'MAP_SET_SEARCH_QUERY':
+        return '지도 검색어 적용';
+      case 'MAP_SHOW_FLOWER':
+        return '지도 꽃 위치 표시';
+      case 'MAP_OPEN_FLOWER_PREVIEW':
+        return '지도 꽃 미리보기';
+      case 'PREPARE_DRAFT':
+        return '커뮤니티 글 작성 화면 열기';
+      case 'buildDefaultContext':
+        return '기본 정보 확인';
+      default:
+        return tool;
     }
   }
 
   String _statusLabel(String status) {
     switch (status) {
-      case 'SUCCESS': return '완료했습니다';
-      case 'READY': return '준비했습니다';
-      case 'FAILED': return '실패했습니다';
-      default: return status.isEmpty ? '진행했습니다' : status;
+      case 'SUCCESS':
+        return '완료했습니다';
+      case 'READY':
+        return '준비했습니다';
+      case 'FAILED':
+        return '실패했습니다';
+      default:
+        return status.isEmpty ? '진행했습니다' : status;
     }
   }
 
   String _targetLabel(String target) {
     switch (target) {
-      case 'MAP': return '지도';
-      case 'FLOWER': case 'FLOWER_GROW': case 'FLOWER_BOOK': return '꽃';
-      case 'COMMUNITY': return '커뮤니티';
-      case 'COMMUNITY_COMPOSE': return '커뮤니티 글 작성';
-      case 'WALK': return '산책';
-      case 'SAVED': return '저장됨';
-      case 'QUEST': case 'SHOP': return '지원하지 않는 요청';
-      default: return target;
+      case 'MAP':
+        return '지도';
+      case 'FLOWER':
+      case 'FLOWER_GROW':
+      case 'FLOWER_BOOK':
+        return '꽃';
+      case 'COMMUNITY':
+        return '커뮤니티';
+      case 'COMMUNITY_COMPOSE':
+        return '커뮤니티 글 작성';
+      case 'WALK':
+        return '산책';
+      case 'SAVED':
+        return '저장됨';
+      case 'QUEST':
+      case 'SHOP':
+        return '지원하지 않는 요청';
+      default:
+        return target;
     }
   }
 
   String _messageLabel(String message) {
-    if (message.isEmpty) return '';
-    final checked = RegExp(r'Checked (\d+) approved flower spot candidates\.').firstMatch(message);
-    if (checked != null) return '승인된 꽃 명소 ${checked.group(1)}개를 확인했습니다.';
-    final accepted = RegExp(r'Validated client-side follow-up from (.+)\.').firstMatch(message);
-    if (accepted != null) return '${_plannerLabel(accepted.group(1) ?? '')}을 확인했습니다.';
-    if (message == 'Selected a representative flower location for the map context.') return '대표 꽃 위치를 확인했습니다.';
-    if (message == 'Built default flower and community context.') return '기본 꽃/커뮤니티 정보를 준비했습니다.';
-    if (message == 'Checked default data for a general answer.') return '일반 답변에 필요한 기본 데이터를 확인했습니다.';
-    final flowerSummary = RegExp(r"'(.+)' flower spot search returned (\d+) result\(s\)\.").firstMatch(message);
-    if (flowerSummary != null) return "'${flowerSummary.group(1)}' 꽃 명소 검색 결과 ${flowerSummary.group(2)}개";
-    final communitySummary = RegExp(r"'(.+)' community search returned (\d+) result\(s\)\.").firstMatch(message);
-    if (communitySummary != null) return "'${communitySummary.group(1)}' 커뮤니티 검색 결과 ${communitySummary.group(2)}개";
+    if (message.isEmpty) {
+      return '';
+    }
+    final checked = RegExp(
+      r'Checked (\d+) approved flower spot candidates\.',
+    ).firstMatch(message);
+    if (checked != null) {
+      return '승인된 꽃 명소 ${checked.group(1)}개를 확인했습니다.';
+    }
+    final accepted = RegExp(
+      r'Validated client-side follow-up from (.+)\.',
+    ).firstMatch(message);
+    if (accepted != null) {
+      return '${_plannerLabel(accepted.group(1) ?? '')}을 확인했습니다.';
+    }
+    if (message ==
+        'Selected a representative flower location for the map context.') {
+      return '대표 꽃 위치를 확인했습니다.';
+    }
+    if (message == 'Built default flower and community context.') {
+      return '기본 꽃/커뮤니티 정보를 준비했습니다.';
+    }
+    if (message == 'Checked default data for a general answer.') {
+      return '일반 답변에 필요한 기본 데이터를 확인했습니다.';
+    }
+    final flowerSummary = RegExp(
+      r"'(.+)' flower spot search returned (\d+) result\(s\)\.",
+    ).firstMatch(message);
+    if (flowerSummary != null) {
+      return "'${flowerSummary.group(1)}' 꽃 명소 검색 결과 ${flowerSummary.group(2)}개";
+    }
+    final communitySummary = RegExp(
+      r"'(.+)' community search returned (\d+) result\(s\)\.",
+    ).firstMatch(message);
+    if (communitySummary != null) {
+      return "'${communitySummary.group(1)}' 커뮤니티 검색 결과 ${communitySummary.group(2)}개";
+    }
     return message;
   }
 
   String _plannerLabel(String source) {
     switch (source) {
-      case 'AIPlanner': return 'AI 계획';
-      case 'FallbackPlanner': return '기본 계획';
-      default: return source;
+      case 'AIPlanner':
+        return 'AI 계획';
+      case 'FallbackPlanner':
+        return '기본 계획';
+      default:
+        return source;
     }
   }
 
@@ -430,7 +566,13 @@ class _ChatScreenState extends State<ChatScreen> {
           decoration: BoxDecoration(
             color: Colors.white.withAlpha(235),
             borderRadius: BorderRadius.circular(24),
-            boxShadow: [BoxShadow(color: Colors.black.withAlpha(22), blurRadius: 14, offset: const Offset(0, 4))],
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(22),
+                blurRadius: 14,
+                offset: const Offset(0, 4),
+              ),
+            ],
           ),
           child: Row(
             children: [
@@ -445,7 +587,10 @@ class _ChatScreenState extends State<ChatScreen> {
                     hintStyle: TextStyle(color: Color(0xFFA0AAB2)),
                     border: InputBorder.none,
                     isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                    contentPadding: EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 12,
+                    ),
                   ),
                   onSubmitted: (_) => _sendMessage(),
                 ),
@@ -455,9 +600,17 @@ class _ChatScreenState extends State<ChatScreen> {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: _isLoading ? colors.primary.withAlpha(110) : colors.primary,
+                  color: _isLoading
+                      ? colors.primary.withAlpha(110)
+                      : colors.primary,
                   shape: BoxShape.circle,
-                  boxShadow: [BoxShadow(color: colors.primary.withAlpha(72), blurRadius: 12, spreadRadius: 1)],
+                  boxShadow: [
+                    BoxShadow(
+                      color: colors.primary.withAlpha(72),
+                      blurRadius: 12,
+                      spreadRadius: 1,
+                    ),
+                  ],
                 ),
                 child: IconButton(
                   icon: const Icon(Icons.send_rounded, color: Colors.white),

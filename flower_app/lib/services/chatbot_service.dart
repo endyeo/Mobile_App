@@ -13,6 +13,7 @@ class ChatbotResponse {
   final List<ChatAction> actions;
   final AgentRunTrace? agentRun;
   final List<ToolResult> toolResults;
+  final String requestId;
 
   const ChatbotResponse({
     required this.reply,
@@ -20,6 +21,7 @@ class ChatbotResponse {
     this.actions = const [],
     this.agentRun,
     this.toolResults = const [],
+    this.requestId = '',
   });
 
   factory ChatbotResponse.fromData(Map<String, dynamic> data) {
@@ -44,6 +46,7 @@ class ChatbotResponse {
           .whereType<Map<String, dynamic>>()
           .map(ToolResult.fromJson)
           .toList(),
+      requestId: _readRequestId(data),
     );
   }
 }
@@ -58,6 +61,7 @@ class ChatbotStreamEvent {
     this.actions = const [],
     this.toolResult,
     this.response,
+    this.requestId = '',
   });
 
   final String type;
@@ -68,6 +72,7 @@ class ChatbotStreamEvent {
   final List<ChatAction> actions;
   final ToolResult? toolResult;
   final ChatbotResponse? response;
+  final String requestId;
 
   factory ChatbotStreamEvent.fromSse(String type, Map<String, dynamic> data) {
     final normalizedType = type.replaceAll('\uFEFF', '').trim();
@@ -91,6 +96,7 @@ class ChatbotStreamEvent {
       response: inferredType == 'FINAL_ANSWER'
           ? ChatbotResponse.fromData(data)
           : null,
+      requestId: _readRequestId(data),
     );
   }
 
@@ -107,6 +113,11 @@ class ChatbotStreamEvent {
     }
     return type;
   }
+}
+
+String _readRequestId(Map<String, dynamic> data) {
+  final value = data['requestId'] ?? data['request_id'];
+  return value == null ? '' : value.toString().trim();
 }
 
 class AgentRunTrace {
@@ -209,10 +220,15 @@ class ChatbotService {
   Future<ChatbotResponse> sendMessage({
     required String message,
     required String sessionId,
+    required String requestId,
     double? lat,
     double? lng,
   }) async {
-    final body = <String, dynamic>{'message': message, 'session_id': sessionId};
+    final body = <String, dynamic>{
+      'message': message,
+      'session_id': sessionId,
+      'request_id': requestId,
+    };
     if (lat != null && lng != null) {
       body['context'] = {'lat': lat, 'lng': lng};
     }
@@ -233,11 +249,16 @@ class ChatbotService {
   Stream<ChatbotStreamEvent> streamMessage({
     required String message,
     required String sessionId,
+    required String requestId,
     double? lat,
     double? lng,
     CancelToken? cancelToken,
   }) async* {
-    final body = <String, dynamic>{'message': message, 'session_id': sessionId};
+    final body = <String, dynamic>{
+      'message': message,
+      'session_id': sessionId,
+      'request_id': requestId,
+    };
     if (lat != null && lng != null) {
       body['context'] = {'lat': lat, 'lng': lng};
     }

@@ -168,6 +168,40 @@ class CommunityApiService {
     return <String, dynamic>{};
   }
 
+  /// 키워드로 게시글 검색. sort: "latest" 또는 "popular".
+  static Future<FeedResult> searchPosts({
+    required String keyword,
+    String sort = 'latest',
+    int page = 0,
+    int limit = 20,
+  }) async {
+    try {
+      final Response<dynamic> response = await ApiClient.dio.get(
+        '$_basePath/posts/search',
+        queryParameters: <String, dynamic>{
+          'keyword': keyword,
+          'sort': sort,
+          'page': page,
+          'limit': limit,
+        },
+      );
+      if (response.statusCode == 200 && response.data is Map) {
+        final Map data = (response.data as Map)['data'] as Map;
+        final List posts = data['posts'] as List;
+        return FeedResult(
+          posts: posts
+              .map((e) => CommunityPost.fromJson(e as Map<String, dynamic>))
+              .toList(),
+          nextCursor: data['nextCursor'] as int?,
+          hasNext: data['hasNext'] as bool? ?? false,
+        );
+      }
+    } catch (e) {
+      debugPrint('[API Error] $e');
+    }
+    return const FeedResult(posts: []);
+  }
+
   /// 내가 좋아요 한 게시글 목록 (최근 좋아요 순)
   static Future<FeedResult> getLikedPosts({
     int page = 0,

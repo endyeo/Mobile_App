@@ -48,6 +48,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
   bool _cancelledByUser = false;
   bool _finalAnswerReceived = false;
   bool _doneReceived = false;
+  String? _activeRequestId;
   final Set<String> _dispatchedActionKeys = <String>{};
 
   @override
@@ -63,7 +64,15 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
 
   Future<void> _sendMessage(String rawText) async {
     final text = rawText.trim();
-    if (text.isEmpty || _isSending || _isListening) return;
+    if (text.isEmpty || _isListening) return;
+
+    if (_isSending) {
+      await _cancelActiveStreamForReplacement();
+      if (!mounted) return;
+    }
+
+    final requestId = const Uuid().v4();
+    _activeRequestId = requestId;
 
     _controller.clear();
     _draftText = '';
@@ -89,20 +98,23 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
         .streamMessage(
           message: text,
           sessionId: _sessionId,
+          requestId: requestId,
           lat: position?.latitude ?? 37.5665,
           lng: position?.longitude ?? 126.9780,
           cancelToken: _cancelToken,
         )
         .listen(
-          _handleStreamEvent,
-          onError: _handleStreamError,
-          onDone: _handleStreamDone,
+          (event) => _handleStreamEvent(requestId, event),
+          onError: (error) => _handleStreamError(requestId, error),
+          onDone: () => _handleStreamDone(requestId),
           cancelOnError: false,
         );
   }
 
-  void _handleStreamEvent(ChatbotStreamEvent event) {
-    if (!mounted || _cancelledByUser) return;
+  void _handleStreamEvent(String requestId, ChatbotStreamEvent event) {
+    if (!_isCurrentRequest(requestId, event.requestId) || _cancelledByUser) {
+      return;
+    }
 
     switch (event.type) {
       case 'CONNECTED':
@@ -133,10 +145,11 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
         break;
       case 'DONE':
         _doneReceived = true;
-        _finishStream();
+        _finishStream(requestId);
         break;
       case 'ERROR':
         _handleStreamError(
+          requestId,
           event.message.isEmpty ? '챗봇 처리 중 오류가 발생했습니다.' : event.message,
         );
         break;
@@ -147,26 +160,46 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     }
   }
 
-  void _handleStreamError(Object error) {
-    if (!mounted || _cancelledByUser) return;
+  void _handleStreamError(String requestId, Object error) {
+    if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
+    if (_finalAnswerReceived || _doneReceived) {
+      _finishStream(requestId);
+      return;
+    }
     _replaceLastBotMessage('응답을 가져오지 못했습니다.');
-    _finishStream();
+    _finishStream(requestId);
   }
 
-  void _handleStreamDone() {
-    if (!mounted || _cancelledByUser) return;
+  void _handleStreamDone(String requestId) {
+    if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
     if (!_isSending || _doneReceived) return;
     if (!_finalAnswerReceived) {
       _replaceLastBotMessage('응답을 마무리하지 못했습니다. 다시 시도해 주세요.');
     }
-    _finishStream();
+    _finishStream(requestId);
   }
 
-  void _finishStream() {
-    if (!mounted) return;
+  void _finishStream(String requestId) {
+    if (!_isCurrentRequest(requestId, null)) return;
     _cancelToken = null;
     _streamSubscription = null;
+    _activeRequestId = null;
     setState(() => _isSending = false);
+  }
+
+  bool _isCurrentRequest(String requestId, String? eventRequestId) {
+    if (!mounted || _activeRequestId != requestId) return false;
+    final eventId = eventRequestId?.trim() ?? '';
+    return eventId.isEmpty || eventId == requestId;
+  }
+
+  Future<void> _cancelActiveStreamForReplacement() async {
+    _cancelToken?.cancel('replaced by new request');
+    await _streamSubscription?.cancel();
+    _cancelToken = null;
+    _streamSubscription = null;
+    _activeRequestId = null;
+    _isSending = false;
   }
 
   Future<void> _stopStream() async {
@@ -176,6 +209,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     if (!mounted) return;
     _cancelToken = null;
     _streamSubscription = null;
+    _activeRequestId = null;
     setState(() {
       _isSending = false;
       if (_messages.isNotEmpty && !_messages.last.isUser) {

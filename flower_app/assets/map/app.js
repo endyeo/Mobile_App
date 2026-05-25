@@ -15,6 +15,10 @@
     radius: config.DEFAULT_RADIUS || 5000,
     search: '',
     searchFilter: 'all',
+    // 검색 리스트에서 선택한 항목을 기억해야 네이버 지도처럼 선택 상태를 계속 보여줄 수 있다.
+    selectedSearchItemId: '',
+    // 검색 결과 패널은 접힘/중간/확장 상태를 오가므로 현재 슬라이드 단계를 상태로 보관한다.
+    searchPanelState: 'half',
     showRecentSearches: false,
     kakaoReady: false,
     mapError: null,
@@ -159,6 +163,8 @@
       setSearchQuery(query) {
         state.search = String(query || '').trim();
         state.searchFilter = 'all';
+        state.selectedSearchItemId = '';
+        state.searchPanelState = state.search ? 'half' : 'collapsed';
         state.showRecentSearches = !state.search;
         rememberSearchQuery(state.search);
         applyFilters();
@@ -317,10 +323,16 @@
         const lng = flower.longitude ?? flower.location?.lng ?? flower.lng ?? flower.mapX;
         return {
           flower_id: flower.id ?? flower.flower_id ?? flower.flowerId,
-          name: flower.plantName || flower.name || flower.nickname || '',
+          name: flower.plantName || flower.name || '',
           species: flower.flowerSpecies || flower.species || '',
           address: flower.address || '',
           imageUrl: flower.imageUrl || '',
+          content: flower.content || '',
+          nickname: flower.nickname || '',
+          profileImageUrl: flower.profileImageUrl || '',
+          createdAt: flower.createdAt || '',
+          likeCount: flower.likeCount ?? 0,
+          commentCount: flower.commentCount ?? 0,
           location: { lat: Number(lat), lng: Number(lng) },
           distance_m: flower.distance_m ?? flower.distanceM,
         };
@@ -607,18 +619,8 @@
 
     if (state.showFlowers) {
       state.filteredFlowers.forEach(function (flower) {
-        items.push({
-          id: `flower-${flower.flower_id || `${flower.location.lat},${flower.location.lng}`}`,
-          type: 'flower',
-          kindLabel: flower.species || '꽃',
-          name: flower.name || flower.species || '꽃 명소',
-          address: flower.address || '',
-          lat: flower.location.lat,
-          lng: flower.location.lng,
-          isFestival: false,
-          source: flower,
-          imageUrl: flower.imageUrl || '',
-        });
+        const item = flowerToMapItem(flower);
+        if (item) items.push(item);
       });
     }
 
@@ -779,27 +781,33 @@
     const results = state.filteredMapItems.slice(0, 30);
     const panel = document.createElement('section');
     panel.id = 'search-results';
-    panel.className = 'map-panel search-results-panel';
+    panel.className = `map-panel search-results-panel ${normalizeSearchPanelState()}`;
     panel.innerHTML = [
-      '<div class="search-results-header">',
+      buildSearchPanelHandle(),
+      '<div class="search-results-topline">',
+      '<div class="search-results-title">',
       `<strong>${escapeHtml(query)}</strong>`,
       `<span>${results.length}개 결과</span>`,
-      '<button type="button" data-role="clear" aria-label="검색 지우기">×</button>',
       '</div>',
-      '<div class="search-filter-row">',
-      buildSearchFilterButton('all', '전체'),
-      buildSearchFilterButton('flower', '꽃 스팟'),
-      buildSearchFilterButton('festival', '축제'),
-      buildSearchFilterButton('tourist', '관광지'),
+      '<button type="button" class="search-panel-close" data-role="clear" aria-label="검색 지우기">×</button>',
+      '</div>',
+      '<div class="search-filter-row" role="tablist" aria-label="검색 결과 필터">',
+      buildSearchFilterButton('all', '전체', state.filteredMapItems.length),
+      buildSearchFilterButton('flower', '꽃 스팟', countSearchResultsByType('flower')),
+      buildSearchFilterButton('festival', '축제', countSearchResultsByType('festival')),
+      buildSearchFilterButton('tourist', '관광지', countSearchResultsByType('tourist')),
       '</div>',
       results.length
         ? `<div class="search-result-list">${results.map(buildSearchResultHtml).join('')}</div>`
-        : '<div class="search-empty">검색 결과가 없습니다.</div>',
+        : '<div class="search-empty"><strong>검색 결과가 없습니다.</strong><span>다른 이름이나 지역명으로 다시 검색해 보세요.</span></div>',
     ].join('');
 
     shell.appendChild(panel);
+    bindSearchPanelHandle(panel);
     panel.querySelector('[data-role="clear"]').addEventListener('click', function () {
       state.search = '';
+      state.selectedSearchItemId = '';
+      state.searchPanelState = 'collapsed';
       state.showRecentSearches = true;
       applyFilters();
     });
@@ -808,8 +816,12 @@
         const item = results[Number(button.dataset.index)];
         if (item) {
           rememberSearchQuery(query);
+          state.selectedSearchItemId = item.id;
+          // 선택한 항목을 즉시 강조해서 리스트와 지도 마커가 같은 장소를 가리킨다는 피드백을 준다.
+          panel.querySelectorAll('.search-result-item').forEach(function (entry) {
+            entry.classList.toggle('selected', entry.dataset.itemId === item.id);
+          });
           showMarkerInfo(item);
-          panel.classList.add('collapsed');
         }
       });
     });
@@ -828,51 +840,214 @@
     if (!shell) return;
     const panel = document.createElement('section');
     panel.id = 'search-results';
-    panel.className = 'map-panel search-results-panel recent';
+    panel.className = `map-panel search-results-panel recent ${normalizeSearchPanelState()}`;
     panel.innerHTML = [
-      '<div class="search-results-header">',
+      buildSearchPanelHandle(),
+      '<div class="search-results-topline">',
+      '<div class="search-results-title">',
       '<strong>최근 검색어</strong>',
-      '<span></span>',
-      '<button type="button" data-role="close" aria-label="닫기">×</button>',
+      '<span>다시 검색하기</span>',
+      '</div>',
+      '<button type="button" class="search-panel-close" data-role="close" aria-label="닫기">×</button>',
       '</div>',
       `<div class="recent-search-list">${recent.map(function (query, index) {
         return `<button type="button" class="recent-search-item" data-index="${index}">${escapeHtml(query)}</button>`;
       }).join('')}</div>`,
     ].join('');
     shell.appendChild(panel);
+    bindSearchPanelHandle(panel);
     panel.querySelector('[data-role="close"]').addEventListener('click', function () {
+      state.searchPanelState = 'collapsed';
       panel.remove();
     });
     panel.querySelectorAll('.recent-search-item').forEach(function (button) {
       button.addEventListener('click', function () {
         state.search = recent[Number(button.dataset.index)] || '';
+        state.selectedSearchItemId = '';
+        state.searchPanelState = 'half';
         state.showRecentSearches = false;
         applyFilters();
       });
     });
   }
 
-  function buildSearchFilterButton(type, label) {
+  function buildSearchFilterButton(type, label, count) {
     const selected = state.searchFilter === type ? ' class="selected"' : '';
-    return `<button type="button" data-filter="${escapeAttribute(type)}"${selected}>${escapeHtml(label)}</button>`;
+    const ariaSelected = state.searchFilter === type ? 'true' : 'false';
+    return [
+      `<button type="button" role="tab" aria-selected="${ariaSelected}" data-filter="${escapeAttribute(type)}"${selected}>`,
+      `<span>${escapeHtml(label)}</span>`,
+      `<small>${escapeHtml(String(count || 0))}</small>`,
+      '</button>',
+    ].join('');
   }
 
   function buildSearchResultHtml(item, index) {
     const distance = state.currentPosition
       ? formatDistance(distanceMeters(state.currentPosition.lat, state.currentPosition.lng, item.lat, item.lng))
       : '';
+    const typeLabel = getSearchResultTypeLabel(item);
+    const selected = state.selectedSearchItemId === item.id ? ' selected' : '';
     const image = item.imageUrl
       ? `<img src="${escapeAttribute(item.imageUrl)}" alt="">`
-      : `<span>${escapeHtml(item.type === 'festival' ? '축제' : item.type === 'tourist' ? '관광' : '꽃')}</span>`;
+      : `<span>${escapeHtml(typeLabel)}</span>`;
+    const address = item.address || '주소 정보 없음';
+    // 항목 내부 정보를 분리해두면 모바일에서도 장소명, 주소, 거리의 우선순위가 분명해진다.
     return [
-      `<button type="button" class="search-result-item" data-index="${index}">`,
-      `<span class="search-result-thumb">${image}</span>`,
+      `<button type="button" class="search-result-item${selected}" data-index="${index}" data-item-id="${escapeAttribute(item.id)}">`,
+      `<span class="search-result-thumb ${escapeAttribute(item.type)}">${image}</span>`,
       '<span class="search-result-copy">',
+      '<span class="search-result-main">',
       `<strong>${escapeHtml(item.name || '')}</strong>`,
-      `<small>${escapeHtml([item.kindLabel, item.address, distance].filter(Boolean).join(' · '))}</small>`,
+      `<em class="${escapeAttribute(item.type)}">${escapeHtml(typeLabel)}</em>`,
+      '</span>',
+      `<small>${escapeHtml(address)}</small>`,
+      '<span class="search-result-meta">',
+      item.kindLabel ? `<span>${escapeHtml(item.kindLabel)}</span>` : '',
+      distance ? `<span>${escapeHtml(distance)}</span>` : '',
+      '</span>',
       '</span>',
       '</button>',
     ].join('');
+  }
+
+  function countSearchResultsByType(type) {
+    // 필터 탭의 숫자는 사용자가 탭을 누르기 전에 결과 규모를 예측하게 해준다.
+    return state.filteredMapItems.filter(function (item) {
+      return item.type === type;
+    }).length;
+  }
+
+  function getSearchResultTypeLabel(item) {
+    if (item.type === 'festival') return '축제';
+    if (item.type === 'tourist') return '관광';
+    return '꽃';
+  }
+
+  function buildSearchPanelHandle() {
+    return [
+      '<button type="button" class="search-sheet-handle" data-role="slide" aria-label="검색 결과 패널 크기 변경">',
+      '<span></span>',
+      '</button>',
+    ].join('');
+  }
+
+  function bindSearchPanelHandle(panel) {
+    const handle = panel.querySelector('[data-role="slide"]');
+    if (!handle) return;
+
+    let startY = 0;
+    let startHeight = 0;
+    let currentHeight = 0;
+    let dragging = false;
+    let didDrag = false;
+
+    handle.addEventListener('pointerdown', function (event) {
+      if (event.button !== undefined && event.button !== 0) return;
+      startY = event.clientY;
+      startHeight = panel.getBoundingClientRect().height;
+      currentHeight = startHeight;
+      dragging = true;
+      didDrag = false;
+      panel.classList.add('dragging');
+      if (handle.setPointerCapture) {
+        handle.setPointerCapture(event.pointerId);
+      }
+      event.preventDefault();
+    });
+
+    handle.addEventListener('pointermove', function (event) {
+      if (!dragging) return;
+      const deltaY = startY - event.clientY;
+      if (Math.abs(deltaY) > 3) didDrag = true;
+      const bounds = getSearchPanelHeightBounds(panel);
+      currentHeight = clamp(startHeight + deltaY, bounds.min, bounds.max);
+      // 드래그 중에는 CSS 상태값보다 손가락 위치를 우선해 실제 높이를 바로 반영한다.
+      panel.style.height = `${currentHeight}px`;
+      event.preventDefault();
+    });
+
+    handle.addEventListener('pointerup', finishDrag);
+    handle.addEventListener('pointercancel', finishDrag);
+
+    handle.addEventListener('click', function () {
+      if (handle.dataset.justDragged === '1') {
+        delete handle.dataset.justDragged;
+        return;
+      }
+      state.searchPanelState = nextSearchPanelState();
+      applySearchPanelState(panel);
+    });
+
+    function finishDrag(event) {
+      if (!dragging) return;
+      dragging = false;
+      panel.classList.remove('dragging');
+      if (handle.releasePointerCapture) {
+        try {
+          handle.releasePointerCapture(event.pointerId);
+        } catch (_) {}
+      }
+      if (!didDrag) {
+        panel.style.height = '';
+        return;
+      }
+      handle.dataset.justDragged = '1';
+      state.searchPanelState = nearestSearchPanelState(panel, currentHeight);
+      applySearchPanelState(panel);
+      window.setTimeout(function () {
+        delete handle.dataset.justDragged;
+      }, 250);
+      event.preventDefault();
+    }
+  }
+
+  function applySearchPanelState(panel) {
+    panel.classList.remove('collapsed', 'half', 'expanded');
+    panel.classList.add(normalizeSearchPanelState());
+    panel.style.height = '';
+  }
+
+  function nextSearchPanelState() {
+    // 한 번 누를 때마다 접힘 -> 중간 -> 확장 순서로 이동해 드래그 없이도 슬라이드 느낌을 만든다.
+    if (state.searchPanelState === 'collapsed') return 'half';
+    if (state.searchPanelState === 'half') return 'expanded';
+    return 'collapsed';
+  }
+
+  function normalizeSearchPanelState() {
+    if (state.searchPanelState === 'collapsed' ||
+        state.searchPanelState === 'expanded') {
+      return state.searchPanelState;
+    }
+    return 'half';
+  }
+
+  function nearestSearchPanelState(panel, height) {
+    const bounds = getSearchPanelHeightBounds(panel);
+    const candidates = [
+      { state: 'collapsed', height: bounds.min },
+      { state: 'half', height: bounds.half },
+      { state: 'expanded', height: bounds.max },
+    ];
+    return candidates.reduce(function (nearest, candidate) {
+      return Math.abs(candidate.height - height) < Math.abs(nearest.height - height)
+        ? candidate
+        : nearest;
+    }).state;
+  }
+
+  function getSearchPanelHeightBounds(panel) {
+    const shell = $('#map-shell') || document.body;
+    const shellHeight = shell.clientHeight || window.innerHeight || 640;
+    const width = shell.clientWidth || window.innerWidth || 360;
+    const min = width <= 360 ? 90 : 94;
+    const halfRatio = width >= 768 ? 0.48 : width <= 420 ? 0.58 : 0.54;
+    const halfMax = width >= 768 ? 420 : width <= 420 ? 440 : 430;
+    const topGap = width >= 768 ? 132 : 124;
+    const half = Math.min(shellHeight * halfRatio, halfMax);
+    const max = Math.max(half, shellHeight - topGap);
+    return { min: min, half: half, max: max };
   }
 
   function rememberSearchQuery(query) {
@@ -1281,23 +1456,46 @@
     panel.id = 'marker-info';
     panel.className = 'map-panel marker-panel marker-panel-floating';
 
-    const meta = [item.period, item.address].filter(Boolean).join(' · ');
     const saved = isItemSaved(item);
-    panel.innerHTML = [
-      '<div class="panel-info">',
-      `<strong>${escapeHtml(item.name || '')}</strong>`,
-      meta ? `<span>${escapeHtml(meta)}</span>` : '',
-      '</div>',
-      '<div class="panel-actions">',
-      '<button class="panel-action" data-role="navigate">길찾기</button>',
-      `<button class="panel-action save ${saved ? 'saved' : 'ghost'}" data-role="save">${saved ? '저장됨' : '저장'}</button>`,
-      item.isFestival
-        ? '<button class="panel-action ghost" data-role="detail">정보</button>'
-        : item.isTourist
+    const isFlower = item.type === 'flower';
+
+    if (isFlower) {
+      panel.classList.add('flower-panel');
+      const flowerLabel = item.species || item.name || '꽃';
+      const subLabel = item.address ? escapeHtml(item.address) : '';
+      const thumbHtml = item.imageUrl
+        ? `<div class="flower-thumb"><img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(flowerLabel)}" onerror="this.parentElement.classList.add('thumb-error')"/></div>`
+        : `<div class="flower-thumb thumb-empty"><span>🌸</span></div>`;
+      panel.innerHTML = [
+        '<div class="flower-row">',
+        thumbHtml,
+        '<div class="panel-info">',
+        `<strong>${escapeHtml(flowerLabel)}</strong>`,
+        subLabel ? `<span>${subLabel}</span>` : '',
+        '</div>',
+        '</div>',
+        '<div class="panel-actions">',
+        '<button class="panel-action" data-role="navigate">길찾기</button>',
+        `<button class="panel-action save ${saved ? 'saved' : 'ghost'}" data-role="save">${saved ? '저장됨' : '저장'}</button>`,
+        '<button class="panel-action ghost" data-role="detail-flower">정보</button>',
+        '</div>',
+      ].join('');
+    } else {
+      const meta = [item.period, item.address].filter(Boolean).join(' · ');
+      panel.innerHTML = [
+        '<div class="panel-info">',
+        `<strong>${escapeHtml(item.name || '')}</strong>`,
+        meta ? `<span>${escapeHtml(meta)}</span>` : '',
+        '</div>',
+        '<div class="panel-actions">',
+        '<button class="panel-action" data-role="navigate">길찾기</button>',
+        `<button class="panel-action save ${saved ? 'saved' : 'ghost'}" data-role="save">${saved ? '저장됨' : '저장'}</button>`,
+        item.isFestival || item.isTourist
           ? '<button class="panel-action ghost" data-role="detail">정보</button>'
           : '',
-      '</div>',
-    ].join('');
+        '</div>',
+      ].join('');
+    }
 
     $('#map-shell').appendChild(panel);
     const saveButton = panel.querySelector('[data-role="save"]');
@@ -1316,7 +1514,7 @@
     }
     positionFloatingPanelAfterMapSettles(panel, item.lat, item.lng, {
       offsetY: 22,
-      maxWidth: 260,
+      maxWidth: isFlower ? 280 : 260,
     });
 
     panel.querySelector('[data-role="navigate"]').addEventListener('click', function () {
@@ -1336,6 +1534,14 @@
         } else {
           showFestivalDetail(item.festival || item);
         }
+      });
+    }
+
+    const detailFlowerButton = panel.querySelector('[data-role="detail-flower"]');
+    if (detailFlowerButton) {
+      detailFlowerButton.addEventListener('click', function () {
+        panel.remove();
+        showFlowerSpotDetail(item);
       });
     }
   }
@@ -1477,6 +1683,15 @@
       address: flower.address || '',
       lat: flower.location.lat,
       lng: flower.location.lng,
+      imageUrl: flower.imageUrl || '',
+      species: flower.species || '',
+      content: flower.content || '',
+      nickname: flower.nickname || '',
+      profileImageUrl: flower.profileImageUrl || '',
+      createdAt: flower.createdAt || '',
+      likeCount: flower.likeCount ?? 0,
+      commentCount: flower.commentCount ?? 0,
+      postId: flower.flower_id,
       isFestival: false,
       source: flower,
     };
@@ -1637,6 +1852,75 @@
       panel.remove();
       navigateInApp(item.lat, item.lng, item.name || '축제', 'transit', routeOptions);
     });
+  }
+
+  function showFlowerSpotDetail(item) {
+    dismissTransientUi();
+
+    const panel = document.createElement('section');
+    panel.id = 'flower-detail';
+    panel.className = 'map-panel detail-panel';
+
+    const imageMarkup = item.imageUrl
+      ? `<img src="${escapeAttribute(item.imageUrl)}" alt="${escapeAttribute(item.name || '꽃 사진')}">`
+      : '<div class="detail-placeholder">🌸</div>';
+
+    const flowerLabel = item.species || item.name || '꽃 명소';
+    const author = item.nickname || '';
+    const when = formatPostDate(item.createdAt);
+    const authorLine = [author, when].filter(Boolean).join(' · ');
+
+    panel.innerHTML = [
+      '<div class="detail-hero">', imageMarkup, '</div>',
+      '<div class="detail-content">',
+      '<div class="detail-header">',
+      `<strong>${escapeHtml(flowerLabel)}</strong>`,
+      '<button class="detail-close" type="button" data-role="close" aria-label="닫기">×</button>',
+      '</div>',
+      authorLine ? `<p class="detail-meta">${escapeHtml(authorLine)}</p>` : '',
+      item.address ? `<p class="detail-body">📍 ${escapeHtml(item.address)}</p>` : '',
+      item.content
+        ? `<p class="detail-body detail-post-content">${escapeHtml(item.content)}</p>`
+        : '<p class="detail-body detail-empty">작성자가 남긴 내용이 없습니다.</p>',
+      (item.likeCount || item.commentCount)
+        ? `<p class="detail-meta">❤ ${item.likeCount || 0}  ·  💬 ${item.commentCount || 0}</p>`
+        : '',
+      '<div class="detail-actions">',
+      '<button class="detail-button secondary" data-role="walk">도보</button>',
+      '<button class="detail-button secondary" data-role="car">자동차</button>',
+      '<button class="detail-button primary" data-role="transit">대중교통</button>',
+      '</div>',
+      '</div>',
+    ].join('');
+
+    $('#map-shell').appendChild(panel);
+
+    panel.querySelector('[data-role="close"]').addEventListener('click', function () {
+      panel.remove();
+    });
+
+    ['walk', 'car', 'transit'].forEach(function (mode) {
+      const btn = panel.querySelector(`[data-role="${mode}"]`);
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        panel.remove();
+        navigateInApp(item.lat, item.lng, item.name || '꽃 명소', mode);
+      });
+    });
+  }
+
+  function formatPostDate(value) {
+    if (!value) return '';
+    try {
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return '';
+      const yyyy = d.getFullYear();
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const dd = String(d.getDate()).padStart(2, '0');
+      return `${yyyy}.${mm}.${dd}`;
+    } catch (_) {
+      return '';
+    }
   }
 
   async function showFestivalDetail(festival) {

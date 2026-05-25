@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class PlantIdService {
 
-    private static final double CONFIDENCE_THRESHOLD = 0.40;
+    private static final double CONFIDENCE_THRESHOLD = 0.30;
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String WIKI_USER_AGENT = "OurT-FlowerApp/1.0 (https://ourt.kro.kr; gkak1211@gmail.com)";
 
@@ -84,18 +84,30 @@ public class PlantIdService {
         try {
             JsonNode root = MAPPER.readTree(json);
 
+            // 1단계: 식물인지 판정
             JsonNode isPlant = root.path("result").path("is_plant");
+            boolean recognizedAsPlant = true;
             if (!isPlant.isMissingNode()) {
                 double isPlantProb = isPlant.path("probability").asDouble(0.0);
-                if (isPlantProb < 0.5) return PlantIdResult.fallback();
+                recognizedAsPlant = isPlantProb >= 0.5;
+            }
+            if (!recognizedAsPlant) {
+                return PlantIdResult.notPlant();
             }
 
+            // 2단계: 종 판정
             JsonNode suggestions = root.path("result").path("classification").path("suggestions");
-            if (suggestions.isEmpty()) return PlantIdResult.fallback();
+            if (suggestions.isEmpty()) {
+                // 식물은 맞지만 후보 없음 → 식물(미상)
+                return PlantIdResult.unidentifiedPlant(0.0);
+            }
 
             JsonNode best = suggestions.get(0);
             double confidence = best.path("probability").asDouble(0.0);
-            if (confidence < CONFIDENCE_THRESHOLD) return PlantIdResult.fallback();
+            if (confidence < CONFIDENCE_THRESHOLD) {
+                // 식물 맞지만 종 확신 부족 → 식물(미상)
+                return PlantIdResult.unidentifiedPlant(confidence);
+            }
 
             String scientificName = best.path("name").asText("");
             String displayName = resolveDisplayName(scientificName);
@@ -103,7 +115,7 @@ public class PlantIdService {
             return new PlantIdResult(displayName, (float) confidence, true);
         } catch (Exception e) {
             log.warn("[PlantId] 응답 파싱 실패: {}", e.getMessage());
-            return PlantIdResult.fallback();
+            return PlantIdResult.notPlant();
         }
     }
 
@@ -230,8 +242,19 @@ public class PlantIdService {
     }
 
     public record PlantIdResult(String plantName, float confidence, boolean isPlant) {
-        public static PlantIdResult fallback() {
+        /** 식물이 아니라고 판정됐을 때 (is_plant < 0.5 또는 API 실패) */
+        public static PlantIdResult notPlant() {
             return new PlantIdResult("기타", 0f, false);
+        }
+
+        /** 식물 맞지만 종을 확신하지 못한 경우 (is_plant ≥ 0.5, confidence < 0.3 또는 suggestions 비어있음) */
+        public static PlantIdResult unidentifiedPlant(double confidence) {
+            return new PlantIdResult("기타(식물)", (float) confidence, true);
+        }
+
+        /** 하위 호환: 기존 코드가 fallback()을 호출하던 자리 — 식물 아닌 것으로 처리 */
+        public static PlantIdResult fallback() {
+            return notPlant();
         }
     }
 }
