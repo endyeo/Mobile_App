@@ -195,11 +195,11 @@ class ToolResult {
 
 class ChatbotService {
   static String get _baseUrl {
-    if (kIsWeb) return ApiConfig.backendBaseUrl();
+    if (kIsWeb) return ApiConfig.chatbotBaseUrl();
     if (defaultTargetPlatform == TargetPlatform.android) {
-      return ApiConfig.backendBaseUrl(androidEmulator: true);
+      return ApiConfig.chatbotBaseUrl(androidEmulator: true);
     }
-    return ApiConfig.backendBaseUrl();
+    return ApiConfig.chatbotBaseUrl();
   }
 
   final Dio _client;

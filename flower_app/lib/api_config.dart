@@ -8,10 +8,16 @@ class ApiConfig {
   static String get tourApiKey => dotenv.env['TOUR_API_KEY'] ?? '';
 
   static String backendBaseUrl({bool androidEmulator = false}) {
-    final url = dotenv.env['BACKEND_URL'];
+    final url = dotenv.env['BACKEND_URL']?.trim();
     if (url != null && url.isNotEmpty) return url;
     if (androidEmulator) return 'http://10.0.2.2:8080';
     return 'http://localhost:8080';
+  }
+
+  static String chatbotBaseUrl({bool androidEmulator = false}) {
+    final url = dotenv.env['CHATBOT_BASE_URL']?.trim();
+    if (url != null && url.isNotEmpty) return url;
+    return backendBaseUrl(androidEmulator: androidEmulator);
   }
 
   static String mapApiBaseUrl({bool androidEmulator = false}) {
