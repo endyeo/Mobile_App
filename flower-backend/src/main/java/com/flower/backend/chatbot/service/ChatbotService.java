@@ -52,10 +52,28 @@ public class ChatbotService {
 
     private static class SessionData {
         final List<ChatTurn> history = new ArrayList<>();
+        final Object lock = new Object();
         volatile long lastAccessTime = System.currentTimeMillis();
 
         void touch() { lastAccessTime = System.currentTimeMillis(); }
         boolean isExpired() { return System.currentTimeMillis() - lastAccessTime > SESSION_TTL_MS; }
+
+        List<ChatTurn> snapshotHistory() {
+            synchronized (lock) {
+                touch();
+                return List.copyOf(history);
+            }
+        }
+
+        void append(String role, String content) {
+            synchronized (lock) {
+                touch();
+                history.add(new ChatTurn(role, content));
+                while (history.size() > MAX_HISTORY_MESSAGES) {
+                    history.remove(0);
+                }
+            }
+        }
     }
 
     public ChatbotService(
@@ -2052,8 +2070,7 @@ public class ChatbotService {
 
         try {
             StringBuilder userPrompt = new StringBuilder();
-            SessionData sessionData = sessions.get(sessionId);
-            List<ChatTurn> history = sessionData != null ? sessionData.history : List.of();
+            List<ChatTurn> history = historySnapshot(sessionId);
             for (ChatTurn turn : history) {
                 userPrompt.append(turn.role()).append(": ").append(turn.content()).append("\n");
             }
@@ -2732,11 +2749,19 @@ public class ChatbotService {
 
     private void remember(String sessionId, String role, String content) {
         SessionData data = sessions.computeIfAbsent(sessionId, key -> new SessionData());
-        data.touch();
-        data.history.add(new ChatTurn(role, content));
-        while (data.history.size() > MAX_HISTORY_MESSAGES) {
-            data.history.remove(0);
+        data.append(role, content);
+    }
+
+    private List<ChatTurn> historySnapshot(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return List.of();
         }
+        SessionData data = sessions.get(sessionId);
+        return data == null ? List.of() : data.snapshotHistory();
+    }
+
+    int sessionHistorySizeForTest(String sessionId) {
+        return historySnapshot(sessionId).size();
     }
 
     private record AgentPlan(

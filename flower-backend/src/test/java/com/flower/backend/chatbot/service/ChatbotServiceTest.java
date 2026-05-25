@@ -10,6 +10,11 @@ import com.flower.backend.chatbot.tool.FlowerAgent.FlowerToolService;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -384,6 +389,32 @@ class ChatbotServiceTest {
 
         assertThat(reply).contains("설명만으로는 지금 꽃 후보를 자연스럽게 좁혀 드리기 어려워요.");
         assertThat(reply).contains("사진이나 모양, 크기, 핀 시기 같은 특징");
+    }
+
+    @Test
+    void concurrentRequestsOnSameSessionKeepHistoryBounded() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(6);
+        try {
+            List<Callable<ChatMessageResponse>> tasks = java.util.stream.IntStream.range(0, 20)
+                    .mapToObj(index -> (Callable<ChatMessageResponse>) () ->
+                            chatbotService.chat(new ChatMessageRequest(
+                                    "안녕 " + index,
+                                    "shared-session",
+                                    "request-" + index,
+                                    null)))
+                    .toList();
+
+            List<Future<ChatMessageResponse>> futures = executor.invokeAll(tasks);
+
+            for (Future<ChatMessageResponse> future : futures) {
+                assertThat(future.get().getReply()).isNotBlank();
+            }
+            assertThat(chatbotService.sessionHistorySizeForTest("shared-session"))
+                    .isLessThanOrEqualTo(12);
+        } finally {
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
+        }
     }
 
     private ChatMessageRequest request(String message) {
