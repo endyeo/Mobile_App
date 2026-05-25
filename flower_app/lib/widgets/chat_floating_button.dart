@@ -1,14 +1,9 @@
-import 'dart:async';
-
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:uuid/uuid.dart';
 
 import '../app_actions/app_action_runtime.dart';
-import '../models/chat_action.dart';
-import '../services/chatbot_service.dart';
+import '../services/floating_chat_session_controller.dart';
 import '../theme/season_theme.dart';
 
 class ChatFloatingButton extends StatefulWidget {
@@ -29,275 +24,55 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     '벚꽃 명소 지도에서 보여줘',
     '수국 후기 찾아줘',
   ];
-  static final List<_FloatingChatMessage> _messages = [];
-  static final String _sessionId = const Uuid().v4();
-  static bool _persistedShowComposer = false;
-  static bool _persistedShowHistory = false;
-  static String _draftText = '';
+  static final FloatingChatSessionController _session =
+      FloatingChatSessionController();
 
-  final TextEditingController _controller = TextEditingController(
-    text: _draftText,
-  );
-  final ChatbotService _chatbotService = ChatbotService();
-  bool _showComposer = _persistedShowComposer;
-  bool _showHistory = _persistedShowHistory;
-  bool _isSending = false;
+  late final TextEditingController _controller;
   bool _isListening = false;
-  StreamSubscription<ChatbotStreamEvent>? _streamSubscription;
-  CancelToken? _cancelToken;
-  bool _cancelledByUser = false;
-  bool _finalAnswerReceived = false;
-  bool _doneReceived = false;
-  String? _activeRequestId;
-  final Set<String> _dispatchedActionKeys = <String>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: _session.draftText);
+    _session.addListener(_handleSessionChanged);
+  }
 
   @override
   void dispose() {
-    _draftText = _controller.text;
-    _persistedShowComposer = _showComposer;
-    _persistedShowHistory = _showHistory;
-    _cancelToken?.cancel('disposed');
-    unawaited(_streamSubscription?.cancel());
+    _session.updateDraft(_controller.text);
+    _session.removeListener(_handleSessionChanged);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _handleSessionChanged() {
+    if (!mounted) return;
+    if (_controller.text != _session.draftText) {
+      _controller.text = _session.draftText;
+    }
+    setState(() {});
   }
 
   Future<void> _sendMessage(String rawText) async {
     final text = rawText.trim();
     if (text.isEmpty || _isListening) return;
 
-    if (_isSending) {
-      await _cancelActiveStreamForReplacement();
-      if (!mounted) return;
-    }
-
-    final requestId = const Uuid().v4();
-    _activeRequestId = requestId;
-
     _controller.clear();
-    _draftText = '';
+    _session.updateDraft('');
     FocusScope.of(context).unfocus();
-
-    _cancelledByUser = false;
-    _finalAnswerReceived = false;
-    _doneReceived = false;
-    _dispatchedActionKeys.clear();
-    _cancelToken = CancelToken();
-
-    setState(() {
-      _messages.add(_FloatingChatMessage.user(text));
-      _messages.add(_FloatingChatMessage.bot('AI가 요청을 확인하고 있어요.'));
-      _isSending = true;
-      _showHistory = true;
-      _persistedShowHistory = true;
-    });
 
     final position = await _getCurrentPositionOrNull();
 
-    _streamSubscription = _chatbotService
-        .streamMessage(
-          message: text,
-          sessionId: _sessionId,
-          requestId: requestId,
-          lat: position?.latitude ?? 37.5665,
-          lng: position?.longitude ?? 126.9780,
-          cancelToken: _cancelToken,
-        )
-        .listen(
-          (event) => _handleStreamEvent(requestId, event),
-          onError: (error) => _handleStreamError(requestId, error),
-          onDone: () => _handleStreamDone(requestId),
-          cancelOnError: false,
-        );
-  }
-
-  void _handleStreamEvent(String requestId, ChatbotStreamEvent event) {
-    if (!_isCurrentRequest(requestId, event.requestId) || _cancelledByUser) {
-      return;
-    }
-
-    switch (event.type) {
-      case 'CONNECTED':
-        break;
-      case 'STATUS':
-      case 'CONTEXT_PLANNED':
-        _upsertBotMessage(event.message);
-        break;
-      case 'FINAL_ANSWER':
-        _finalAnswerReceived = true;
-        _replaceLastBotMessage(event.response?.reply ?? event.message);
-        break;
-      case 'ACTION':
-        final actions = event.actions.isNotEmpty
-            ? event.actions
-            : _singleAction(event.action);
-        _upsertBotMessage(_actionProgressMessage(actions));
-        final actionKey = actions.map(_actionKey).join('|');
-        if (actions.isNotEmpty && _dispatchedActionKeys.add(actionKey)) {
-          unawaited(AppActionRuntime.execute(context, actions));
-        }
-        break;
-      case 'TOOL_RESULT':
-        final result = event.toolResult;
-        if (result != null) {
-          _upsertBotMessage(_toolResultMessage(result));
-        }
-        break;
-      case 'DONE':
-        _doneReceived = true;
-        _finishStream(requestId);
-        break;
-      case 'ERROR':
-        _handleServerError(requestId, event.message);
-        break;
-      default:
-        if (event.message.isNotEmpty) {
-          _upsertBotMessage(event.message);
-        }
-    }
-  }
-
-  void _handleServerError(String requestId, String message) {
-    if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
-    if (_finalAnswerReceived || _doneReceived) {
-      _finishStream(requestId);
-      return;
-    }
-    _replaceLastBotMessage(
-      message.trim().isEmpty ? '챗봇 처리 중 오류가 발생했습니다.' : message.trim(),
+    await _session.sendMessage(
+      rawText: text,
+      lat: position?.latitude ?? 37.5665,
+      lng: position?.longitude ?? 126.9780,
+      onActions: (actions) => AppActionRuntime.execute(context, actions),
     );
-    _finishStream(requestId);
-  }
-
-  void _handleStreamError(String requestId, Object error) {
-    if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
-    if (_finalAnswerReceived || _doneReceived) {
-      _finishStream(requestId);
-      return;
-    }
-    _replaceLastBotMessage(_streamErrorMessage(error));
-    _finishStream(requestId);
-  }
-
-  void _handleStreamDone(String requestId) {
-    if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
-    if (!_isSending || _doneReceived) return;
-    if (!_finalAnswerReceived) {
-      _replaceLastBotMessage('연결이 예상보다 일찍 종료되었습니다. 다시 시도해 주세요.');
-    }
-    _finishStream(requestId);
-  }
-
-  void _finishStream(String requestId) {
-    if (!_isCurrentRequest(requestId, null)) return;
-    _cancelToken = null;
-    _streamSubscription = null;
-    _activeRequestId = null;
-    setState(() => _isSending = false);
-  }
-
-  bool _isCurrentRequest(String requestId, String? eventRequestId) {
-    if (!mounted || _activeRequestId != requestId) return false;
-    final eventId = eventRequestId?.trim() ?? '';
-    return eventId.isEmpty || eventId == requestId;
-  }
-
-  Future<void> _cancelActiveStreamForReplacement() async {
-    _cancelToken?.cancel('replaced by new request');
-    await _streamSubscription?.cancel();
-    _cancelToken = null;
-    _streamSubscription = null;
-    _activeRequestId = null;
-    _isSending = false;
-  }
-
-  Future<void> _stopStream() async {
-    _cancelledByUser = true;
-    _cancelToken?.cancel('stopped by user');
-    await _streamSubscription?.cancel();
-    if (!mounted) return;
-    _cancelToken = null;
-    _streamSubscription = null;
-    _activeRequestId = null;
-    setState(() {
-      _isSending = false;
-      if (_messages.isNotEmpty && !_messages.last.isUser) {
-        _messages.removeLast();
-      }
-    });
-  }
-
-  void _upsertBotMessage(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty || !mounted) return;
-
-    setState(() {
-      if (_messages.isNotEmpty && !_messages.last.isUser) {
-        _messages[_messages.length - 1] = _FloatingChatMessage.bot(trimmed);
-      } else {
-        _messages.add(_FloatingChatMessage.bot(trimmed));
-      }
-      _showHistory = true;
-      _persistedShowHistory = true;
-    });
-  }
-
-  String _actionKey(ChatAction action) {
-    return '${action.type}:${action.target}:${action.params}';
-  }
-
-  List<ChatAction> _singleAction(ChatAction? action) {
-    return action == null ? <ChatAction>[] : <ChatAction>[action];
-  }
-
-  void _replaceLastBotMessage(String text) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty || !mounted) return;
-
-    setState(() {
-      if (_messages.isNotEmpty && !_messages.last.isUser) {
-        _messages[_messages.length - 1] = _FloatingChatMessage.bot(trimmed);
-      } else {
-        _messages.add(_FloatingChatMessage.bot(trimmed));
-      }
-      _showHistory = true;
-      _persistedShowHistory = true;
-    });
-  }
-
-  String _actionProgressMessage(List<ChatAction> actions) {
-    if (actions.any((action) => action.target == 'MAP')) {
-      return '지도 화면 이동을 준비하고 있어요.';
-    }
-    if (actions.any(
-      (action) => action.target?.startsWith('COMMUNITY') ?? false,
-    )) {
-      return '커뮤니티 화면 이동을 준비하고 있어요.';
-    }
-    return '앱 화면 이동을 준비하고 있어요.';
-  }
-
-  String _toolResultMessage(ToolResult result) {
-    if (result.tool.startsWith('flower.')) {
-      return '꽃 정보를 확인했어요.';
-    }
-    if (result.tool.startsWith('community.')) {
-      return '커뮤니티 정보를 확인했어요.';
-    }
-    return '필요한 정보를 확인했어요.';
-  }
-
-  String _streamErrorMessage(Object error) {
-    if (error is ChatbotStreamException) {
-      debugPrint('챗봇 스트림 오류: ${error.debugMessage}');
-      return error.message;
-    }
-    debugPrint('챗봇 스트림 오류: $error');
-    return '챗봇 연결 중 문제가 발생했습니다. 다시 시도해 주세요.';
   }
 
   Future<void> _listenAndSend() async {
-    if (_isSending || _isListening) return;
+    if (_session.isSending || _isListening) return;
 
     FocusScope.of(context).unfocus();
 
@@ -317,7 +92,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
       }
 
       _controller.text = spokenText;
-      _draftText = spokenText;
+      _session.updateDraft(spokenText);
       await _sendMessage(spokenText);
     } on PlatformException catch (error) {
       if (!mounted) return;
@@ -390,12 +165,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
 
   void _closeChatOverlay() {
     FocusScope.of(context).unfocus();
-    setState(() {
-      _showHistory = false;
-      _showComposer = false;
-      _persistedShowHistory = false;
-      _persistedShowComposer = false;
-    });
+    _session.closeOverlay();
   }
 
   @override
@@ -404,7 +174,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     final size = MediaQuery.sizeOf(context);
     final dockWidth = (size.width - 24).clamp(296.0, 420.0);
 
-    final child = !_showComposer
+    final child = !_session.showComposer
         ? FloatingActionButton(
             heroTag: 'global-chat-floating-button',
             tooltip: '챗봇',
@@ -413,12 +183,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
             elevation: 8,
             shape: const CircleBorder(),
             onPressed: () {
-              setState(() {
-                _showComposer = true;
-                _showHistory = true;
-                _persistedShowComposer = true;
-                _persistedShowHistory = true;
-              });
+              _session.openComposer();
             },
             child: const Icon(Icons.smart_toy_outlined, size: 26),
           )
@@ -428,7 +193,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                if (_showHistory) ...[
+                if (_session.showHistory) ...[
                   _buildHistoryPanel(colors),
                   const SizedBox(height: 8),
                 ],
@@ -438,9 +203,9 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
           );
 
     return PopScope(
-      canPop: !_showComposer,
+      canPop: !_session.showComposer,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop && _showComposer) {
+        if (!didPop && _session.showComposer) {
           _closeChatOverlay();
         }
       },
@@ -488,16 +253,17 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
             ],
           ),
           const SizedBox(height: 4),
-          if (_messages.isEmpty)
+          if (_session.messages.isEmpty)
             _buildExamplePrompts(colors)
           else
             Flexible(
               child: ListView.builder(
                 shrinkWrap: true,
                 reverse: true,
-                itemCount: _messages.length,
+                itemCount: _session.messages.length,
                 itemBuilder: (context, index) {
-                  final message = _messages[_messages.length - 1 - index];
+                  final message =
+                      _session.messages[_session.messages.length - 1 - index];
                   return _buildBubble(message, colors);
                 },
               ),
@@ -520,7 +286,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
                 visualDensity: VisualDensity.compact,
                 backgroundColor: colors.primary.withValues(alpha: 0.08),
                 side: BorderSide(color: colors.primary.withValues(alpha: 0.16)),
-                onPressed: _isSending || _isListening
+                onPressed: _session.isSending || _isListening
                     ? null
                     : () => _sendMessage(prompt),
               ),
@@ -553,32 +319,29 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
           IconButton(
             tooltip: '챗봇 대화 내역',
             icon: Icon(
-              _showHistory ? Icons.expand_more : Icons.smart_toy_outlined,
+              _session.showHistory
+                  ? Icons.expand_more
+                  : Icons.smart_toy_outlined,
               color: colors.primary,
             ),
-            onPressed: () {
-              setState(() {
-                _showHistory = !_showHistory;
-                _persistedShowHistory = _showHistory;
-              });
-            },
+            onPressed: () => _session.setHistoryVisible(!_session.showHistory),
           ),
           Expanded(
             child: TextField(
               controller: _controller,
-              enabled: !_isSending && !_isListening,
+              enabled: !_session.isSending && !_isListening,
               textInputAction: TextInputAction.send,
               decoration: InputDecoration(
                 hintText: _isListening
                     ? '말씀해주세요'
-                    : _isSending
+                    : _session.isSending
                     ? '응답을 기다리고 있어요'
                     : '챗봇에게 메시지 보내기',
                 border: InputBorder.none,
                 isDense: true,
               ),
               onSubmitted: _sendMessage,
-              onChanged: (value) => _draftText = value,
+              onChanged: _session.updateDraft,
             ),
           ),
           IconButton(
@@ -587,25 +350,27 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
               _isListening ? Icons.mic : Icons.mic_none_rounded,
               color: micColor,
             ),
-            onPressed: _isSending || _isListening ? null : _listenAndSend,
+            onPressed: _session.isSending || _isListening
+                ? null
+                : _listenAndSend,
           ),
           Container(
             width: 40,
             height: 40,
             decoration: BoxDecoration(
-              color: _isSending ? colors.primary : Colors.transparent,
-              borderRadius: BorderRadius.circular(_isSending ? 10 : 20),
+              color: _session.isSending ? colors.primary : Colors.transparent,
+              borderRadius: BorderRadius.circular(_session.isSending ? 10 : 20),
             ),
             child: IconButton(
-              tooltip: _isSending ? '중지' : '전송',
+              tooltip: _session.isSending ? '중지' : '전송',
               icon: Icon(
-                _isSending ? Icons.stop_rounded : Icons.send_rounded,
-                color: _isSending ? Colors.white : colors.primary,
+                _session.isSending ? Icons.stop_rounded : Icons.send_rounded,
+                color: _session.isSending ? Colors.white : colors.primary,
               ),
               onPressed: _isListening
                   ? null
-                  : _isSending
-                  ? _stopStream
+                  : _session.isSending
+                  ? _session.stopStream
                   : () => _sendMessage(_controller.text),
             ),
           ),
@@ -614,7 +379,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     );
   }
 
-  Widget _buildBubble(_FloatingChatMessage message, SeasonColors colors) {
+  Widget _buildBubble(FloatingChatMessage message, SeasonColors colors) {
     final isUser = message.isUser;
     return Align(
       alignment: isUser ? Alignment.centerRight : Alignment.centerLeft,
@@ -637,17 +402,4 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
       ),
     );
   }
-}
-
-class _FloatingChatMessage {
-  const _FloatingChatMessage._({required this.text, required this.isUser});
-
-  factory _FloatingChatMessage.user(String text) =>
-      _FloatingChatMessage._(text: text, isUser: true);
-
-  factory _FloatingChatMessage.bot(String text) =>
-      _FloatingChatMessage._(text: text, isUser: false);
-
-  final String text;
-  final bool isUser;
 }
