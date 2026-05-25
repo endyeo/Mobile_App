@@ -68,6 +68,112 @@ data: {"reason":"completed"}
 
     controller.dispose();
   });
+
+  test('keeps actions pending until the final answer is visible', () async {
+    final streamController = StreamController<Uint8List>();
+    final dispatchedActions = <String>[];
+    final controller = FloatingChatSessionController(
+      chatbotService: ChatbotService(
+        client: Dio()..httpClientAdapter = _StreamAdapter(streamController),
+      ),
+    );
+
+    await controller.sendMessage(
+      rawText: '수국 후기 찾아줘',
+      lat: 37.5,
+      lng: 127.0,
+      onActions: (actions) async {
+        dispatchedActions.addAll(actions.map((action) => action.target ?? ''));
+      },
+    );
+
+    streamController.add(
+      Uint8List.fromList(
+        utf8.encode('''
+event: ACTION
+data: {"actions":[{"type":"NAVIGATE","target":"COMMUNITY"}]}
+
+'''),
+      ),
+    );
+    await pumpEventQueue();
+
+    expect(dispatchedActions, isEmpty);
+    expect(controller.messages.last.text, '커뮤니티 화면 이동을 준비하고 있어요.');
+
+    streamController.add(
+      Uint8List.fromList(
+        utf8.encode('''
+event: FINAL_ANSWER
+data: {"reply":"후기 화면을 열게요."}
+
+'''),
+      ),
+    );
+    await Future<void>.delayed(
+      FloatingChatSessionController.actionDispatchDelay +
+          const Duration(milliseconds: 50),
+    );
+
+    expect(controller.messages.last.text, '후기 화면을 열게요.');
+    expect(dispatchedActions, ['COMMUNITY']);
+
+    await streamController.close();
+    controller.dispose();
+  });
+
+  test(
+    'drops pending actions when the stream ends without a final answer',
+    () async {
+      final streamController = StreamController<Uint8List>();
+      final dispatchedActions = <String>[];
+      final controller = FloatingChatSessionController(
+        chatbotService: ChatbotService(
+          client: Dio()..httpClientAdapter = _StreamAdapter(streamController),
+        ),
+      );
+
+      await controller.sendMessage(
+        rawText: '지도 열어줘',
+        lat: 37.5,
+        lng: 127.0,
+        onActions: (actions) async {
+          dispatchedActions.addAll(
+            actions.map((action) => action.target ?? ''),
+          );
+        },
+      );
+      streamController
+        ..add(
+          Uint8List.fromList(
+            utf8.encode('''
+event: ACTION
+data: {"actions":[{"type":"NAVIGATE","target":"MAP"}]}
+
+'''),
+          ),
+        )
+        ..add(
+          Uint8List.fromList(
+            utf8.encode('''
+event: DONE
+data: {"reason":"completed"}
+
+'''),
+          ),
+        );
+      await streamController.close();
+      await Future<void>.delayed(
+        FloatingChatSessionController.actionDispatchDelay +
+            const Duration(milliseconds: 50),
+      );
+
+      expect(controller.isSending, isFalse);
+      expect(dispatchedActions, isEmpty);
+
+      controller.dispose();
+    },
+  );
 }
 
 class _StreamAdapter implements HttpClientAdapter {
