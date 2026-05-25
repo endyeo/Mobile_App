@@ -13,13 +13,18 @@ class FloatingChatSessionController extends ChangeNotifier {
   FloatingChatSessionController({ChatbotService? chatbotService})
     : _chatbotService = chatbotService ?? ChatbotService();
 
+  static const Duration actionDispatchDelay = Duration(milliseconds: 650);
+
   final ChatbotService _chatbotService;
   final List<FloatingChatMessage> _messages = <FloatingChatMessage>[];
-  final Set<String> _dispatchedActionKeys = <String>{};
+  final List<ChatAction> _pendingActions = <ChatAction>[];
+  final Set<String> _pendingActionKeys = <String>{};
   final String _sessionId = const Uuid().v4();
 
   StreamSubscription<ChatbotStreamEvent>? _streamSubscription;
   CancelToken? _cancelToken;
+  Timer? _actionDispatchTimer;
+  ChatActionHandler? _activeActionHandler;
   bool _cancelledByUser = false;
   bool _finalAnswerReceived = false;
   bool _doneReceived = false;
@@ -76,7 +81,8 @@ class FloatingChatSessionController extends ChangeNotifier {
     _cancelledByUser = false;
     _finalAnswerReceived = false;
     _doneReceived = false;
-    _dispatchedActionKeys.clear();
+    _activeActionHandler = onActions;
+    _clearPendingActions();
     _cancelToken = CancelToken();
 
     _messages
@@ -96,7 +102,7 @@ class FloatingChatSessionController extends ChangeNotifier {
           cancelToken: _cancelToken,
         )
         .listen(
-          (event) => _handleStreamEvent(requestId, event, onActions),
+          (event) => _handleStreamEvent(requestId, event),
           onError: (error) => _handleStreamError(requestId, error),
           onDone: () => _handleStreamDone(requestId),
           cancelOnError: false,
@@ -105,6 +111,7 @@ class FloatingChatSessionController extends ChangeNotifier {
 
   Future<void> stopStream() async {
     _cancelledByUser = true;
+    _clearPendingActions();
     _cancelToken?.cancel('stopped by user');
     await _streamSubscription?.cancel();
     _cancelToken = null;
@@ -117,11 +124,7 @@ class FloatingChatSessionController extends ChangeNotifier {
     _notify();
   }
 
-  void _handleStreamEvent(
-    String requestId,
-    ChatbotStreamEvent event,
-    ChatActionHandler? onActions,
-  ) {
+  void _handleStreamEvent(String requestId, ChatbotStreamEvent event) {
     if (!_isCurrentRequest(requestId, event.requestId) || _cancelledByUser) {
       return;
     }
@@ -136,15 +139,16 @@ class FloatingChatSessionController extends ChangeNotifier {
       case 'FINAL_ANSWER':
         _finalAnswerReceived = true;
         _replaceLastBotMessage(event.response?.reply ?? event.message);
+        _schedulePendingActionDispatch();
         break;
       case 'ACTION':
         final actions = event.actions.isNotEmpty
             ? event.actions
             : _singleAction(event.action);
         _upsertBotMessage(_actionProgressMessage(actions));
-        final actionKey = actions.map(_actionKey).join('|');
-        if (actions.isNotEmpty && _dispatchedActionKeys.add(actionKey)) {
-          unawaited(onActions?.call(actions));
+        _storePendingActions(actions);
+        if (_finalAnswerReceived) {
+          _schedulePendingActionDispatch();
         }
         break;
       case 'TOOL_RESULT':
@@ -169,6 +173,7 @@ class FloatingChatSessionController extends ChangeNotifier {
 
   void _handleServerError(String requestId, String message) {
     if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
+    _clearPendingActions();
     if (_finalAnswerReceived || _doneReceived) {
       _finishStream(requestId);
       return;
@@ -181,6 +186,7 @@ class FloatingChatSessionController extends ChangeNotifier {
 
   void _handleStreamError(String requestId, Object error) {
     if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
+    _clearPendingActions();
     if (_finalAnswerReceived || _doneReceived) {
       _finishStream(requestId);
       return;
@@ -193,6 +199,7 @@ class FloatingChatSessionController extends ChangeNotifier {
     if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
     if (!_isSending || _doneReceived) return;
     if (!_finalAnswerReceived) {
+      _clearPendingActions();
       _replaceLastBotMessage('연결이 예상보다 일찍 종료되었습니다. 다시 시도해 주세요.');
     }
     _finishStream(requestId);
@@ -204,6 +211,9 @@ class FloatingChatSessionController extends ChangeNotifier {
     _streamSubscription = null;
     _activeRequestId = null;
     _isSending = false;
+    if (!_finalAnswerReceived) {
+      _activeActionHandler = null;
+    }
     _notify();
   }
 
@@ -214,12 +224,14 @@ class FloatingChatSessionController extends ChangeNotifier {
   }
 
   Future<void> _cancelActiveStreamForReplacement() async {
+    _clearPendingActions();
     _cancelToken?.cancel('replaced by new request');
     await _streamSubscription?.cancel();
     _cancelToken = null;
     _streamSubscription = null;
     _activeRequestId = null;
     _isSending = false;
+    _activeActionHandler = null;
     _notify();
   }
 
@@ -251,6 +263,41 @@ class FloatingChatSessionController extends ChangeNotifier {
 
   String _actionKey(ChatAction action) {
     return '${action.type}:${action.target}:${action.params}';
+  }
+
+  void _storePendingActions(List<ChatAction> actions) {
+    for (final action in actions) {
+      final actionKey = _actionKey(action);
+      if (_pendingActionKeys.add(actionKey)) {
+        _pendingActions.add(action);
+      }
+    }
+  }
+
+  void _schedulePendingActionDispatch() {
+    if (!_finalAnswerReceived ||
+        _pendingActions.isEmpty ||
+        _activeActionHandler == null) {
+      return;
+    }
+    _actionDispatchTimer?.cancel();
+    _actionDispatchTimer = Timer(actionDispatchDelay, () {
+      final actions = List<ChatAction>.unmodifiable(_pendingActions);
+      final handler = _activeActionHandler;
+      _pendingActions.clear();
+      _pendingActionKeys.clear();
+      _activeActionHandler = null;
+      if (actions.isNotEmpty && handler != null) {
+        unawaited(handler(actions));
+      }
+    });
+  }
+
+  void _clearPendingActions() {
+    _actionDispatchTimer?.cancel();
+    _actionDispatchTimer = null;
+    _pendingActions.clear();
+    _pendingActionKeys.clear();
   }
 
   List<ChatAction> _singleAction(ChatAction? action) {
@@ -297,6 +344,7 @@ class FloatingChatSessionController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _clearPendingActions();
     _cancelToken?.cancel('disposed');
     unawaited(_streamSubscription?.cancel());
     super.dispose();
