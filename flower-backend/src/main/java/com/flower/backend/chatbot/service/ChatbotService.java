@@ -54,6 +54,7 @@ public class ChatbotService {
         final List<ChatTurn> history = new ArrayList<>();
         final Object lock = new Object();
         volatile long lastAccessTime = System.currentTimeMillis();
+        String lastResultContext = "";
 
         void touch() { lastAccessTime = System.currentTimeMillis(); }
         boolean isExpired() { return System.currentTimeMillis() - lastAccessTime > SESSION_TTL_MS; }
@@ -72,6 +73,20 @@ public class ChatbotService {
                 while (history.size() > MAX_HISTORY_MESSAGES) {
                     history.remove(0);
                 }
+            }
+        }
+
+        void updateLastResultContext(String context) {
+            synchronized (lock) {
+                touch();
+                lastResultContext = context == null ? "" : context;
+            }
+        }
+
+        String snapshotLastResultContext() {
+            synchronized (lock) {
+                touch();
+                return lastResultContext;
             }
         }
     }
@@ -117,10 +132,13 @@ public class ChatbotService {
                 primaryAction,
                 execution.toolResults(),
                 execution.answerDomain(),
-                execution.answerTask());
+                execution.answerTask(),
+                execution.historyPolicy(),
+                execution.referencedContext());
 
         remember(sessionId, "user", message);
         remember(sessionId, "assistant", reply);
+        rememberLastResultContext(sessionId, localContext);
 
         return ChatMessageResponse.builder()
                 .reply(reply)
@@ -157,10 +175,13 @@ public class ChatbotService {
                 primaryAction,
                 execution.toolResults(),
                 execution.answerDomain(),
-                execution.answerTask());
+                execution.answerTask(),
+                execution.historyPolicy(),
+                execution.referencedContext());
 
         remember(sessionId, "user", message);
         remember(sessionId, "assistant", reply);
+        rememberLastResultContext(sessionId, localContext);
 
         ChatMessageResponse response = ChatMessageResponse.builder()
                 .reply(reply)
@@ -203,7 +224,10 @@ public class ChatbotService {
         int step = 1;
 
         steps.add(stepTrace(step++, "RouterAgent", "selectFlow", "SUCCESS",
-                plan.source() + "가 flow=" + route + " 처리 흐름을 선택했습니다."));
+                plan.source() + "가 flow=" + route
+                        + ", context=" + plan.contextMode()
+                        + ", history=" + plan.historyPolicy()
+                        + " 처리 흐름을 선택했습니다."));
         steps.add(stepTrace(step++, "RolePlanner", "planForFlow", "SUCCESS",
                 displayPlannerChoice(plan) + " 실행 계획을 선택했습니다."));
         sendStreamEvent(streamSender, "CONTEXT_PLANNED", Map.of(
@@ -224,7 +248,8 @@ public class ChatbotService {
                     .steps(steps)
                     .build();
             AnswerStyle answerStyle = resolveAnswerStyle(plan, informationTask, toolResults, List.of());
-            return new AgentExecution(List.of(), toolResults, trace, answerStyle.domain(), answerStyle.task());
+            return new AgentExecution(List.of(), toolResults, trace, answerStyle.domain(), answerStyle.task(),
+                    plan.contextMode(), plan.historyPolicy(), plan.referencedContext());
         }
 
         sendStatus(streamSender, "PLAN", "필요한 앱 도구를 고르고 있어요.");
@@ -314,7 +339,8 @@ public class ChatbotService {
                 .specialist("RouterAgent")
                 .steps(steps)
                 .build();
-        return new AgentExecution(actions, toolResults, trace, answerStyle.domain(), answerStyle.task());
+        return new AgentExecution(actions, toolResults, trace, answerStyle.domain(), answerStyle.task(),
+                plan.contextMode(), plan.historyPolicy(), plan.referencedContext());
     }
 
     private boolean hasFlowerIntent(List<RouteIntent> intents) {
@@ -1054,6 +1080,9 @@ public class ChatbotService {
                 {
                   "flow": "simple_chat | flower_information | community_read | community_write | festival_information | map_action | app_navigation | unsupported | clarification_needed",
                   "keyword": "optional concrete topic keyword only",
+                  "context_mode": "standalone | follow_up | ambiguous",
+                  "history_policy": "ignore | use_last_turn | use_last_result_only",
+                  "referenced_context": "none | last_turn | last_result",
                   "confidence": "high | medium | low",
                   "reason": "short Korean reason"
                 }
@@ -1069,20 +1098,33 @@ public class ChatbotService {
                 - Shop, purchase, quest, reservation, payment, private, or admin actions are unsupported.
                 - Use clarification_needed only when the message is too ambiguous to choose a flow.
                 - keyword means only a concrete search topic such as a flower name, plant name, place name, or clearly named subject.
+                - New flower, map, community, festival, app navigation, or unsupported requests are standalone with history_policy=ignore.
+                - Use follow_up only for explicit references such as "첫 번째", "그거", "아까 말한 꽃", or "아까 말한 장소".
+                - If the user asks a clear new request after a previous screen/action request, do not reuse previous context.
+                - For follow_up that refers to previous results, set history_policy=use_last_result_only and referenced_context=last_result.
+                - For ambiguous references without enough current information, use clarification_needed.
 
                 Examples:
                 User: 안녕
-                JSON: {"flow":"simple_chat","keyword":"","confidence":"high","reason":"인사"}
+                JSON: {"flow":"simple_chat","keyword":"","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"인사"}
                 User: 장미 키우는 법 알려줘
-                JSON: {"flow":"flower_information","keyword":"장미","confidence":"high","reason":"꽃 재배 정보 요청"}
+                JSON: {"flow":"flower_information","keyword":"장미","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"꽃 재배 정보 요청"}
                 User: 수국 후기 찾아줘
-                JSON: {"flow":"community_read","keyword":"수국","confidence":"high","reason":"커뮤니티 후기 조회"}
+                JSON: {"flow":"community_read","keyword":"수국","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"커뮤니티 후기 조회"}
                 User: 커뮤니티에 글 올릴래
-                JSON: {"flow":"community_write","keyword":"","confidence":"high","reason":"커뮤니티 글 작성 화면 요청"}
+                JSON: {"flow":"community_write","keyword":"","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"커뮤니티 글 작성 화면 요청"}
                 User: 벚꽃 지도에서 보여줘
-                JSON: {"flow":"map_action","keyword":"벚꽃","confidence":"high","reason":"지도에서 꽃 장소 확인"}
+                JSON: {"flow":"map_action","keyword":"벚꽃","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"지도에서 꽃 장소 확인"}
                 User: 상점에서 아이템 사줘
-                JSON: {"flow":"unsupported","keyword":"","confidence":"high","reason":"상점 구매는 미지원"}
+                JSON: {"flow":"unsupported","keyword":"","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"상점 구매는 미지원"}
+                User: 축제 후기 글 써줘
+                JSON: {"flow":"community_write","keyword":"축제","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"후기 작성 화면 요청"}
+                User: 꽃 지도 열어줘
+                JSON: {"flow":"app_navigation","keyword":"","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"지도 화면 이동 요청"}
+                User: 첫 번째 지도에서 보여줘
+                JSON: {"flow":"map_action","keyword":"","context_mode":"follow_up","history_policy":"use_last_result_only","referenced_context":"last_result","confidence":"medium","reason":"이전 결과의 첫 번째 항목을 지도에서 보려는 후속 요청"}
+                User: 그거 알려줘
+                JSON: {"flow":"clarification_needed","keyword":"","context_mode":"ambiguous","history_policy":"use_last_turn","referenced_context":"last_turn","confidence":"low","reason":"참조 대상이 명확하지 않은 후속 표현"}
                 """;
     }
 
@@ -1325,9 +1367,20 @@ public class ChatbotService {
         JsonNode root = JSON_MAPPER.readTree(content.trim());
         String flow = root.path("flow").asText("").trim().toLowerCase(Locale.ROOT);
         String keyword = root.path("keyword").asText("").trim();
+        String contextMode = root.path("context_mode").asText(root.path("contextMode").asText("standalone")).trim().toLowerCase(Locale.ROOT);
+        String historyPolicy = root.path("history_policy").asText(root.path("historyPolicy").asText("ignore")).trim().toLowerCase(Locale.ROOT);
+        String referencedContext = root.path("referenced_context").asText(root.path("referencedContext").asText("none")).trim().toLowerCase(Locale.ROOT);
         String reason = root.path("reason").asText("").trim();
         String confidence = root.path("confidence").asText("medium").trim().toLowerCase(Locale.ROOT);
-        return new RouteDecision(flow, sanitizePlannerKeyword(keyword), reason, confidence, source);
+        return new RouteDecision(
+                flow,
+                sanitizePlannerKeyword(keyword),
+                normalizeContextMode(contextMode),
+                normalizeHistoryPolicy(historyPolicy),
+                normalizeReferencedContext(referencedContext),
+                reason,
+                confidence,
+                source);
     }
 
     private boolean validateRouteDecision(RouteDecision decision) {
@@ -1342,6 +1395,30 @@ public class ChatbotService {
                 "unsupported",
                 "clarification_needed"
         ).contains(decision.flow());
+    }
+
+    private String normalizeContextMode(String contextMode) {
+        String normalized = contextMode == null ? "" : contextMode.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "follow_up", "ambiguous" -> normalized;
+            default -> "standalone";
+        };
+    }
+
+    private String normalizeHistoryPolicy(String historyPolicy) {
+        String normalized = historyPolicy == null ? "" : historyPolicy.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "use_last_turn", "use_last_result_only" -> normalized;
+            default -> "ignore";
+        };
+    }
+
+    private String normalizeReferencedContext(String referencedContext) {
+        String normalized = referencedContext == null ? "" : referencedContext.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "last_turn", "last_result" -> normalized;
+            default -> "none";
+        };
     }
 
     private PlannerValidation validatePlannerDecision(PlannerDecision decision) {
@@ -1526,7 +1603,10 @@ public class ChatbotService {
                 decision.needsScreen(),
                 decision.confidence(),
                 decision.reason(),
-                routeDecision.flow()
+                routeDecision.flow(),
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext()
         );
     }
 
@@ -1607,23 +1687,23 @@ public class ChatbotService {
     private RouteDecision fallbackRouteDecision(String message) {
         String keyword = sanitizePlannerKeyword(extractKeyword(message));
         if (wantsUnsupportedFeature(message)) {
-            return new RouteDecision("unsupported", keyword, "미지원 쓰기/구매/관리 요청", "high", "FallbackRoute");
+            return fallbackRoute("unsupported", keyword, "미지원 쓰기/구매/관리 요청", "high", message);
         }
         boolean communityIntent = wantsCommunity(message);
         if (communityIntent && wantsCommunityCompose(message)) {
-            return new RouteDecision("community_write", keyword, "커뮤니티 글 작성 화면 요청", "high", "FallbackRoute");
+            return fallbackRoute("community_write", keyword, "커뮤니티 글 작성 화면 요청", "high", message);
         }
         if (communityIntent) {
-            return new RouteDecision("community_read", keyword, "커뮤니티 게시글 조회 요청", "high", "FallbackRoute");
+            return fallbackRoute("community_read", keyword, "커뮤니티 게시글 조회 요청", "high", message);
         }
         if (wantsFestival(message)) {
-            return new RouteDecision("festival_information", keyword, "꽃 축제 정보 요청", "high", "FallbackRoute");
+            return fallbackRoute("festival_information", keyword, "꽃 축제 정보 요청", "high", message);
         }
         if (wantsMap(message)) {
-            return new RouteDecision("map_action", keyword, "지도 또는 길찾기 요청", "high", "FallbackRoute");
+            return fallbackRoute("map_action", keyword, "지도 또는 길찾기 요청", "high", message);
         }
         if (wantsFlowerBookOpen(message) || wantsWalk(message) || wantsSaved(message)) {
-            return new RouteDecision("app_navigation", keyword, "앱 화면 이동 요청", "medium", "FallbackRoute");
+            return fallbackRoute("app_navigation", keyword, "앱 화면 이동 요청", "medium", message);
         }
         if (wantsFlowerGrowTips(message)
                 || wantsUnknownFlowerIdentification(message)
@@ -1631,9 +1711,30 @@ public class ChatbotService {
                 || wantsSeasonalRecommendation(message)
                 || wantsFlowerDescriptionInfo(message)
                 || mentionsFlower(message)) {
-            return new RouteDecision("flower_information", keyword, "꽃 정보 요청", "medium", "FallbackRoute");
+            return fallbackRoute("flower_information", keyword, "꽃 정보 요청", "medium", message);
         }
-        return new RouteDecision("simple_chat", "", "일반 대화", "medium", "FallbackRoute");
+        return fallbackRoute("simple_chat", "", "일반 대화", "medium", message);
+    }
+
+    private RouteDecision fallbackRoute(String flow, String keyword, String reason, String confidence, String message) {
+        boolean followUp = hasExplicitFollowUpReference(message);
+        return new RouteDecision(
+                flow,
+                keyword,
+                followUp ? "follow_up" : "standalone",
+                followUp ? "use_last_result_only" : "ignore",
+                followUp ? "last_result" : "none",
+                reason,
+                confidence,
+                "FallbackRoute");
+    }
+
+    private boolean hasExplicitFollowUpReference(String message) {
+        String value = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        return containsAny(value,
+                "첫 번째", "첫번째", "두 번째", "두번째", "세 번째", "세번째",
+                "그거", "그 꽃", "그 장소", "아까 말한", "방금 말한", "위에서 말한",
+                "that one", "first one", "second one");
     }
 
     private AgentPlan fallbackPlanForRoute(String message, RouteDecision routeDecision) {
@@ -1642,7 +1743,7 @@ public class ChatbotService {
                 : routeDecision.keyword();
         return switch (routeDecision.flow()) {
             case "community_write" -> communityWritePlan(routeDecision);
-            case "community_read" -> fallbackCommunityReadPlan(message, keyword);
+            case "community_read" -> fallbackCommunityReadPlan(message, keyword, routeDecision);
             case "festival_information" -> fallbackFestivalPlan(message, keyword, routeDecision);
             case "map_action" -> fallbackMapPlan(message, keyword, routeDecision);
             case "app_navigation" -> fallbackAppNavigationPlan(message, keyword, routeDecision);
@@ -1665,7 +1766,10 @@ public class ChatbotService {
                     false,
                     routeDecision.confidence(),
                     routeDecision.reason(),
-                    routeDecision.flow());
+                    routeDecision.flow(),
+                    routeDecision.contextMode(),
+                    routeDecision.historyPolicy(),
+                    routeDecision.referencedContext());
             default -> new AgentPlan(List.of(RouteIntent.GENERAL), "general", "", List.of(), "FallbackPlanner");
         };
     }
@@ -1688,15 +1792,18 @@ public class ChatbotService {
                 true,
                 routeDecision.confidence(),
                 routeDecision.reason(),
-                "community_write");
+                "community_write",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext());
     }
 
-    private AgentPlan fallbackCommunityReadPlan(String message, String keyword) {
+    private AgentPlan fallbackCommunityReadPlan(String message, String keyword, RouteDecision routeDecision) {
         String task = wantsLatestCommunityPosts(message)
                 ? "latest_posts"
                 : wantsPopularCommunityPosts(message) ? "popular_posts" : "search_posts";
         if ("latest_posts".equals(task) || "popular_posts".equals(task)) {
-            return fallbackCommunityReadPlan(message, keyword, task);
+            return fallbackCommunityReadPlan(message, keyword, task, routeDecision);
         }
         boolean needsScreen = true;
         String effectiveKeyword = sanitizePlannerKeyword(keyword);
@@ -1717,9 +1824,12 @@ public class ChatbotService {
                 false,
                 "none",
                 needsScreen,
-                "medium",
-                "커뮤니티 검색 fallback 분류",
-                "community_read");
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "community_read",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext());
     }
 
     private AgentPlan fallbackFestivalPlan(String message, String keyword, RouteDecision routeDecision) {
@@ -1752,7 +1862,10 @@ public class ChatbotService {
                 !actions.isEmpty(),
                 routeDecision.confidence(),
                 routeDecision.reason(),
-                "festival_information");
+                "festival_information",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext());
     }
 
     private AgentPlan fallbackMapPlan(String message, String keyword, RouteDecision routeDecision) {
@@ -1783,7 +1896,10 @@ public class ChatbotService {
                 true,
                 routeDecision.confidence(),
                 routeDecision.reason(),
-                "map_action");
+                "map_action",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext());
     }
 
     private AgentPlan fallbackAppNavigationPlan(String message, String keyword, RouteDecision routeDecision) {
@@ -1828,7 +1944,10 @@ public class ChatbotService {
                 true,
                 routeDecision.confidence(),
                 routeDecision.reason(),
-                "app_navigation");
+                "app_navigation",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext());
     }
 
     private AgentPlan fallbackUnsupportedPlan(String message, String keyword, RouteDecision routeDecision) {
@@ -1849,7 +1968,10 @@ public class ChatbotService {
                 false,
                 routeDecision.confidence(),
                 routeDecision.reason(),
-                "unsupported");
+                "unsupported",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext());
     }
 
     private AgentPlan fallbackFlowerInformationPlan(String message, String keyword, RouteDecision routeDecision) {
@@ -1877,10 +1999,13 @@ public class ChatbotService {
                 false,
                 routeDecision.confidence(),
                 routeDecision.reason(),
-                "flower_information");
+                "flower_information",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext());
     }
 
-    private AgentPlan fallbackCommunityReadPlan(String message, String keyword, String task) {
+    private AgentPlan fallbackCommunityReadPlan(String message, String keyword, String task, RouteDecision routeDecision) {
         CommunityPeriod period = resolveCommunityPeriod(message);
         String effectiveKeyword = sanitizeCommunityReadKeyword(keyword, period);
         boolean needsScreen = containsAny(message == null ? "" : message.toLowerCase(Locale.ROOT),
@@ -1904,9 +2029,12 @@ public class ChatbotService {
                 false,
                 "none",
                 needsScreen,
-                "medium",
-                "커뮤니티 최신/인기 글 fallback 분류",
-                "community_read"
+                routeDecision.confidence(),
+                routeDecision.reason(),
+                "community_read",
+                routeDecision.contextMode(),
+                routeDecision.historyPolicy(),
+                routeDecision.referencedContext()
         );
     }
 
@@ -2058,7 +2186,9 @@ public class ChatbotService {
             ChatAction action,
             List<ToolResult> toolResults,
             String answerDomain,
-            String answerTask
+            String answerTask,
+            String historyPolicy,
+            String referencedContext
     ) {
         String guardedAnswer = buildGuardedAnswer(message, toolResults, answerDomain, answerTask);
         if (guardedAnswer != null) {
@@ -2070,11 +2200,13 @@ public class ChatbotService {
 
         try {
             StringBuilder userPrompt = new StringBuilder();
-            List<ChatTurn> history = historySnapshot(sessionId);
-            for (ChatTurn turn : history) {
-                userPrompt.append(turn.role()).append(": ").append(turn.content()).append("\n");
-            }
-            userPrompt.append("\n사용자 메시지:\n")
+            appendHistoryForAnswer(userPrompt, sessionId, historyPolicy);
+            userPrompt.append("문맥 사용 정책:\n")
+                    .append("- history_policy=").append(normalizeHistoryPolicy(historyPolicy)).append("\n")
+                    .append("- referenced_context=").append(normalizeReferencedContext(referencedContext)).append("\n")
+                    .append("- 위 정책이 ignore이면 이전 대화를 답변 근거로 사용하지 마세요.\n")
+                    .append("- 현재 사용자 메시지와 이번 턴 도구 결과/앱 액션을 항상 우선하세요.\n\n");
+            userPrompt.append("사용자 메시지:\n")
                     .append(message)
                     .append("\n\n도구 결과와 앱 액션:\n")
                     .append(localContext);
@@ -2092,6 +2224,43 @@ public class ChatbotService {
             log.warn("Spring AI 챗봇 호출 실패. 로컬 응답으로 전환합니다: {}", e.getMessage());
             return fallbackReply(message, localContext, action);
         }
+    }
+
+    private void appendHistoryForAnswer(StringBuilder userPrompt, String sessionId, String historyPolicy) {
+        String policy = normalizeHistoryPolicy(historyPolicy);
+        if ("ignore".equals(policy)) {
+            return;
+        }
+        List<ChatTurn> history = historySnapshot(sessionId);
+        if (history.isEmpty()) {
+            return;
+        }
+        if ("use_last_result_only".equals(policy)) {
+            String lastResultContext = lastResultContextSnapshot(sessionId);
+            if (!lastResultContext.isBlank()) {
+                userPrompt.append("제한된 이전 도구 결과:\n")
+                        .append(lastResultContext)
+                        .append("\n");
+            }
+            return;
+        }
+        List<ChatTurn> selected = switch (policy) {
+            case "use_last_turn" -> lastTurns(history, 2);
+            default -> List.of();
+        };
+        if (selected.isEmpty()) {
+            return;
+        }
+        userPrompt.append("제한된 이전 문맥:\n");
+        for (ChatTurn turn : selected) {
+            userPrompt.append(turn.role()).append(": ").append(turn.content()).append("\n");
+        }
+        userPrompt.append("\n");
+    }
+
+    private List<ChatTurn> lastTurns(List<ChatTurn> history, int limit) {
+        int fromIndex = Math.max(0, history.size() - limit);
+        return history.subList(fromIndex, history.size());
     }
 
     String buildGuardedAnswer(
@@ -2362,6 +2531,9 @@ public class ChatbotService {
                 사용자가 한국어로 쓴 경우 최종 답변의 본문, 설명, 주의사항, 출처 언급을 모두 자연스러운 한국어로 작성하세요.
                 "description", "growTips", "source", "Tool results", "lookup returned" 같은 영어 도구 라벨을 최종 답변에 그대로 복사하지 마세요.
                 사실 근거는 이번 턴에 제공된 도구 결과와 앱 액션만 사용하세요.
+                prompt의 history_policy가 ignore이면 이전 대화나 이전 assistant 답변을 이번 답변 근거로 사용하지 마세요.
+                prompt의 history_policy가 use_last_turn 또는 use_last_result_only인 경우에도 현재 사용자 메시지와 이번 턴 도구 결과/앱 액션을 가장 우선하세요.
+                이전 화면 이동 안내 문장을 새 질문 답변에 반복하지 마세요.
                 이전 assistant 답변이나 대화 기록이 이번 턴 도구 결과와 충돌하면 이번 턴 도구 결과를 우선하고 이전 내용은 무시하세요.
                 정확한 개화일, 위치, 게시글 내용, 구매, 작성 완료 여부를 지어내지 마세요.
                 조회 결과가 0건이면 활동량, 분위기, 경향, 원인, 인기 변화 같은 해석을 덧붙이지 말고 현재 확인된 정보가 없다고만 설명하세요.
@@ -2760,6 +2932,19 @@ public class ChatbotService {
         return data == null ? List.of() : data.snapshotHistory();
     }
 
+    private void rememberLastResultContext(String sessionId, String localContext) {
+        SessionData data = sessions.computeIfAbsent(sessionId, key -> new SessionData());
+        data.updateLastResultContext(localContext);
+    }
+
+    private String lastResultContextSnapshot(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            return "";
+        }
+        SessionData data = sessions.get(sessionId);
+        return data == null ? "" : data.snapshotLastResultContext();
+    }
+
     int sessionHistorySizeForTest(String sessionId) {
         return historySnapshot(sessionId).size();
     }
@@ -2781,7 +2966,10 @@ public class ChatbotService {
             boolean needsScreen,
             String confidence,
             String reason,
-            String flow
+            String flow,
+            String contextMode,
+            String historyPolicy,
+            String referencedContext
     ) {
         private AgentPlan(
                 List<RouteIntent> intents,
@@ -2790,7 +2978,32 @@ public class ChatbotService {
                 List<ChatAction> actions,
                 String source
         ) {
-            this(intents, informationTask, searchKeyword, actions, source, "", "", "none", 0, 0, false, false, "none", false, "", "", "");
+            this(intents, informationTask, searchKeyword, actions, source, "", "", "none", 0, 0, false, false, "none", false, "", "", "",
+                    "standalone", "ignore", "none");
+        }
+
+        private AgentPlan(
+                List<RouteIntent> intents,
+                String informationTask,
+                String searchKeyword,
+                List<ChatAction> actions,
+                String source,
+                String domain,
+                String task,
+                String dateFilter,
+                int month,
+                int year,
+                boolean nearby,
+                boolean routeRequest,
+                String routeMode,
+                boolean needsScreen,
+                String confidence,
+                String reason,
+                String flow
+        ) {
+            this(intents, informationTask, searchKeyword, actions, source, domain, task, dateFilter, month, year,
+                    nearby, routeRequest, routeMode, needsScreen, confidence, reason, flow,
+                    "standalone", "ignore", "none");
         }
     }
 
@@ -2825,10 +3038,22 @@ public class ChatbotService {
     private record RouteDecision(
             String flow,
             String keyword,
+            String contextMode,
+            String historyPolicy,
+            String referencedContext,
             String reason,
             String confidence,
             String source
     ) {
+        private RouteDecision(
+                String flow,
+                String keyword,
+                String reason,
+                String confidence,
+                String source
+        ) {
+            this(flow, keyword, "standalone", "ignore", "none", reason, confidence, source);
+        }
     }
 
     private enum EvidenceStatus {
@@ -2875,7 +3100,10 @@ public class ChatbotService {
             List<ToolResult> toolResults,
             AgentRunTrace trace,
             String answerDomain,
-            String answerTask
+            String answerTask,
+            String contextMode,
+            String historyPolicy,
+            String referencedContext
     ) {
         private ChatAction primaryAction() {
             return actions.isEmpty() ? null : actions.get(0);
