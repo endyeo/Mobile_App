@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -57,6 +58,7 @@ public class FestivalToolService {
     @Value("${tour.api-key:${TOUR_API_KEY:}}")
     private String tourApiKey;
 
+    @Autowired
     public FestivalToolService(FestivalRepository festivalRepository) {
         this(createTimeoutRestTemplate(), festivalRepository);
     }
