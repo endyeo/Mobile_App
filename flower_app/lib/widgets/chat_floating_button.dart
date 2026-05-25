@@ -391,15 +391,126 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
           color: isUser ? colors.primary : Colors.white.withValues(alpha: 0.92),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: Text(
-          message.text,
-          style: TextStyle(
-            color: isUser ? Colors.white : const Color(0xFF2D2D2D),
-            fontSize: 13,
-            height: 1.35,
+        child: isUser
+            ? Text(
+                message.text,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  height: 1.35,
+                ),
+              )
+            : _buildBotBubbleContent(message, colors),
+      ),
+    );
+  }
+
+  Widget _buildBotBubbleContent(
+    FloatingChatMessage message,
+    SeasonColors colors,
+  ) {
+    final hasProgress = message.progressSteps.isNotEmpty;
+    final showProcessSummary =
+        hasProgress ||
+        (message.isStreaming && message.currentStatus.isNotEmpty);
+    final hasText = message.text.trim().isNotEmpty;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showProcessSummary) _buildProcessSummary(message, colors),
+        if (message.isProcessExpanded && hasProgress) ...[
+          const SizedBox(height: 5),
+          _buildProcessLog(message),
+        ],
+        if (hasText) ...[
+          if (hasProgress) const SizedBox(height: 6),
+          Text(
+            message.text,
+            style: const TextStyle(
+              color: Color(0xFF2D2D2D),
+              fontSize: 13,
+              height: 1.35,
+            ),
           ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildProcessSummary(
+    FloatingChatMessage message,
+    SeasonColors colors,
+  ) {
+    final summary = message.isStreaming
+        ? message.currentStatus
+        : '과정 ${message.progressSteps.length}단계 완료';
+    final canExpand = message.progressSteps.isNotEmpty;
+    final icon = message.isProcessExpanded
+        ? Icons.keyboard_arrow_up_rounded
+        : Icons.keyboard_arrow_down_rounded;
+
+    return InkWell(
+      onTap: canExpand ? () => _session.toggleProcessExpanded(message) : null,
+      borderRadius: BorderRadius.circular(6),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 1),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (message.isStreaming) ...[
+              SizedBox(
+                width: 9,
+                height: 9,
+                child: CircularProgressIndicator(
+                  strokeWidth: 1.4,
+                  color: colors.primary.withValues(alpha: 0.75),
+                ),
+              ),
+              const SizedBox(width: 5),
+            ],
+            Flexible(
+              child: Text(
+                summary,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: const Color(0xFF70747C),
+                  fontSize: 10.5,
+                  height: 1.25,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            if (canExpand) ...[
+              const SizedBox(width: 2),
+              Icon(icon, size: 14, color: const Color(0xFF8B9098)),
+            ],
+          ],
         ),
       ),
+    );
+  }
+
+  Widget _buildProcessLog(FloatingChatMessage message) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: message.progressSteps
+          .map(
+            (step) => Padding(
+              padding: const EdgeInsets.only(bottom: 3),
+              child: Text(
+                '• $step',
+                style: const TextStyle(
+                  color: Color(0xFF7A7F88),
+                  fontSize: 10.5,
+                  height: 1.25,
+                ),
+              ),
+            ),
+          )
+          .toList(),
     );
   }
 }

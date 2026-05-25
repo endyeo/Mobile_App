@@ -87,7 +87,7 @@ class FloatingChatSessionController extends ChangeNotifier {
 
     _messages
       ..add(FloatingChatMessage.user(text))
-      ..add(FloatingChatMessage.bot('AI가 요청을 확인하고 있어요.'));
+      ..add(FloatingChatMessage.botStreaming('질문을 이해하는 중...'));
     _isSending = true;
     _showHistory = true;
     _notify();
@@ -134,7 +134,10 @@ class FloatingChatSessionController extends ChangeNotifier {
         break;
       case 'STATUS':
       case 'CONTEXT_PLANNED':
-        _upsertBotMessage(event.message);
+        final message = _statusProgressMessage(event);
+        if (message != null) {
+          _appendProgressStep(message);
+        }
         break;
       case 'FINAL_ANSWER':
         _finalAnswerReceived = true;
@@ -145,7 +148,7 @@ class FloatingChatSessionController extends ChangeNotifier {
         final actions = event.actions.isNotEmpty
             ? event.actions
             : _singleAction(event.action);
-        _upsertBotMessage(_actionProgressMessage(actions));
+        _appendProgressStep(_actionProgressMessage(actions));
         _storePendingActions(actions);
         if (_finalAnswerReceived) {
           _schedulePendingActionDispatch();
@@ -154,7 +157,7 @@ class FloatingChatSessionController extends ChangeNotifier {
       case 'TOOL_RESULT':
         final result = event.toolResult;
         if (result != null) {
-          _upsertBotMessage(_toolResultMessage(result));
+          _appendProgressStep(_toolResultMessage(result));
         }
         break;
       case 'DONE':
@@ -166,7 +169,7 @@ class FloatingChatSessionController extends ChangeNotifier {
         break;
       default:
         if (event.message.isNotEmpty) {
-          _upsertBotMessage(event.message);
+          _appendProgressStep(event.message);
         }
     }
   }
@@ -180,6 +183,7 @@ class FloatingChatSessionController extends ChangeNotifier {
     }
     _replaceLastBotMessage(
       message.trim().isEmpty ? '챗봇 처리 중 오류가 발생했습니다.' : message.trim(),
+      streaming: false,
     );
     _finishStream(requestId);
   }
@@ -235,12 +239,15 @@ class FloatingChatSessionController extends ChangeNotifier {
     _notify();
   }
 
-  void _upsertBotMessage(String text) {
+  void _replaceLastBotMessage(String text, {bool streaming = false}) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
     if (_messages.isNotEmpty && !_messages.last.isUser) {
-      _messages[_messages.length - 1] = FloatingChatMessage.bot(trimmed);
+      _messages[_messages.length - 1] = _messages.last.copyWith(
+        text: trimmed,
+        isStreaming: streaming,
+      );
     } else {
       _messages.add(FloatingChatMessage.bot(trimmed));
     }
@@ -248,16 +255,35 @@ class FloatingChatSessionController extends ChangeNotifier {
     _notify();
   }
 
-  void _replaceLastBotMessage(String text) {
+  void _appendProgressStep(String text, {bool notify = true}) {
     final trimmed = text.trim();
     if (trimmed.isEmpty) return;
 
-    if (_messages.isNotEmpty && !_messages.last.isUser) {
-      _messages[_messages.length - 1] = FloatingChatMessage.bot(trimmed);
+    if (_messages.isEmpty || _messages.last.isUser) {
+      _messages.add(FloatingChatMessage.botStreaming(trimmed));
     } else {
-      _messages.add(FloatingChatMessage.bot(trimmed));
+      final message = _messages.last;
+      final steps = List<String>.from(message.progressSteps);
+      if (steps.isEmpty || steps.last != trimmed) {
+        steps.add(trimmed);
+      }
+      _messages[_messages.length - 1] = message.copyWith(
+        currentStatus: trimmed,
+        progressSteps: steps.length > 8
+            ? steps.sublist(steps.length - 8)
+            : steps,
+      );
     }
     _showHistory = true;
+    if (notify) _notify();
+  }
+
+  void toggleProcessExpanded(FloatingChatMessage message) {
+    final index = _messages.indexOf(message);
+    if (index < 0 || _messages[index].isUser) return;
+    _messages[index] = _messages[index].copyWith(
+      isProcessExpanded: !_messages[index].isProcessExpanded,
+    );
     _notify();
   }
 
@@ -323,7 +349,19 @@ class FloatingChatSessionController extends ChangeNotifier {
     if (result.tool.startsWith('community.')) {
       return '커뮤니티 정보를 확인했어요.';
     }
+    if (result.tool.startsWith('festival.')) {
+      return '축제 정보를 확인했어요.';
+    }
     return '필요한 정보를 확인했어요.';
+  }
+
+  String? _statusProgressMessage(ChatbotStreamEvent event) {
+    return switch (event.stage) {
+      'PLAN' => '필요한 작업을 고르는 중...',
+      'SEARCH' =>
+        event.message.trim().isEmpty ? '필요한 정보를 찾는 중...' : event.message.trim(),
+      _ => null,
+    };
   }
 
   String _streamErrorMessage(Object error) {
@@ -352,7 +390,14 @@ class FloatingChatSessionController extends ChangeNotifier {
 }
 
 class FloatingChatMessage {
-  const FloatingChatMessage._({required this.text, required this.isUser});
+  const FloatingChatMessage._({
+    required this.text,
+    required this.isUser,
+    this.progressSteps = const <String>[],
+    this.currentStatus = '',
+    this.isStreaming = false,
+    this.isProcessExpanded = false,
+  });
 
   factory FloatingChatMessage.user(String text) =>
       FloatingChatMessage._(text: text, isUser: true);
@@ -360,6 +405,35 @@ class FloatingChatMessage {
   factory FloatingChatMessage.bot(String text) =>
       FloatingChatMessage._(text: text, isUser: false);
 
+  factory FloatingChatMessage.botStreaming(String status) =>
+      FloatingChatMessage._(
+        text: '',
+        isUser: false,
+        currentStatus: status,
+        isStreaming: true,
+      );
+
   final String text;
   final bool isUser;
+  final List<String> progressSteps;
+  final String currentStatus;
+  final bool isStreaming;
+  final bool isProcessExpanded;
+
+  FloatingChatMessage copyWith({
+    String? text,
+    List<String>? progressSteps,
+    String? currentStatus,
+    bool? isStreaming,
+    bool? isProcessExpanded,
+  }) {
+    return FloatingChatMessage._(
+      text: text ?? this.text,
+      isUser: isUser,
+      progressSteps: progressSteps ?? this.progressSteps,
+      currentStatus: currentStatus ?? this.currentStatus,
+      isStreaming: isStreaming ?? this.isStreaming,
+      isProcessExpanded: isProcessExpanded ?? this.isProcessExpanded,
+    );
+  }
 }
