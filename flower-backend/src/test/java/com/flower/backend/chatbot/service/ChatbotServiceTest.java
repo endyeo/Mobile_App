@@ -185,6 +185,30 @@ class ChatbotServiceTest {
     }
 
     @Test
+    void standaloneFollowupScreenRequestDoesNotReusePreviousComposerAnswer() {
+        String sessionId = "context-session";
+        ChatMessageResponse first = chatbotService.chat(new ChatMessageRequest(
+                "축제 후기 글 써줘",
+                sessionId,
+                "context-request-1",
+                null));
+        ChatMessageResponse second = chatbotService.chat(new ChatMessageRequest(
+                "꽃 지도 열어줘",
+                sessionId,
+                "context-request-2",
+                null));
+
+        assertThat(first.getAgentRun().getRoute()).isEqualTo("community_write");
+        assertThat(second.getAgentRun().getRoute()).isEqualTo("app_navigation");
+        assertThat(second.getActions()).extracting(ChatAction::getTarget).containsExactly("MAP");
+        assertThat(second.getReply()).doesNotContain("후기");
+        assertThat(second.getReply()).doesNotContain("작성 화면");
+        assertThat(second.getAgentRun().getSteps().get(0).getMessage())
+                .contains("context=standalone")
+                .contains("history=ignore");
+    }
+
+    @Test
     void communityWriteAutoSaveRequestIsUnsupportedWithoutAction() {
         ChatMessageResponse response = chatbotService.chat(request("글 내용까지 대신 저장해줘"));
 

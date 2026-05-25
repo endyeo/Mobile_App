@@ -1,0 +1,44 @@
+[
+  {
+    "id": "CTX001",
+    "messages": ["축제 후기 글 써줘", "꽃 지도 열어줘"],
+    "expectedRoutes": ["app_navigation"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": [],
+    "requiredPlannerIncludes": ["history=ignore"],
+    "forbiddenReplyIncludes": ["후기 글", "작성 화면", "커뮤니티 글"]
+  },
+  {
+    "id": "CTX002",
+    "messages": ["수국 후기 찾아줘", "장미 키우는 법 알려줘"],
+    "expectedRoutes": ["flower_information"],
+    "expectedTools": ["flower.getGrowGuide"],
+    "requiredPlannerIncludes": ["history=ignore"],
+    "forbiddenReplyIncludes": ["수국 후기", "커뮤니티"]
+  },
+  {
+    "id": "CTX003",
+    "messages": ["이번 달 꽃 추천해줘", "첫 번째 지도에서 보여줘"],
+    "expectedRoutes": ["map_action"],
+    "requiredPlannerIncludes": ["context=follow_up", "history=use_last_result_only"]
+  },
+  {
+    "id": "CTX004",
+    "messages": ["안녕", "꽃 지도 열어줘"],
+    "expectedRoutes": ["app_navigation"],
+    "expectedActions": [
+      {
+        "type": "NAVIGATE",
+        "target": "MAP"
+      }
+    ],
+    "expectedTools": [],
+    "requiredPlannerIncludes": ["history=ignore"],
+    "forbiddenReplyIncludes": ["안녕하세요"]
+  }
+]

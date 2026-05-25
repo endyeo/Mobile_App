@@ -1,6 +1,6 @@
 param(
     [string]$BaseUrl = "http://localhost:8080",
-    [ValidateSet("smoke", "full", "community-smoke", "festival-smoke", "map-smoke")]
+    [ValidateSet("smoke", "full", "community-smoke", "festival-smoke", "map-smoke", "context-smoke")]
     [string]$Set = "smoke",
     [double]$Lat = 37.5665,
     [double]$Lng = 126.978,
@@ -259,6 +259,19 @@ function Get-PlannerSummary($AgentRun) {
     return "$tool - $message"
 }
 
+function Get-AgentStepText($AgentRun) {
+    $steps = Convert-ToArray (Get-PropertyValue $AgentRun "steps")
+    $parts = @()
+    foreach ($step in $steps) {
+        $agent = [string](Get-PropertyValue $step "agent")
+        $tool = [string](Get-PropertyValue $step "tool")
+        $status = [string](Get-PropertyValue $step "status")
+        $message = [string](Get-PropertyValue $step "message")
+        $parts += "$agent $tool $status $message"
+    }
+    return ($parts -join " | ")
+}
+
 function Get-ResponseData($Response) {
     $data = Get-PropertyValue $Response "data"
     if ($null -eq $data) {
@@ -314,6 +327,7 @@ $threshold = switch ($Set) {
     "community-smoke" { 10 }
     "festival-smoke" { 10 }
     "map-smoke" { 13 }
+    "context-smoke" { 3 }
     default { 68 }
 }
 $endpoint = "{0}/chatbot/message" -f $BaseUrl.TrimEnd("/")
@@ -324,25 +338,33 @@ Write-Host ("Chatbot evaluation: set={0}, cases={1}, endpoint={2}" -f $Set, $cas
 
 foreach ($case in $cases) {
     $id = [string](Get-PropertyValue $case "id")
+    $messages = Convert-ToArray (Get-PropertyValue $case "messages")
     $message = [string](Get-PropertyValue $case "message")
-    $sessionId = "eval-{0}-{1}" -f $id, ([guid]::NewGuid().ToString("N").Substring(0, 8))
-    $body = @{
-        message = $message
-        session_id = $sessionId
-        context = @{
-            lat = $Lat
-            lng = $Lng
-        }
+    if ($messages.Count -eq 0) {
+        $messages = @($message)
+    } else {
+        $message = [string]$messages[-1]
     }
+    $sessionId = "eval-{0}-{1}" -f $id, ([guid]::NewGuid().ToString("N").Substring(0, 8))
 
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     $response = $null
     $requestError = $null
     try {
-        $response = Invoke-JsonPostUtf8 `
-            -Uri $endpoint `
-            -BodyObject $body `
-            -TimeoutSeconds $TimeoutSec
+        foreach ($currentMessage in $messages) {
+            $body = @{
+                message = [string]$currentMessage
+                session_id = $sessionId
+                context = @{
+                    lat = $Lat
+                    lng = $Lng
+                }
+            }
+            $response = Invoke-JsonPostUtf8 `
+                -Uri $endpoint `
+                -BodyObject $body `
+                -TimeoutSeconds $TimeoutSec
+        }
     } catch {
         $requestError = $_.Exception.Message
     } finally {
@@ -354,6 +376,7 @@ foreach ($case in $cases) {
     $agentRun = Get-PropertyValue $data "agentRun"
     $route = [string](Get-PropertyValue $agentRun "route")
     $plannerSummary = Get-PlannerSummary $agentRun
+    $agentStepText = Get-AgentStepText $agentRun
     $actions = Convert-ToArray (Get-PropertyValue $data "actions")
     $singleAction = Get-PropertyValue $data "action"
     if ($actions.Count -eq 0 -and $null -ne $singleAction) {
@@ -403,6 +426,12 @@ foreach ($case in $cases) {
             }
         }
 
+        foreach ($phrase in (Convert-ToArray (Get-PropertyValue $case "requiredPlannerIncludes"))) {
+            if (-not $agentStepText.Contains([string]$phrase)) {
+                $reasons += "missing planner phrase: $phrase"
+            }
+        }
+
         foreach ($phrase in (Convert-ToArray (Get-PropertyValue $case "forbiddenReplyIncludes"))) {
             if ($reply.Contains([string]$phrase)) {
                 $reasons += "forbidden reply phrase: $phrase"
@@ -435,6 +464,7 @@ foreach ($case in $cases) {
     $results += [pscustomobject]@{
         id = $id
         message = $message
+        messages = $messages
         passed = $passed
         reasons = $reasons
         latencyMs = [math]::Round($stopwatch.Elapsed.TotalMilliseconds)
@@ -445,6 +475,7 @@ foreach ($case in $cases) {
             toolData = Get-PropertyValue $case "expectedToolData"
             forbiddenActions = Convert-ToArray (Get-PropertyValue $case "forbiddenActions")
             forbiddenTools = Convert-ToArray (Get-PropertyValue $case "forbiddenTools")
+            requiredPlannerIncludes = Convert-ToArray (Get-PropertyValue $case "requiredPlannerIncludes")
         }
         actual = [pscustomobject]@{
             route = $route
