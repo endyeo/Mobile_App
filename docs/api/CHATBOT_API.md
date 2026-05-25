@@ -182,6 +182,7 @@ DONE
 ```
 
 에러가 발생하면 `ERROR` 다음 `DONE(reason=error)`를 보낸다.
+Flutter 클라이언트는 `ACTION` 이벤트를 즉시 실행하지 않고 보류한 뒤, 같은 요청의 `FINAL_ANSWER`가 화면에 반영된 다음 실행한다.
 
 ### Event payload examples
 
@@ -268,13 +269,13 @@ DONE
 | `NAVIGATE` | `COMMUNITY` | optional `{ "query": "..." }` | 커뮤니티 화면 이동 |
 | `NAVIGATE` | `COMMUNITY_COMPOSE` | `null` | 커뮤니티 글 작성 화면 이동 |
 | `NAVIGATE` | `WALK` | `{}` | 산책/만보기 화면 이동 |
-| `NAVIGATE` | `FLOWER_BOOK` | optional `{ "flowerId": 1 }` | 도감 화면 이동 |
+| `NAVIGATE` | `FLOWER_BOOK` | optional `{ "query": "장미" }` 또는 `{ "flowerBookId": 1 }` | 도감 화면 이동 |
 | `NAVIGATE` | `SAVED` | `{}` | 저장 화면 이동 |
 | `MAP_SET_SEARCH_QUERY` | `MAP` | `{ "query": "벚꽃" }` | 지도 검색어 적용 |
 | `MAP_SHOW_FLOWER` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 위치 강조 |
 | `MAP_OPEN_FLOWER_PREVIEW` | `MAP` | `{ "flowerId": 1 }` | 지도에서 꽃 미리보기 열기 |
 | `MAP_OPEN_ROUTE_CHOOSER` | `MAP` | `{ "flowerId": 1 }` | 지도에서 길찾기 이동수단 선택 열기 | <!-- 반영: 2026-05-21 13:24 -->
-| `MAP_START_ROUTE` | `MAP` | `{ "flowerId": 1, "routeMode": "transit" }` | 지도에서 길찾기 실행 | <!-- 반영: 2026-05-21 13:24 -->
+| `MAP_START_ROUTE` | `MAP` | `{ "flowerId": 1, "mode": "transit" }` | 지도에서 길찾기 실행. `mode`는 `walk`, `car`, `transit` 중 하나 | <!-- 반영: 2026-05-25 PR6 -->
 
 ## 6. AgentRunTrace
 

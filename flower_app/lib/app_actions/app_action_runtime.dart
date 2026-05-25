@@ -11,6 +11,21 @@ import '../screens/saved_page.dart';
 class AppActionRuntime {
   const AppActionRuntime._();
 
+  @visibleForTesting
+  static bool isMapActionForTest(ChatAction action) => _isMapAction(action);
+
+  @visibleForTesting
+  static bool isScreenActionForTest(ChatAction action) =>
+      _isScreenAction(action);
+
+  @visibleForTesting
+  static String? stringParamForTest(ChatAction action, String key) =>
+      _stringParam(action, key);
+
+  @visibleForTesting
+  static int? intParamForTest(ChatAction action, String key) =>
+      _intParam(action, key);
+
   static Future<void> execute(
     BuildContext context,
     List<ChatAction> actions,
