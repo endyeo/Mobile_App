@@ -69,7 +69,7 @@ AGENTS.md 기준 AI 작업 권한은 AI 챗봇 기능과 앱 제어 연결부에
 
 ### AI 챗봇
 
-챗봇은 사용자 메시지를 받아 planner의 `domain/task` 계약으로 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. planner 결과는 `RouteDecision(flow, keyword, reason, confidence, source)`로 수신하며, 정보성 flow에는 `executeInformationToolLoop`를 적용해 Evidence Check(`SUFFICIENT`/`INSUFFICIENT`/`NONE`/`ERROR`) 기반으로 최대 2회 도구를 호출한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영하며, 요청별 `requestId`로 이전 SSE 이벤트가 현재 답변을 덮지 않도록 필터링한다. `ChatbotService` 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()` 계층으로 분리되어 있으며, 구조/문장 규칙 상세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_KO_SPEC.md`를 함께 따른다. OpenAI API 키는 `spring.ai.openai.api-key` 단일 설정으로 통합되었다. <!-- 반영: 2026-05-22 automation --> <!-- 반영: 2026-05-25 sync - RouteDecision, Evidence Check, requestId, OpenAI 키 단일화 반영 -->
+챗봇은 사용자 메시지를 받아 planner의 `domain/task` 계약으로 라우팅 의도를 판단하고, 필요한 도구 결과와 Flutter 앱 제어 액션을 함께 반환한다. planner 결과는 `RouteDecision(flow, keyword, reason, confidence, source)`로 수신하며, 정보성 flow에는 `executeInformationToolLoop`를 적용해 Evidence Check(`SUFFICIENT`/`INSUFFICIENT`/`NONE`/`ERROR`) 기반으로 최대 2회 도구를 호출한다. 플로팅 챗봇 UI는 현재 `/chatbot/message/stream` SSE 엔드포인트를 사용해 진행 상태, 액션, 도구 결과, 최종 답변을 순차 반영하며, 요청별 `requestId`로 이전 SSE 이벤트가 현재 답변을 덮지 않도록 필터링한다. `ACTION` 이벤트는 최종 답변이 표시된 뒤 실행되며, 백엔드 SSE는 전용 executor와 타임아웃 종료 경로를 사용한다. `ChatbotService` 내부 프롬프트는 `planningSystemPrompt()`, `planningRepairSystemPrompt()`, `buildAnswerSystemPrompt()` 계층으로 분리되어 있으며, 구조/문장 규칙 상세는 `docs/product/chatbot/CHATBOT_COMMON_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_SPEC.md`, `docs/chatbot/CHATBOT_PROMPT_KO_SPEC.md`를 함께 따른다. OpenAI API 키는 `spring.ai.openai.api-key` 단일 설정으로 통합되었다. <!-- 반영: 2026-05-22 automation --> <!-- 반영: 2026-05-25 sync - RouteDecision, Evidence Check, requestId, OpenAI 키 단일화 반영 --> <!-- 반영: 2026-05-25 PR6 - ACTION 실행 타이밍, SSE executor 반영 -->
 
 planner domain은 `flower_info`, `festival_info`, `community`, `map_place`, `app_navigation`, `unsupported`, `general`이며, 꽃 정보 도구는 `flower.getBasicInfo`, `flower.getMeaningAndBloom`, `flower.getGrowGuide`, `flower.recommendByMonth`, `flower.inferCandidates`를 포함한다. 커뮤니티 도구는 `community.searchPosts`, `community.getLatestPosts`, `community.getPopularPosts`를 포함한다. 축제 도구는 `FestivalRepository` DB 우선 조회 기반 `festival.searchFlowerFestivals`를 사용한다. <!-- 반영: 2026-05-21 13:24 --> <!-- 반영: 2026-05-25 sync - 커뮤니티 최신/인기, 축제 DB 반영 -->
 
@@ -77,7 +77,7 @@ Flutter의 플로팅 챗봇 입력창은 Android `flower_app/speech` MethodChann
 
 ### 지도
 
-지도 화면은 Flutter의 `KakaoMapScreen`과 `assets/map/`의 WebView 기반 지도 자산으로 구성된다. 챗봇은 지도 내부 구현을 직접 수정하지 않고 `NAVIGATE MAP`, `MAP_SET_SEARCH_QUERY`, `MAP_SHOW_FLOWER`, `MAP_OPEN_FLOWER_PREVIEW`, `MAP_OPEN_ROUTE_CHOOSER`, `MAP_START_ROUTE` 같은 액션으로 지도 화면에 요청을 전달한다. 지도 JS의 `FlowerMap.focusFlowerById`는 꽃 데이터 로딩 후 지도 중심 이동과 정보 패널 표시를 수행한다. <!-- 반영: 2026-05-21 13:24 -->
+지도 화면은 Flutter의 `KakaoMapScreen`과 `assets/map/`의 WebView 기반 지도 자산으로 구성된다. 챗봇은 지도 내부 구현을 직접 수정하지 않고 `NAVIGATE MAP`, `MAP_SET_SEARCH_QUERY`, `MAP_SHOW_FLOWER`, `MAP_OPEN_FLOWER_PREVIEW`, `MAP_OPEN_ROUTE_CHOOSER`, `MAP_START_ROUTE` 같은 액션으로 지도 화면에 요청을 전달한다. `MAP_START_ROUTE` 파라미터는 `{ flowerId, mode }`이며 `mode`는 `walk`, `car`, `transit` 중 하나다. 지도 JS의 `FlowerMap.focusFlowerById`는 꽃 데이터 로딩 후 지도 중심 이동과 정보 패널 표시를 수행한다. <!-- 반영: 2026-05-25 PR6 -->
 
 ### 꽃 도감/꽃 데이터
 
