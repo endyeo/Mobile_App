@@ -100,6 +100,24 @@ class ChatbotStreamEvent {
     );
   }
 
+  factory ChatbotStreamEvent.error({
+    required String message,
+    String stage = 'ERROR',
+    String requestId = '',
+  }) {
+    return ChatbotStreamEvent(
+      type: 'ERROR',
+      data: <String, dynamic>{
+        'stage': stage,
+        'message': message,
+        if (requestId.isNotEmpty) 'requestId': requestId,
+      },
+      stage: stage,
+      message: message,
+      requestId: requestId,
+    );
+  }
+
   static String _inferEventType(String type, Map<String, dynamic> data) {
     if (type != 'message' && type.isNotEmpty) return type;
     if (data.containsKey('reply')) return 'FINAL_ANSWER';
@@ -288,6 +306,8 @@ class ChatbotService {
           if (event != null) {
             _logSseEvent(event);
             yield event;
+          } else if (dataLines.isNotEmpty) {
+            _logMalformedSseEvent(eventName, dataLines);
           }
           eventName = 'message';
           dataLines.clear();
@@ -304,10 +324,18 @@ class ChatbotService {
       if (event != null) {
         _logSseEvent(event);
         yield event;
+      } else if (dataLines.isNotEmpty) {
+        _logMalformedSseEvent(eventName, dataLines);
       }
     } on DioException catch (error) {
       if (CancelToken.isCancel(error)) return;
       throw ChatbotStreamException.fromDio(error);
+    } on FormatException catch (error) {
+      _logStreamParseError(error);
+      yield ChatbotStreamEvent.error(
+        message: '응답 형식이 올바르지 않습니다. 다시 시도해 주세요.',
+        requestId: requestId,
+      );
     }
   }
 
@@ -329,9 +357,13 @@ class ChatbotService {
 
   ChatbotStreamEvent? _parseSseEvent(String eventName, List<String> dataLines) {
     if (dataLines.isEmpty) return null;
-    final decoded = jsonDecode(dataLines.join('\n'));
-    if (decoded is! Map<String, dynamic>) return null;
-    return ChatbotStreamEvent.fromSse(eventName, decoded);
+    try {
+      final decoded = jsonDecode(dataLines.join('\n'));
+      if (decoded is! Map<String, dynamic>) return null;
+      return ChatbotStreamEvent.fromSse(eventName, decoded);
+    } on FormatException {
+      return null;
+    }
   }
 
   void _logSseEvent(ChatbotStreamEvent event) {
@@ -340,14 +372,28 @@ class ChatbotService {
       '[SSE] ${event.type} ${event.stage} ${event.response?.reply ?? event.message}',
     );
   }
+
+  void _logMalformedSseEvent(String eventName, List<String> dataLines) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[SSE] malformed event=$eventName data=${dataLines.join('\\n')}',
+    );
+  }
+
+  void _logStreamParseError(FormatException error) {
+    if (!kDebugMode) return;
+    debugPrint('[SSE] stream parse error: ${error.message}');
+  }
 }
 
 class ChatbotStreamException implements Exception {
-  const ChatbotStreamException(this.message);
+  const ChatbotStreamException(this.message, {this.debugMessage = ''});
 
   final String message;
+  final String debugMessage;
 
   factory ChatbotStreamException.fromDio(DioException error) {
+    final userMessage = _userMessageFromDio(error);
     final request = error.requestOptions;
     final statusCode = error.response?.statusCode;
     final responseData = error.response?.data;
@@ -362,7 +408,65 @@ class ChatbotStreamException implements Exception {
       buffer.writeln('response=$responseData');
     }
 
-    return ChatbotStreamException(buffer.toString().trim());
+    return ChatbotStreamException(
+      userMessage,
+      debugMessage: buffer.toString().trim(),
+    );
+  }
+
+  static String _userMessageFromDio(DioException error) {
+    final data = error.response?.data;
+    if (data is Map<String, dynamic>) {
+      final message = _messageFromApiError(data);
+      if (message != null) return message;
+    }
+    if (data is String && data.trim().isNotEmpty) {
+      final decoded = _tryDecodeMap(data);
+      final message = decoded == null ? null : _messageFromApiError(decoded);
+      if (message != null) return message;
+    }
+    switch (error.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return '응답 시간이 초과되었습니다. 다시 시도해 주세요.';
+      case DioExceptionType.connectionError:
+        return '서버에 연결할 수 없습니다. 네트워크 상태를 확인해 주세요.';
+      case DioExceptionType.badResponse:
+        return '챗봇 서버 응답을 처리하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+      case DioExceptionType.cancel:
+        return '요청이 취소되었습니다.';
+      case DioExceptionType.badCertificate:
+      case DioExceptionType.unknown:
+        return '챗봇 연결 중 문제가 발생했습니다. 다시 시도해 주세요.';
+    }
+  }
+
+  static String? _messageFromApiError(Map<String, dynamic> data) {
+    final errorJson = data['error'];
+    if (errorJson is Map<String, dynamic>) {
+      final message = errorJson['message'];
+      if (message is String && message.trim().isNotEmpty) {
+        return message.trim();
+      }
+    }
+    if (errorJson is String && errorJson.trim().isNotEmpty) {
+      return errorJson.trim();
+    }
+    final message = data['message'];
+    if (message is String && message.trim().isNotEmpty) {
+      return message.trim();
+    }
+    return null;
+  }
+
+  static Map<String, dynamic>? _tryDecodeMap(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map<String, dynamic> ? decoded : null;
+    } on FormatException {
+      return null;
+    }
   }
 
   @override

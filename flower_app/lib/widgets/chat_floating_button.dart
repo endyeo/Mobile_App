@@ -148,10 +148,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
         _finishStream(requestId);
         break;
       case 'ERROR':
-        _handleStreamError(
-          requestId,
-          event.message.isEmpty ? '챗봇 처리 중 오류가 발생했습니다.' : event.message,
-        );
+        _handleServerError(requestId, event.message);
         break;
       default:
         if (event.message.isNotEmpty) {
@@ -160,13 +157,25 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     }
   }
 
+  void _handleServerError(String requestId, String message) {
+    if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
+    if (_finalAnswerReceived || _doneReceived) {
+      _finishStream(requestId);
+      return;
+    }
+    _replaceLastBotMessage(
+      message.trim().isEmpty ? '챗봇 처리 중 오류가 발생했습니다.' : message.trim(),
+    );
+    _finishStream(requestId);
+  }
+
   void _handleStreamError(String requestId, Object error) {
     if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
     if (_finalAnswerReceived || _doneReceived) {
       _finishStream(requestId);
       return;
     }
-    _replaceLastBotMessage('응답을 가져오지 못했습니다.');
+    _replaceLastBotMessage(_streamErrorMessage(error));
     _finishStream(requestId);
   }
 
@@ -174,7 +183,7 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
     if (!_isCurrentRequest(requestId, null) || _cancelledByUser) return;
     if (!_isSending || _doneReceived) return;
     if (!_finalAnswerReceived) {
-      _replaceLastBotMessage('응답을 마무리하지 못했습니다. 다시 시도해 주세요.');
+      _replaceLastBotMessage('연결이 예상보다 일찍 종료되었습니다. 다시 시도해 주세요.');
     }
     _finishStream(requestId);
   }
@@ -276,6 +285,15 @@ class _ChatFloatingButtonState extends State<ChatFloatingButton> {
       return '커뮤니티 정보를 확인했어요.';
     }
     return '필요한 정보를 확인했어요.';
+  }
+
+  String _streamErrorMessage(Object error) {
+    if (error is ChatbotStreamException) {
+      debugPrint('챗봇 스트림 오류: ${error.debugMessage}');
+      return error.message;
+    }
+    debugPrint('챗봇 스트림 오류: $error');
+    return '챗봇 연결 중 문제가 발생했습니다. 다시 시도해 주세요.';
   }
 
   Future<void> _listenAndSend() async {
