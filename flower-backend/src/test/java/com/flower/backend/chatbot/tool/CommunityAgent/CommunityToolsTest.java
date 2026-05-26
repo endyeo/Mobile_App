@@ -17,6 +17,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class CommunityToolsTest {
@@ -32,7 +33,7 @@ class CommunityToolsTest {
 
     @Test
     void latestPostsFallsBackToFeedWhenSpecializedQueryFails() {
-        when(postRepository.findLatestPosts(anyString(), any(), any(), any(Pageable.class)))
+        when(postRepository.findLatestPosts(anyString(), any(Pageable.class)))
                 .thenThrow(new RuntimeException("bad query"));
         when(postRepository.findFeed(any(Pageable.class)))
                 .thenReturn(List.of(
@@ -44,7 +45,7 @@ class CommunityToolsTest {
 
         assertThat(result.getStatus()).isEqualTo("SUCCESS");
         assertThat(result.getData()).containsEntry("queryFailed", true);
-        assertThat(result.getData()).containsEntry("periodFallbackUsed", false);
+        assertThat(result.getData()).doesNotContainKeys("dateFilter", "rangeStart", "rangeEnd", "periodFallbackUsed");
         assertThat((List<?>) result.getData().get("items")).hasSize(1);
         assertThat(((List<Map<String, Object>>) result.getData().get("items")).get(0))
                 .containsEntry("content", "장미 산책 후기");
@@ -52,7 +53,7 @@ class CommunityToolsTest {
 
     @Test
     void latestPostsFallbackMatchesAddress() {
-        when(postRepository.findLatestPosts(anyString(), any(), any(), any(Pageable.class)))
+        when(postRepository.findLatestPosts(anyString(), any(Pageable.class)))
                 .thenThrow(new RuntimeException("bad query"));
         when(postRepository.findFeed(any(Pageable.class)))
                 .thenReturn(List.of(
@@ -70,6 +71,40 @@ class CommunityToolsTest {
     }
 
     @Test
+    void latestPostsUsesNoPeriodRepositoryQuery() {
+        when(postRepository.findLatestPosts(anyString(), any(Pageable.class)))
+                .thenReturn(List.of(
+                        post(1L, "수국 이야기", "수국", "수국", 2, 0, LocalDateTime.now())
+                ));
+
+        ToolResult result = communityTools.getLatestPosts("", "today", 5, 2026);
+
+        assertThat(result.getStatus()).isEqualTo("SUCCESS");
+        assertThat((List<?>) result.getData().get("items")).hasSize(1);
+        assertThat(result.getData()).doesNotContainKeys("dateFilter", "rangeStart", "rangeEnd", "periodFallbackUsed");
+        verify(postRepository).findLatestPosts(anyString(), any(Pageable.class));
+    }
+
+    @Test
+    void popularPostsFallbackSortsByLikesCommentsAndCreatedAt() {
+        LocalDateTime now = LocalDateTime.now();
+        when(postRepository.findPopularPosts(anyString(), any(Pageable.class)))
+                .thenThrow(new RuntimeException("bad query"));
+        when(postRepository.findFeed(any(Pageable.class)))
+                .thenReturn(List.of(
+                        post(1L, "낮은 반응", "장미", "장미", 1, 0, now.minusHours(1)),
+                        post(2L, "댓글 많은 글", "수국", "수국", 5, 4, now.minusDays(1)),
+                        post(3L, "좋아요 많은 글", "튤립", "튤립", 8, 0, now.minusDays(2))
+                ));
+
+        ToolResult result = communityTools.getPopularPosts("", "this_week", 0, 0);
+
+        List<Map<String, Object>> items = (List<Map<String, Object>>) result.getData().get("items");
+        assertThat(items).extracting(item -> item.get("id"))
+                .containsExactly(3L, 2L, 1L);
+    }
+
+    @Test
     void searchPostsReturnsSuccessWithEmptyItemsWhenNoData() {
         when(postRepository.searchByKeyword(anyString(), any(Pageable.class)))
                 .thenReturn(List.of());
@@ -84,7 +119,7 @@ class CommunityToolsTest {
 
     @Test
     void popularPostsReturnsErrorWithDiagnosticsWhenFallbackAlsoFails() {
-        when(postRepository.findPopularPosts(anyString(), any(), any(), any(Pageable.class)))
+        when(postRepository.findPopularPosts(anyString(), any(Pageable.class)))
                 .thenThrow(new RuntimeException("bad popular query"));
         when(postRepository.findFeed(any(Pageable.class)))
                 .thenThrow(new RuntimeException("feed unavailable"));
@@ -93,7 +128,7 @@ class CommunityToolsTest {
 
         assertThat(result.getStatus()).isEqualTo("ERROR");
         assertThat(result.getData()).containsEntry("queryFailed", true);
-        assertThat(result.getData()).containsEntry("periodFallbackUsed", true);
+        assertThat(result.getData()).doesNotContainKey("periodFallbackUsed");
         assertThat(result.getData()).containsEntry("failureStage", "fallback_feed");
         assertThat(result.getData()).containsEntry("failureReason", "RuntimeException");
         assertThat((List<?>) result.getData().get("items")).isEmpty();

@@ -580,21 +580,26 @@ public class FestivalToolService {
     }
 
     private boolean shouldUseKeywordFallback(String keyword) {
-        String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
-        if (normalized.isBlank()) {
-            return false;
-        }
-        return GENERIC_FESTIVAL_KEYWORDS.stream()
-                .noneMatch(generic -> normalized.equals(generic.toLowerCase(Locale.ROOT)));
+        return !isGenericFestivalKeyword(keyword);
     }
 
     private boolean shouldApplyKeywordFilter(String keyword) {
+        return !isGenericFestivalKeyword(keyword);
+    }
+
+    private boolean isGenericFestivalKeyword(String keyword) {
         String normalized = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         if (normalized.isBlank()) {
-            return false;
+            return true;
         }
-        return GENERIC_FESTIVAL_KEYWORDS.stream()
-                .noneMatch(generic -> normalized.equals(generic.toLowerCase(Locale.ROOT)));
+        String compact = normalized.replaceAll("\\s+", "");
+        if (GENERIC_FESTIVAL_KEYWORDS.stream()
+                .map(generic -> generic.toLowerCase(Locale.ROOT).replaceAll("\\s+", ""))
+                .anyMatch(generic -> compact.equals(generic))) {
+            return true;
+        }
+        return List.of("꽃축제", "꽃행사", "꽃페스티벌", "flowerfestival", "flowerevent")
+                .contains(compact);
     }
 
     private String sanitizeKeyword(String keyword) {

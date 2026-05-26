@@ -218,7 +218,7 @@ public class ChatbotService {
         List<ToolResult> toolResults = new ArrayList<>();
         List<ChatAction> actions = new ArrayList<>();
         String keyword = plan.searchKeyword();
-        if (keyword == null || keyword.isBlank()) {
+        if ((keyword == null || keyword.isBlank()) && !isCommunityLatestOrPopularTask(plan)) {
             keyword = sanitizePlannerKeyword(extractKeyword(message));
         }
         int step = 1;
@@ -719,7 +719,7 @@ public class ChatbotService {
                             "커뮤니티 최신글 조회에 실패했습니다.",
                             "커뮤니티 최신글을 조회하는 중 오류가 발생했습니다.",
                             plan,
-                            () -> communityTools.getLatestPosts(keyword, plan.dateFilter(), plan.month(), plan.year()));
+                            () -> communityTools.getLatestPosts(keyword, "none", 0, 0));
                 }
                 case "popular_posts" -> {
                     sendStatus(streamSender, "SEARCH", "인기 커뮤니티 글을 확인하고 있어요.");
@@ -728,7 +728,7 @@ public class ChatbotService {
                             "커뮤니티 인기글 조회에 실패했습니다.",
                             "커뮤니티 인기글을 조회하는 중 오류가 발생했습니다.",
                             plan,
-                            () -> communityTools.getPopularPosts(keyword, plan.dateFilter(), plan.month(), plan.year()));
+                            () -> communityTools.getPopularPosts(keyword, "none", 0, 0));
                 }
                 default -> null;
             };
@@ -761,6 +761,12 @@ public class ChatbotService {
                 ? ", routeRequest=true, routeMode=" + normalizeRouteMode(plan.routeMode())
                 : "";
         return "domain=" + plan.domain() + ", task=" + plan.task() + dateFilter + month + year + nearby + route;
+    }
+
+    private boolean isCommunityLatestOrPopularTask(AgentPlan plan) {
+        return plan != null
+                && "community".equals(plan.domain())
+                && List.of("latest_posts", "popular_posts").contains(plan.task());
     }
 
     private ToolResult unsupportedToolResult(String message, AgentPlan plan) {
@@ -902,6 +908,9 @@ public class ChatbotService {
 
     private boolean wantsRouteRequest(String message) {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        if (wantsMap(message) && extractKeyword(message).isBlank()) {
+            return false;
+        }
         return containsAny(lower, "route", "directions", "길찾기", "가는 길", "가는 법", "까지 가");
     }
 
@@ -1012,6 +1021,7 @@ public class ChatbotService {
         if (!openAiApiKey.isBlank() && chatClient != null) {
             try {
                 RouteDecision routeDecision = createRouteDecision(message);
+                routeDecision = normalizeFestivalRouteDecision(message, routeDecision);
                 AgentPlan plan = planForRoute(message, routeDecision);
                 if (plan != null) {
                     return plan;
@@ -1021,6 +1031,28 @@ public class ChatbotService {
             }
         }
         return fallbackAgentPlan(message);
+    }
+
+    private RouteDecision normalizeFestivalRouteDecision(String message, RouteDecision routeDecision) {
+        if (routeDecision == null || !wantsFestival(message) || wantsUnsupportedFeature(message)) {
+            return routeDecision;
+        }
+        String flow = routeDecision.flow() == null ? "" : routeDecision.flow();
+        if (List.of("community_write", "community_read", "unsupported", "festival_information").contains(flow)) {
+            return routeDecision;
+        }
+        if (List.of("map_action", "app_navigation", "flower_information", "simple_chat", "clarification_needed").contains(flow)) {
+            return new RouteDecision(
+                    "festival_information",
+                    routeDecision.keyword(),
+                    routeDecision.contextMode(),
+                    routeDecision.historyPolicy(),
+                    routeDecision.referencedContext(),
+                    "축제/행사 요청은 축제 정보 흐름으로 보정",
+                    routeDecision.confidence(),
+                    routeDecision.source() + "+FestivalRouteGuard");
+        }
+        return routeDecision;
     }
 
     private RouteDecision createRouteDecision(String message) throws Exception {
@@ -1093,7 +1125,8 @@ public class ChatbotService {
                 - Writing a community post is community_write. Phrases like "글 써줘", "글 올릴래", "후기 작성", and "올리고 싶어" are community_write.
                 - Requests to auto-save, publish for the user, like, comment, edit, or delete posts are unsupported.
                 - Festival, event, or 행사 information is festival_information.
-                - Map, place, nearby, location, or route/directions requests are map_action.
+                - Map/place search, nearby, location, or route/directions requests are map_action.
+                - Simple map screen opening requests such as "지도 가줘", "지도 열어줘", and "꽃 지도 열어줘" are app_navigation.
                 - Opening an app screen without asking for information is app_navigation.
                 - Shop, purchase, quest, reservation, payment, private, or admin actions are unsupported.
                 - Use clarification_needed only when the message is too ambiguous to choose a flow.
@@ -1121,6 +1154,8 @@ public class ChatbotService {
                 JSON: {"flow":"community_write","keyword":"축제","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"후기 작성 화면 요청"}
                 User: 꽃 지도 열어줘
                 JSON: {"flow":"app_navigation","keyword":"","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"지도 화면 이동 요청"}
+                User: 지도 가줘
+                JSON: {"flow":"app_navigation","keyword":"","context_mode":"standalone","history_policy":"ignore","referenced_context":"none","confidence":"high","reason":"목적지 없는 지도 화면 이동 요청"}
                 User: 첫 번째 지도에서 보여줘
                 JSON: {"flow":"map_action","keyword":"","context_mode":"follow_up","history_policy":"use_last_result_only","referenced_context":"last_result","confidence":"medium","reason":"이전 결과의 첫 번째 항목을 지도에서 보려는 후속 요청"}
                 User: 그거 알려줘
@@ -1163,7 +1198,7 @@ public class ChatbotService {
                 - Community latest requests such as "최신 글", "최근 글", "새 글", or "새로 올라온 글" are community/latest_posts and must not use search_posts.
                 - Community popular requests such as "인기글", "좋아요 많은 글", "댓글 많은 글", "반응 좋은 글", or "많이 본 글" are community/popular_posts.
                 - For community/latest_posts and community/popular_posts, keyword is optional. Use keyword only when the user names a concrete topic like 장미, 수국, 벚꽃, or 라벤더. Whole-feed latest/popular requests and period-only requests must use keyword="".
-                - For community latest/popular period filters: "오늘" => today, "이번 주" => this_week, "이번 달" or "이달" => this_month, "3월" => month with month=3. If the user gives no period, use none.
+                - Community latest/popular does not support period filtering. If the user says "오늘", "이번 주", "이번 달", or "3월" for community posts, still set date_filter="none", month=0, and year=0.
                 - If festival, event, or 행사 is the main topic, choose festival_info instead of flower_info.
                 - For festival_info, set date_filter from the user's time expression: "이번 주" => this_week, "이번 달" or "이달" => this_month, "오늘" => today, "다가오는" or no explicit period => upcoming.
                 - For map_place, set nearby=true only when the user asks "근처", "주변", "near", or "nearby".
@@ -1171,6 +1206,8 @@ public class ChatbotService {
                 - Flower place requests such as 명소, 위치, 지도, 가는 길, 볼 수 있는 곳 are map_place/place_search.
                 - A map request with a specific flower/place keyword such as "벚꽃 지도에서 보여줘" or "수국 위치 지도 열어줘" is map_place/place_search, not app_navigation/open_map.
                 - Route requests such as "가는 길", "길찾기", "까지 가는 법" are map_place/place_search with route_request=true and needs_screen=true.
+                - "지도 가줘", "지도 가", "지도 열어줘" without a destination is app_navigation/open_map, not a route request.
+                - If a route request has no concrete destination keyword, do not create route_request; open the map screen or ask for a destination.
                 - If the user names a route mode, set route_mode to walk, car, or transit. If no mode is named, set route_mode to none.
                 - Do not set route_request=true for "지도에서 보여줘" unless the user asks for route/directions.
                 - Festival booking, reservation, ticket purchase, or payment requests are unsupported/private_or_admin.
@@ -1193,19 +1230,19 @@ public class ChatbotService {
                 User: 최근 커뮤니티 글 보여줘
                 JSON: {"domain":"community","task":"latest_posts","keyword":"","date_filter":"none","needs_screen":true,"confidence":"high","reason":"최근 커뮤니티 글 화면 조회"}
                 User: 오늘 올라온 글 있어?
-                JSON: {"domain":"community","task":"latest_posts","keyword":"","date_filter":"today","needs_screen":false,"confidence":"high","reason":"오늘 올라온 커뮤니티 글 조회"}
+                JSON: {"domain":"community","task":"latest_posts","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"최신 커뮤니티 글 조회"}
                 User: 수국 최신 후기 보여줘
                 JSON: {"domain":"community","task":"latest_posts","keyword":"수국","date_filter":"none","needs_screen":true,"confidence":"high","reason":"수국 최신 후기 조회"}
                 User: 인기글 알려줘
                 JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"인기 커뮤니티 글 조회"}
                 User: 이번 주 인기글 보여줘
-                JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"this_week","needs_screen":true,"confidence":"high","reason":"이번 주 인기글 조회"}
+                JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","needs_screen":true,"confidence":"high","reason":"인기 커뮤니티 글 조회"}
                 User: 좋아요 많은 글 뭐 있어?
                 JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"좋아요 기준 인기글 조회"}
                 User: 댓글 많은 글 알려줘
                 JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"댓글 기준 인기글 조회"}
                 User: 3월 인기글 보여줘
-                JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"month","month":3,"needs_screen":true,"confidence":"high","reason":"3월 인기글 조회"}
+                JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","month":0,"year":0,"needs_screen":true,"confidence":"high","reason":"인기 커뮤니티 글 조회"}
                 User: 커뮤니티 열어줘
                 JSON: {"domain":"community","task":"open_community","keyword":"","needs_screen":true,"confidence":"high","reason":"커뮤니티 화면 이동"}
                 User: 꽃 후기 보고 싶어
@@ -1252,6 +1289,8 @@ public class ChatbotService {
                 JSON: {"domain":"map_place","task":"place_search","keyword":"벚꽃","nearby":false,"route_request":true,"route_mode":"transit","needs_screen":true,"confidence":"high","reason":"대중교통 길찾기 요청"}
                 User: 꽃 지도 열어줘
                 JSON: {"domain":"app_navigation","task":"open_map","keyword":"","nearby":false,"needs_screen":true,"confidence":"high","reason":"지도 화면 이동"}
+                User: 지도 가줘
+                JSON: {"domain":"app_navigation","task":"open_map","keyword":"","nearby":false,"route_request":false,"route_mode":"none","needs_screen":true,"confidence":"high","reason":"목적지 없는 지도 화면 이동"}
                 User: 장미 정보 알려줘
                 JSON: {"domain":"flower_info","task":"basic_info","keyword":"장미","nearby":false,"needs_screen":false,"confidence":"high","reason":"꽃 정보 질문"}
                 User: 장미 도감에서 찾아줘
@@ -1488,11 +1527,15 @@ public class ChatbotService {
 
     private AgentPlan toAgentPlan(PlannerDecision decision, RouteDecision routeDecision) {
         String keyword = sanitizePlannerKeyword(decision.keyword());
+        String dateFilter = decision.dateFilter();
+        int month = decision.month();
+        int year = decision.year();
         if ("community".equals(decision.domain())
                 && List.of("latest_posts", "popular_posts").contains(decision.task())) {
-            keyword = sanitizeCommunityReadKeyword(
-                    keyword,
-                    new CommunityPeriod(decision.dateFilter(), decision.month(), decision.year()));
+            keyword = sanitizeCommunityReadKeyword(keyword);
+            dateFilter = "none";
+            month = 0;
+            year = 0;
         }
         List<RouteIntent> intents = new ArrayList<>();
         List<ChatAction> actions = new ArrayList<>();
@@ -1594,9 +1637,9 @@ public class ChatbotService {
                 decision.source(),
                 decision.domain(),
                 decision.task(),
-                decision.dateFilter(),
-                decision.month(),
-                decision.year(),
+                dateFilter,
+                month,
+                year,
                 decision.nearby(),
                 decision.routeRequest(),
                 decision.routeMode(),
@@ -1700,6 +1743,9 @@ public class ChatbotService {
             return fallbackRoute("festival_information", keyword, "꽃 축제 정보 요청", "high", message);
         }
         if (wantsMap(message)) {
+            if (keyword.isBlank() && !wantsNearby(message) && !wantsRouteRequest(message)) {
+                return fallbackRoute("app_navigation", keyword, "목적지 없는 지도 화면 이동 요청", "high", message);
+            }
             return fallbackRoute("map_action", keyword, "지도 또는 길찾기 요청", "high", message);
         }
         if (wantsFlowerBookOpen(message) || wantsWalk(message) || wantsSaved(message)) {
@@ -2006,8 +2052,10 @@ public class ChatbotService {
     }
 
     private AgentPlan fallbackCommunityReadPlan(String message, String keyword, String task, RouteDecision routeDecision) {
-        CommunityPeriod period = resolveCommunityPeriod(message);
-        String effectiveKeyword = sanitizeCommunityReadKeyword(keyword, period);
+        String effectiveKeyword = sanitizeCommunityReadKeyword(keyword);
+        if (effectiveKeyword.isBlank()) {
+            effectiveKeyword = extractCommunityReadKeyword(message);
+        }
         boolean needsScreen = containsAny(message == null ? "" : message.toLowerCase(Locale.ROOT),
                 "보여줘", "보고 싶", "볼래", "열어", "show", "open");
         List<ChatAction> actions = new ArrayList<>();
@@ -2022,9 +2070,9 @@ public class ChatbotService {
                 "FallbackPlanner",
                 "community",
                 task,
-                period.dateFilter(),
-                period.month(),
-                period.year(),
+                "none",
+                0,
+                0,
                 false,
                 false,
                 "none",
@@ -2038,42 +2086,39 @@ public class ChatbotService {
         );
     }
 
-    private String sanitizeCommunityReadKeyword(String keyword, CommunityPeriod period) {
+    private String sanitizeCommunityReadKeyword(String keyword) {
         String cleaned = sanitizePlannerKeyword(keyword).trim();
         if (cleaned.isBlank() || cleaned.length() > 20 || cleaned.matches("\\d+")) {
             return "";
         }
-        if (cleaned.matches(".*\\s+.*")) {
-            return "";
-        }
-        if (looksLikeCommunityReadControlKeyword(cleaned, period)) {
+        cleaned = removeCommunityReadControlWords(cleaned);
+        if (cleaned.isBlank() || cleaned.length() > 20 || cleaned.matches("\\d+")) {
             return "";
         }
         return cleaned;
     }
 
-    private boolean looksLikeCommunityReadControlKeyword(String keyword, CommunityPeriod period) {
-        String compact = keyword.replaceAll("\\s+", "");
-        if (compact.isBlank()) {
-            return true;
-        }
-        if (compact.matches("\\d+월.*") || compact.matches("\\d+주.*")) {
-            return true;
-        }
+    private String extractCommunityReadKeyword(String message) {
+        String cleaned = sanitizePlannerKeyword(extractKeyword(message));
+        return sanitizeCommunityReadKeyword(cleaned);
+    }
+
+    private String removeCommunityReadControlWords(String keyword) {
+        String cleaned = keyword == null ? "" : keyword;
         String[] controlWords = {
                 "최신", "최신글", "최근", "최근글", "새글", "인기", "인기글",
-                "오늘", "이번주", "이번달", "이달", "조회", "검색", "보기", "보여줘", "알려줘", "소개"
+                "오늘", "이번", "이번주", "이번달", "이달", "조회", "검색", "보기", "보여줘", "알려줘", "소개",
+                "올라온", "주", "월", "있어", "있나요", "있니", "뭐", "무엇", "어떤", "글",
+                "posts", "post", "latest", "recent", "popular"
         };
         for (String word : controlWords) {
-            if (compact.equals(word)) {
-                return true;
-            }
+            cleaned = cleaned.replace(word, " ");
         }
-        if (!"none".equals(period.dateFilter())
-                && containsAny(compact, "최신", "최근", "인기", "오늘", "이번", "월", "주")) {
-            return true;
-        }
-        return false;
+        cleaned = cleaned.replaceAll("\\d+\\s*월", " ")
+                .replaceAll("\\d+\\s*주", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return cleaned.matches(".*\\s+.*") ? "" : cleaned;
     }
 
     private CommunityPeriod resolveCommunityPeriod(String message) {
@@ -2545,6 +2590,8 @@ public class ChatbotService {
                 꽃 축제 질문은 festival.searchFlowerFestivals 결과만 근거로 사용하고, Tour API 페이지나 디버그 값은 답변 근거로 사용하지 마세요.
                 축제는 DB 조회 계약 기준으로 시작일과 종료일이 모두 확인된 항목만 안내하세요. 시작일 또는 종료일 중 하나라도 없으면 추천하거나 진행 중인 축제로 표현하지 마세요.
                 커뮤니티 최신글/인기글은 community.getLatestPosts 또는 community.getPopularPosts 결과만 근거로 요약하세요.
+                커뮤니티 최신글/인기글에는 기간 필터를 적용하지 않으므로 오늘 기준, 이번 주 기준, 특정 월 기준이라고 말하지 마세요.
+                사용자가 기간을 말했더라도 전체 커뮤니티 기준 최신글 또는 인기글로 확인했다고만 짧게 안내하세요.
                 "많이 본 글"처럼 조회수 기준을 묻더라도 조회수 필드가 없으므로 좋아요와 댓글 기준 인기글이라고 말하세요.
                 커뮤니티 게시글에는 제목 필드가 없습니다. 제목을 지어내거나 제목 기준으로 요약하지 말고 본문, 꽃 이름, 식물명, 주소, 작성일, 좋아요, 댓글만 근거로 사용하세요.
                 장소/지도 데이터는 꽃 정보보다 뒤에 보조로만 설명하세요. 장소 결과가 없더라도 꽃 정보가 있으면 정보부터 답하세요.
@@ -3234,17 +3281,8 @@ public class ChatbotService {
             if (!List.of("community.getLatestPosts", "community.getPopularPosts").contains(tool)) {
                 return;
             }
-            Object dateFilter = data.get("dateFilter");
-            Object rangeStart = data.get("rangeStart");
-            Object rangeEnd = data.get("rangeEnd");
             Object rankingBasis = data.get("rankingBasis");
-            context.append("  - 조회 기준=").append(dateFilter == null ? "none" : dateFilter);
-            if (rangeStart != null && !rangeStart.toString().isBlank()) {
-                context.append(", 시작=").append(rangeStart);
-            }
-            if (rangeEnd != null && !rangeEnd.toString().isBlank()) {
-                context.append(", 종료=").append(rangeEnd);
-            }
+            context.append("  - 조회 기준=전체 커뮤니티");
             if (rankingBasis != null && !rankingBasis.toString().isBlank()) {
                 context.append(", 정렬=").append(rankingBasis);
             }

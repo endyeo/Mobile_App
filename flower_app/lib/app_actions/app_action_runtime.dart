@@ -33,6 +33,15 @@ class AppActionRuntime {
     try {
       final mapActions = actions.where(_isMapAction).toList();
       if (mapActions.isNotEmpty) {
+        final activeMap = KakaoMapScreenState.activeState;
+        if (_isInsideMapScreen(context) && activeMap != null) {
+          final effectiveActions = mapActions
+              .where((action) => action.type != 'NAVIGATE')
+              .toList();
+          if (effectiveActions.isEmpty) return;
+          await activeMap.applyChatActions(effectiveActions);
+          return;
+        }
         await _push(context, KakaoMapScreen(initialActions: mapActions));
         return;
       }
@@ -81,6 +90,10 @@ class AppActionRuntime {
     }
 
     await Navigator.push(context, MaterialPageRoute(builder: (_) => screen));
+  }
+
+  static bool _isInsideMapScreen(BuildContext context) {
+    return context.findAncestorWidgetOfExactType<KakaoMapScreen>() != null;
   }
 
   static bool _isMapAction(ChatAction action) {
