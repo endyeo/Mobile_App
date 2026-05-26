@@ -4,6 +4,10 @@
 # Firebase 설정 (API 키 포함)
 android/app/google-services.json
 
+# 릴리스 keystore — 절대 커밋 금지 (팀원과는 안전 채널로 공유)
+*.jks
+*.keystore
+
 # Miscellaneous
 *.class
 *.log

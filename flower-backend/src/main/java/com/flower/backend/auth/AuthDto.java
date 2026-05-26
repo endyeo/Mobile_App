@@ -9,15 +9,7 @@ import lombok.Builder;
 public class AuthDto {
 
     // 일반 회원가입/로그인 제거됨 (소셜 전용)
-
-    // ─── 소셜(OAuth) 로그인 요청 ─────────────────────────────────────────
-    @Getter
-    public static class OAuthRequest {
-        @NotBlank
-        private String authCode;      // 소셜 서비스에서 넘겨준 인증 코드
-        @NotBlank
-        private String redirectUri;   // 앱에서 사용한 리다이렉트 주소
-    }
+    // OAuthRequest(code flow)는 카카오 SDK 흐름 전환으로 제거됨 — AuthController.oauthKakaoToken 참고
 
     // ─── 소셜 신규 가입 시 프로필 설정 요청 ──────────────────────────────
     @Getter

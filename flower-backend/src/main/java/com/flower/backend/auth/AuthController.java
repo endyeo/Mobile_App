@@ -36,12 +36,6 @@ public class AuthController {
                 .body(ApiResponse.ok(authService.setupProfile(request)));
     }
 
-    @PostMapping("/oauth/kakao")
-    public ResponseEntity<ApiResponse<?>> oauthKakao(@Valid @RequestBody OAuthRequest request) {
-        return ResponseEntity.ok(ApiResponse.ok(
-                oAuthService.processKakao(request.getAuthCode(), request.getRedirectUri())));
-    }
-
     /**
      * 개발자용 즉시 로그인.
      * 폰별 고유 devId를 받아 그 ID로 사용자 식별(provider=DEV).

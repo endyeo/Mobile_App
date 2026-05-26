@@ -9,31 +9,6 @@ import 'api_client.dart';
 class AuthApiService {
   static const String _basePath = '/api/v1/auth';
 
-  // 모바일 OAuth 콜백 딥링크 스킴
-  static const String callbackUrlScheme = 'ourt';
-  static const String callbackUrl = 'https://ourt.kro.kr/oauth/callback';
-
-  // ─── 카카오 인증 URL 생성 ───────────────────────────────────
-  static String getKakaoAuthUrl(String clientId) {
-    return 'https://kauth.kakao.com/oauth/authorize'
-        '?client_id=$clientId'
-        '&redirect_uri=${Uri.encodeComponent(callbackUrl)}'
-        '&response_type=code';
-  }
-
-  // ─── auth_code를 백엔드에 전송 ─────────────────────────────
-
-  static Future<Map<String, dynamic>> sendAuthCode({
-    required String provider,
-    required String authCode,
-  }) async {
-    final Response<dynamic> response = await ApiClient.dio.post(
-      '$_basePath/oauth/$provider',
-      data: <String, dynamic>{'authCode': authCode, 'redirectUri': callbackUrl},
-    );
-    return (response.data as Map).cast<String, dynamic>();
-  }
-
   /// 카카오 SDK가 발급받은 access token으로 백엔드 로그인.
   /// code flow보다 카카오톡 SSO에 안정적.
   static Future<Map<String, dynamic>> sendKakaoAccessToken(

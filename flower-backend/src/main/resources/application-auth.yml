@@ -1,7 +1,5 @@
-oauth:
-  kakao:
-    client-id: ${KAKAO_CLIENT_ID}
-    client-secret: ${KAKAO_CLIENT_SECRET}
+# 카카오 OAuth: SDK access token 흐름으로 전환 — client-id/secret은 더 이상 서버에서 필요 없음.
+# 앱이 직접 SDK로 access token을 받아 서버에 보내면, 서버는 그 토큰으로 카카오 user-info만 조회.
 
 jwt:
   secret: ${JWT_SECRET}

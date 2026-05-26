@@ -1,53 +1,34 @@
 // [기능 ID: AUTH-02,04] [명세 근거: PRD §4.0 / API Spec §2.5]
 package com.flower.backend.auth;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Getter;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestTemplate;
 
 /**
  * 카카오 OAuth 서버와의 실제 HTTP 통신을 담당하는 서비스.
+ * SDK가 발급한 access token으로 사용자 정보를 조회한다.
  */
 @Slf4j
 @Service
 public class OAuthService {
 
-    private final OAuthProperties oAuthProperties;
     private final AuthService authService;
     private final RestTemplate restTemplate;
 
     // RestTemplate을 생성자로 주입받아 테스트 시 MockRestServiceServer 연결 가능
-    public OAuthService(OAuthProperties oAuthProperties, AuthService authService, RestTemplate restTemplate) {
-        this.oAuthProperties = oAuthProperties;
+    public OAuthService(AuthService authService, RestTemplate restTemplate) {
         this.authService = authService;
         this.restTemplate = restTemplate;
     }
 
     // ─── 카카오 OAuth 처리 ───────────────────────────────────────────────
 
-    public Object processKakao(String authCode, String redirectUri) {
-        String kakaoAccessToken = getKakaoAccessToken(authCode, redirectUri);
-        KakaoUserInfo userInfo = getKakaoUserInfo(kakaoAccessToken);
-
-        log.info("[OAuth] 카카오 로그인 시도 (code flow) - providerId: {}", userInfo.getId());
-
-        String nickname = (userInfo.getProperties() != null) ? userInfo.getProperties().getNickname() : "사용자";
-        return authService.processOAuth(
-            nickname,
-            User.Provider.KAKAO,
-            String.valueOf(userInfo.getId())
-        );
-    }
-
     /**
      * 카카오 SDK가 직접 받은 access token으로 사용자 식별 + JWT 발급.
-     * code flow보다 더 안정적 (카카오톡 SSO 흐름 SDK가 처리).
+     * (구 code flow 제거됨 — 카카오톡 SSO를 안정적으로 처리하려면 SDK 흐름 사용)
      */
     public Object processKakaoAccessToken(String kakaoAccessToken) {
         KakaoUserInfo userInfo = getKakaoUserInfo(kakaoAccessToken);
@@ -60,36 +41,6 @@ public class OAuthService {
             User.Provider.KAKAO,
             String.valueOf(userInfo.getId())
         );
-    }
-
-    private String getKakaoAccessToken(String authCode, String redirectUri) {
-        String tokenUrl = "https://kauth.kakao.com/oauth/token";
-
-        MultiValueMap<String, String> params = new LinkedMultiValueMap<>();
-        params.add("grant_type", "authorization_code");
-        params.add("client_id", oAuthProperties.getKakao().getClientId());
-        params.add("client_secret", oAuthProperties.getKakao().getClientSecret());
-        params.add("redirect_uri", redirectUri);
-        params.add("code", authCode);
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-        try {
-            ResponseEntity<KakaoTokenResponse> response = restTemplate.postForEntity(
-                tokenUrl, new HttpEntity<>(params, headers), KakaoTokenResponse.class
-            );
-
-            if (response.getBody() == null || response.getBody().getAccessToken() == null) {
-                throw new AuthException("INVALID_OAUTH_CODE", "카카오 토큰 발급에 실패했습니다.");
-            }
-            return response.getBody().getAccessToken();
-        } catch (AuthException e) {
-            throw e;
-        } catch (Exception e) {
-            log.error("[OAuth] 카카오 토큰 교환 실패 - redirectUri: {}, error: {}", redirectUri, e.getMessage());
-            throw new AuthException("INVALID_OAUTH_CODE", "카카오 인증 실패: " + e.getMessage());
-        }
     }
 
     private KakaoUserInfo getKakaoUserInfo(String accessToken) {
@@ -109,12 +60,6 @@ public class OAuthService {
     }
 
     // ─── 내부 응답 매핑용 DTO ────────────────────────────────────────────
-
-    @Getter
-    private static class KakaoTokenResponse {
-        @JsonProperty("access_token")
-        private String accessToken;
-    }
 
     @Getter
     private static class KakaoUserInfo {

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.client.MockRestServiceServer;
@@ -18,11 +19,11 @@ import static org.springframework.test.web.client.match.MockRestRequestMatchers.
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
 /**
- * OAuthService 단위 테스트
- * - MockRestServiceServer: 실제 HTTP 요청 없이 가짜 카카오 서버 응답을 만들어 테스트
+ * OAuthService 단위 테스트 (SDK access token 흐름).
+ * 앱이 직접 카카오 SDK로 받은 access token을 백엔드에 전달 → 백엔드는 user-info만 조회.
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("OAuthService 단위 테스트 (Kakao)")
+@DisplayName("OAuthService 단위 테스트 (Kakao SDK token)")
 class OAuthServiceTest {
 
     private OAuthService oAuthService;
@@ -31,35 +32,19 @@ class OAuthServiceTest {
     @Mock
     private AuthService authService;
 
-    @Mock
-    private OAuthProperties oAuthProperties;
-
-    @Mock
-    private OAuthProperties.Kakao kakaoProps;
-
     @BeforeEach
     void setUp() {
         RestTemplate restTemplate = new RestTemplate();
         mockServer = MockRestServiceServer.createServer(restTemplate);
-
-        oAuthService = new OAuthService(oAuthProperties, authService, restTemplate);
-
-        given(oAuthProperties.getKakao()).willReturn(kakaoProps);
-        given(kakaoProps.getClientId()).willReturn("test-kakao-client-id");
-        given(kakaoProps.getClientSecret()).willReturn("test-kakao-secret");
+        oAuthService = new OAuthService(authService, restTemplate);
     }
 
     @Test
-    @DisplayName("카카오 OAuth - 기존 회원이면 로그인 토큰 즉시 반환")
+    @DisplayName("카카오 SDK 토큰 - 기존 회원이면 로그인 토큰 즉시 반환")
     void kakao_existingUser_returnsLoginResponse() {
-        mockServer.expect(requestTo("https://kauth.kakao.com/oauth/token"))
-            .andExpect(method(HttpMethod.POST))
-            .andRespond(withSuccess(
-                "{\"access_token\":\"kakao-access-token-abc\"}",
-                MediaType.APPLICATION_JSON));
-
         mockServer.expect(requestTo("https://kapi.kakao.com/v2/user/me"))
             .andExpect(method(HttpMethod.GET))
+            .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer kakao-access-token-abc"))
             .andRespond(withSuccess(
                 "{\"id\":123456,\"properties\":{\"nickname\":\"꽃사랑\"}}",
                 MediaType.APPLICATION_JSON));
@@ -73,7 +58,7 @@ class OAuthServiceTest {
         given(authService.processOAuth("꽃사랑", User.Provider.KAKAO, "123456"))
             .willReturn(loginResponse);
 
-        Object result = oAuthService.processKakao("test-auth-code", "http://localhost/redirect");
+        Object result = oAuthService.processKakaoAccessToken("kakao-access-token-abc");
 
         assertThat(result).isInstanceOf(AuthDto.LoginResponse.class);
         AuthDto.LoginResponse response = (AuthDto.LoginResponse) result;
@@ -83,14 +68,8 @@ class OAuthServiceTest {
     }
 
     @Test
-    @DisplayName("카카오 OAuth - 신규 회원이면 프로필 설정 안내(tempToken 반환)")
+    @DisplayName("카카오 SDK 토큰 - 신규 회원이면 프로필 설정 안내(tempToken 반환)")
     void kakao_newUser_returnsTempToken() {
-        mockServer.expect(requestTo("https://kauth.kakao.com/oauth/token"))
-            .andExpect(method(HttpMethod.POST))
-            .andRespond(withSuccess(
-                "{\"access_token\":\"kakao-access-token-new\"}",
-                MediaType.APPLICATION_JSON));
-
         mockServer.expect(requestTo("https://kapi.kakao.com/v2/user/me"))
             .andExpect(method(HttpMethod.GET))
             .andRespond(withSuccess(
@@ -105,28 +84,13 @@ class OAuthServiceTest {
         given(authService.processOAuth("신입", User.Provider.KAKAO, "999999"))
             .willReturn(newUserResponse);
 
-        Object result = oAuthService.processKakao("test-auth-code", "http://localhost/redirect");
+        Object result = oAuthService.processKakaoAccessToken("kakao-access-token-new");
 
         assertThat(result).isInstanceOf(AuthDto.OAuthNewUserResponse.class);
         AuthDto.OAuthNewUserResponse response = (AuthDto.OAuthNewUserResponse) result;
         assertThat(response.isNewUser()).isTrue();
         assertThat(response.getTempToken()).isEqualTo("temp-kakao-token");
         assertThat(response.getProvider()).isEqualTo("KAKAO");
-        mockServer.verify();
-    }
-
-    @Test
-    @DisplayName("카카오 OAuth - 토큰 발급 실패 시 INVALID_OAUTH_CODE 예외")
-    void kakao_invalidAuthCode_throwsException() {
-        mockServer.expect(requestTo("https://kauth.kakao.com/oauth/token"))
-            .andExpect(method(HttpMethod.POST))
-            .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
-
-        assertThatThrownBy(() ->
-            oAuthService.processKakao("bad-code", "http://localhost/redirect"))
-            .isInstanceOf(AuthException.class)
-            .hasFieldOrPropertyWithValue("errorCode", "INVALID_OAUTH_CODE");
-
         mockServer.verify();
     }
 }
