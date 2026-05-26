@@ -6,14 +6,6 @@ import com.flower.backend.chatbot.tool.ChatbotActionContext;
 import com.flower.backend.community.CommunityPost;
 import com.flower.backend.community.CommunityPostRepository;
 import java.util.Comparator;
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.time.Year;
-import java.time.YearMonth;
-import java.time.ZoneId;
-import java.time.temporal.TemporalAdjusters;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -31,7 +23,6 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CommunityTools {
 
-    private static final ZoneId KOREA_ZONE = ZoneId.of("Asia/Seoul");
     private static final int FALLBACK_SCAN_LIMIT = 500;
     private static final int RESULT_LIMIT = 5;
     private static final Comparator<CommunityPost> LATEST_ORDER =
@@ -80,38 +71,38 @@ public class CommunityTools {
         }
     }
 
-    // KO: 검색어와 기간 조건에 맞는 최신 커뮤니티 게시글을 조회합니다.
-    @Tool(description = "Get latest FLOWER community posts, optionally filtered by keyword and period.")
+    // KO: 검색어 조건에 맞는 최신 커뮤니티 게시글을 전체 기간 기준으로 조회합니다.
+    @Tool(description = "Get latest FLOWER community posts, optionally filtered by keyword.")
     @Transactional(readOnly = true)
     public ToolResult getLatestPosts(
             // KO: 선택 검색어입니다. 전체 최신글 조회는 빈 문자열을 전달합니다.
             @ToolParam(description = "Optional keyword for latest community posts.") String query,
-            // KO: today, this_week, this_month, month, none 중 하나입니다.
-            @ToolParam(description = "Period filter: today, this_week, this_month, month, none.") String dateFilter,
-            // KO: dateFilter=month일 때 사용할 월입니다. 없으면 0입니다.
-            @ToolParam(description = "Month number when dateFilter is month. Use 0 if absent.") int month,
-            // KO: dateFilter=month일 때 사용할 연도입니다. 없으면 0입니다.
-            @ToolParam(description = "Year when dateFilter is month. Use 0 if absent.") int year
+            // KO: 호환성 유지용 입력입니다. 커뮤니티 최신글은 기간 필터를 적용하지 않습니다.
+            @ToolParam(description = "Ignored. Community latest posts are not filtered by period.") String dateFilter,
+            // KO: 호환성 유지용 입력입니다. 커뮤니티 최신글은 월 필터를 적용하지 않습니다.
+            @ToolParam(description = "Ignored. Community latest posts are not filtered by month.") int month,
+            // KO: 호환성 유지용 입력입니다. 커뮤니티 최신글은 연도 필터를 적용하지 않습니다.
+            @ToolParam(description = "Ignored. Community latest posts are not filtered by year.") int year
     ) {
         actionContext.incrementToolCount("community.getLatestPosts");
-        return readPosts("community.getLatestPosts", "최신", query, dateFilter, month, year);
+        return readPosts("community.getLatestPosts", "최신", query);
     }
 
-    // KO: 검색어와 기간 조건에 맞는 인기 커뮤니티 게시글을 조회합니다.
+    // KO: 검색어 조건에 맞는 인기 커뮤니티 게시글을 전체 기간 기준으로 조회합니다.
     @Tool(description = "Get popular FLOWER community posts by likes, comments, and recency.")
     @Transactional(readOnly = true)
     public ToolResult getPopularPosts(
             // KO: 선택 검색어입니다. 전체 인기글 조회는 빈 문자열을 전달합니다.
             @ToolParam(description = "Optional keyword for popular community posts.") String query,
-            // KO: today, this_week, this_month, month, none 중 하나입니다.
-            @ToolParam(description = "Period filter: today, this_week, this_month, month, none.") String dateFilter,
-            // KO: dateFilter=month일 때 사용할 월입니다. 없으면 0입니다.
-            @ToolParam(description = "Month number when dateFilter is month. Use 0 if absent.") int month,
-            // KO: dateFilter=month일 때 사용할 연도입니다. 없으면 0입니다.
-            @ToolParam(description = "Year when dateFilter is month. Use 0 if absent.") int year
+            // KO: 호환성 유지용 입력입니다. 커뮤니티 인기글은 기간 필터를 적용하지 않습니다.
+            @ToolParam(description = "Ignored. Community popular posts are not filtered by period.") String dateFilter,
+            // KO: 호환성 유지용 입력입니다. 커뮤니티 인기글은 월 필터를 적용하지 않습니다.
+            @ToolParam(description = "Ignored. Community popular posts are not filtered by month.") int month,
+            // KO: 호환성 유지용 입력입니다. 커뮤니티 인기글은 연도 필터를 적용하지 않습니다.
+            @ToolParam(description = "Ignored. Community popular posts are not filtered by year.") int year
     ) {
         actionContext.incrementToolCount("community.getPopularPosts");
-        return readPosts("community.getPopularPosts", "인기", query, dateFilter, month, year);
+        return readPosts("community.getPopularPosts", "인기", query);
     }
 
     // KO: 커뮤니티 화면을 여는 앱 내부 액션을 준비합니다.
@@ -178,42 +169,33 @@ public class CommunityTools {
     private ToolResult readPosts(
             String toolName,
             String label,
-            String query,
-            String dateFilter,
-            int month,
-            int year
+            String query
     ) {
         String sanitized = sanitizeKeyword(query, 100);
-        PeriodRange range = resolvePeriod(dateFilter, month, year);
-        boolean periodFilterRequested = range.from() != null || range.to() != null;
 
         try {
             List<CommunityPost> results = "community.getPopularPosts".equals(toolName)
-                    ? postRepository.findPopularPosts(sanitized, range.from(), range.to(), PageRequest.of(0, RESULT_LIMIT))
-                    : postRepository.findLatestPosts(sanitized, range.from(), range.to(), PageRequest.of(0, RESULT_LIMIT));
+                    ? postRepository.findPopularPosts(sanitized, PageRequest.of(0, RESULT_LIMIT))
+                    : postRepository.findLatestPosts(sanitized, PageRequest.of(0, RESULT_LIMIT));
 
-            return successResult(toolName, label, sanitized, range, results, false, false);
+            return successResult(toolName, label, sanitized, results, false);
         } catch (Exception primaryFailure) {
             log.warn("[Tool:{}] 전용 조회 실패. 안정 경로로 재시도합니다.", toolName, primaryFailure);
             boolean queryFailed = true;
-            boolean periodFallbackUsed = periodFilterRequested;
             try {
                 List<CommunityPost> fallbackSource = postRepository.findFeed(PageRequest.of(0, FALLBACK_SCAN_LIMIT));
                 List<CommunityPost> fallbackResults = fallbackSource.stream()
                         .filter(post -> matchesKeyword(post, sanitized))
-                        .filter(post -> withinRange(post, range))
                         .sorted(sortOrder(toolName))
                         .limit(RESULT_LIMIT)
                         .toList();
 
-                return successResult(toolName, label, sanitized, range, fallbackResults, periodFallbackUsed, queryFailed);
+                return successResult(toolName, label, sanitized, fallbackResults, queryFailed);
             } catch (Exception fallbackFailure) {
                 log.error("[Tool:{}] 커뮤니티 {}글 조회 실패", toolName, label, fallbackFailure);
                 Map<String, Object> data = diagnosticData(
                         toolName,
                         sanitized,
-                        range,
-                        periodFallbackUsed,
                         queryFailed,
                         List.of());
                 data.put("failureStage", "fallback_feed");
@@ -233,35 +215,27 @@ public class CommunityTools {
             String toolName,
             String label,
             String sanitized,
-            PeriodRange range,
             List<CommunityPost> results,
-            boolean periodFallbackUsed,
             boolean queryFailed
     ) {
         return ToolResult.builder()
                 .tool(toolName)
                 .status("SUCCESS")
-                .summary("'" + displayKeyword(sanitized) + "' " + range.label() + " " + label
+                .summary("'" + displayKeyword(sanitized) + "' 전체 기간 " + label
                         + " 커뮤니티 글 " + results.size() + "건을 찾았습니다.")
-                .data(diagnosticData(toolName, sanitized, range, periodFallbackUsed, queryFailed, results))
+                .data(diagnosticData(toolName, sanitized, queryFailed, results))
                 .build();
     }
 
     private Map<String, Object> diagnosticData(
             String toolName,
             String sanitized,
-            PeriodRange range,
-            boolean periodFallbackUsed,
             boolean queryFailed,
             List<CommunityPost> results
     ) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("items", toItems(results));
         data.put("keyword", sanitized);
-        data.put("dateFilter", range.dateFilter());
-        data.put("rangeStart", range.from() == null ? "" : range.from().toString());
-        data.put("rangeEnd", range.to() == null ? "" : range.to().toString());
-        data.put("periodFallbackUsed", periodFallbackUsed);
         data.put("queryFailed", queryFailed);
         data.put("rankingBasis", "community.getPopularPosts".equals(toolName)
                 ? "likeCount DESC, commentCount DESC, createdAt DESC"
@@ -283,49 +257,8 @@ public class CommunityTools {
                 || containsIgnoreCase(post.getAddress(), keyword);
     }
 
-    private boolean withinRange(CommunityPost post, PeriodRange range) {
-        LocalDateTime createdAt = post.getCreatedAt();
-        if (createdAt == null) {
-            return false;
-        }
-        if (range.from() != null && createdAt.isBefore(range.from())) {
-            return false;
-        }
-        if (range.to() != null && createdAt.isAfter(range.to())) {
-            return false;
-        }
-        return true;
-    }
-
     private boolean containsIgnoreCase(String value, String keyword) {
         return value != null && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT));
-    }
-
-    private PeriodRange resolvePeriod(String dateFilter, int month, int year) {
-        LocalDate today = LocalDate.now(KOREA_ZONE);
-        String normalized = dateFilter == null ? "" : dateFilter.trim().toLowerCase(Locale.ROOT);
-        return switch (normalized) {
-            case "today" -> new PeriodRange("today", "오늘",
-                    today.atStartOfDay(), today.atTime(LocalTime.MAX));
-            case "this_week" -> {
-                LocalDate start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-                LocalDate end = today.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY));
-                yield new PeriodRange("this_week", "이번 주", start.atStartOfDay(), end.atTime(LocalTime.MAX));
-            }
-            case "this_month" -> {
-                YearMonth current = YearMonth.from(today);
-                yield new PeriodRange("this_month", "이번 달",
-                        current.atDay(1).atStartOfDay(), current.atEndOfMonth().atTime(LocalTime.MAX));
-            }
-            case "month" -> {
-                int safeMonth = month >= 1 && month <= 12 ? month : today.getMonthValue();
-                int safeYear = year > 0 ? year : Year.now(KOREA_ZONE).getValue();
-                YearMonth requested = YearMonth.of(safeYear, safeMonth);
-                yield new PeriodRange("month", safeMonth + "월",
-                        requested.atDay(1).atStartOfDay(), requested.atEndOfMonth().atTime(LocalTime.MAX));
-            }
-            default -> new PeriodRange("none", "전체 기간", null, null);
-        };
     }
 
     private String sanitizeKeyword(String keyword, int maxLength) {
@@ -346,13 +279,5 @@ public class CommunityTools {
 
     private String nullToDash(String value) {
         return value == null || value.isBlank() ? "-" : value;
-    }
-
-    private record PeriodRange(
-            String dateFilter,
-            String label,
-            LocalDateTime from,
-            LocalDateTime to
-    ) {
     }
 }

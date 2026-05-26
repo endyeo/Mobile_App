@@ -37,6 +37,8 @@ class KakaoMapScreen extends StatefulWidget {
 }
 
 class KakaoMapScreenState extends State<KakaoMapScreen> {
+  static KakaoMapScreenState? activeState;
+
   static const double _defaultCenterLat = 37.5665;
   static const double _defaultCenterLng = 126.9780;
   final GlobalKey _topBarKey = GlobalKey();
@@ -67,6 +69,7 @@ class KakaoMapScreenState extends State<KakaoMapScreen> {
   @override
   void initState() {
     super.initState();
+    activeState = this;
     final String? initialQuery = _initialSearchQuery();
     if (initialQuery != null) {
       _searchController.text = initialQuery;
@@ -392,7 +395,10 @@ $app
   Future<void> _applyInitialActions() async {
     final List<ChatAction>? actions = widget.initialActions;
     if (actions == null || actions.isEmpty) return;
+    await applyChatActions(actions);
+  }
 
+  Future<void> applyChatActions(List<ChatAction> actions) async {
     for (final ChatAction action in actions) {
       if (action.type == 'MAP_SET_SEARCH_QUERY') {
         final String query =
@@ -823,6 +829,9 @@ $app
 
   @override
   void dispose() {
+    if (activeState == this) {
+      activeState = null;
+    }
     _searchController.dispose();
     super.dispose();
   }

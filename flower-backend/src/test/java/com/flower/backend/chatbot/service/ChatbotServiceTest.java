@@ -67,6 +67,8 @@ class ChatbotServiceTest {
                 .thenReturn(tool("flower.searchFlowerSpots"));
         when(flowerToolService.searchFlowerSpotsResult(anyString(), any(), anyBoolean()))
                 .thenReturn(tool("flower.searchFlowerSpots"));
+        when(festivalToolService.searchFlowerFestivalsResult(anyString(), any(), anyBoolean(), anyString()))
+                .thenReturn(tool("festival.searchFlowerFestivals"));
         when(communityTools.searchPosts(anyString()))
                 .thenAnswer(invocation -> communitySearchTool(invocation.getArgument(0)));
         when(communityTools.getLatestPosts(anyString(), anyString(), anyInt(), anyInt()))
@@ -240,17 +242,37 @@ class ChatbotServiceTest {
                 .contains("COMMUNITY");
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
                 .containsExactly("community.getPopularPosts");
-        verify(communityTools).getPopularPosts("", "this_week", 0, 0);
+        verify(communityTools).getPopularPosts("", "none", 0, 0);
         verify(communityTools, never()).searchPosts(anyString());
     }
 
     @Test
-    void monthlyPopularCommunityRequestPassesMonthFilter() {
+    void dailyLatestCommunityRequestIgnoresPeriodFilter() {
+        ChatMessageResponse response = chatbotService.chat(request("오늘 올라온 글 있어?"));
+
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("community.getLatestPosts");
+        verify(communityTools).getLatestPosts("", "none", 0, 0);
+        verify(communityTools, never()).searchPosts(anyString());
+    }
+
+    @Test
+    void monthlyPopularCommunityRequestIgnoresPeriodFilter() {
         ChatMessageResponse response = chatbotService.chat(request("3월 인기글 보여줘"));
 
         assertThat(response.getToolResults()).extracting(ToolResult::getTool)
                 .containsExactly("community.getPopularPosts");
-        verify(communityTools).getPopularPosts("", "month", 3, java.time.LocalDate.now().getYear());
+        verify(communityTools).getPopularPosts("", "none", 0, 0);
+        verify(communityTools, never()).searchPosts(anyString());
+    }
+
+    @Test
+    void popularCommunityRequestKeepsConcreteKeyword() {
+        ChatMessageResponse response = chatbotService.chat(request("장미 인기글 있어?"));
+
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("community.getPopularPosts");
+        verify(communityTools).getPopularPosts("장미", "none", 0, 0);
         verify(communityTools, never()).searchPosts(anyString());
     }
 
@@ -269,6 +291,32 @@ class ChatbotServiceTest {
         assertThat(response.getToolResults().get(0).getData()).containsEntry("failed", true);
         assertThat(response.getReply()).doesNotContain("RuntimeException");
         assertThat(response.getReply()).doesNotContain("db failure");
+    }
+
+    @Test
+    void festivalMapRequestUsesFestivalToolInsteadOfFlowerPlaceSearch() {
+        ChatMessageResponse response = chatbotService.chat(request("축제 지도에서 보여줘"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("festival_information");
+        assertThat(response.getActions()).extracting(ChatAction::getTarget)
+                .contains("MAP");
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("festival.searchFlowerFestivals");
+        verify(festivalToolService).searchFlowerFestivalsResult("축제", null, true, "upcoming");
+        verify(flowerToolService, never()).searchFlowerSpotsResult(anyString(), any(), anyBoolean());
+    }
+
+    @Test
+    void flowerFestivalMapRequestUsesFestivalToolInsteadOfFlowerPlaceSearch() {
+        ChatMessageResponse response = chatbotService.chat(request("꽃 축제 지도에서 보여줘"));
+
+        assertThat(response.getAgentRun().getRoute()).isEqualTo("festival_information");
+        assertThat(response.getActions()).extracting(ChatAction::getTarget)
+                .contains("MAP");
+        assertThat(response.getToolResults()).extracting(ToolResult::getTool)
+                .containsExactly("festival.searchFlowerFestivals");
+        verify(festivalToolService).searchFlowerFestivalsResult("꽃 축제", null, true, "upcoming");
+        verify(flowerToolService, never()).searchFlowerSpotsResult(anyString(), any(), anyBoolean());
     }
 
     @Test

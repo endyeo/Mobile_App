@@ -135,6 +135,82 @@ class FestivalToolServiceTest {
     }
 
     @Test
+    void genericFlowerFestivalKeywordDoesNotOverFilterDbCandidates() {
+        FestivalRepository festivalRepository = mock(FestivalRepository.class);
+        FestivalToolService service = new FestivalToolService(mock(RestTemplate.class), festivalRepository);
+        when(festivalRepository.searchChatbotCandidates(anyString(), any(), eq(""), any(Pageable.class)))
+                .thenReturn(List.of(festival("rose", "장미축제", "20991201", "20991210", "서울", "중구")));
+
+        ToolResult result = service.searchFlowerFestivalsResult("꽃 축제", null, false, "upcoming");
+
+        assertThat(result.getStatus()).isEqualTo("SUCCESS");
+        assertThat(items(result.getData())).hasSize(1);
+        verify(festivalRepository).searchChatbotCandidates(anyString(), any(), eq(""), any(Pageable.class));
+    }
+
+    @Test
+    void specificFestivalKeywordFiltersDbCandidates() {
+        FestivalRepository festivalRepository = mock(FestivalRepository.class);
+        FestivalToolService service = new FestivalToolService(mock(RestTemplate.class), festivalRepository);
+        when(festivalRepository.searchChatbotCandidates(anyString(), any(), eq("벚꽃"), any(Pageable.class)))
+                .thenReturn(List.of(festival("cherry", "벚꽃축제", "20991201", "20991210", "서울", "중구")));
+
+        ToolResult result = service.searchFlowerFestivalsResult("벚꽃", null, false, "upcoming");
+
+        assertThat(result.getStatus()).isEqualTo("SUCCESS");
+        assertThat(items(result.getData())).hasSize(1);
+        assertThat(items(result.getData()).get(0)).containsEntry("title", "벚꽃축제");
+        verify(festivalRepository).searchChatbotCandidates(anyString(), any(), eq("벚꽃"), any(Pageable.class));
+    }
+
+    @Test
+    void emptyDbResultIsSuccessfulNoDataResult() {
+        FestivalRepository festivalRepository = mock(FestivalRepository.class);
+        FestivalToolService service = new FestivalToolService(mock(RestTemplate.class), festivalRepository);
+        when(festivalRepository.searchChatbotCandidates(anyString(), any(), anyString(), any(Pageable.class)))
+                .thenReturn(List.of());
+
+        ToolResult result = service.searchFlowerFestivalsResult("꽃", null, false, "upcoming");
+
+        assertThat(result.getStatus()).isEqualTo("SUCCESS");
+        assertFestivalDbContract(result.getData());
+        assertThat(items(result.getData())).isEmpty();
+    }
+
+    @Test
+    void dbExceptionReturnsErrorToolResult() {
+        FestivalRepository festivalRepository = mock(FestivalRepository.class);
+        FestivalToolService service = new FestivalToolService(mock(RestTemplate.class), festivalRepository);
+        when(festivalRepository.searchChatbotCandidates(anyString(), any(), anyString(), any(Pageable.class)))
+                .thenThrow(new RuntimeException("db unavailable"));
+
+        ToolResult result = service.searchFlowerFestivalsResult("꽃", null, false, "upcoming");
+
+        assertThat(result.getStatus()).isEqualTo("ERROR");
+        assertThat(result.getError()).isEqualTo("축제 DB 조회 중 오류가 발생했습니다.");
+        assertFestivalDbContract(result.getData());
+        assertThat(items(result.getData())).isEmpty();
+    }
+
+    @Test
+    void nearbyFestivalDbResultsAreSortedByDistanceWhenLocationExists() {
+        FestivalRepository festivalRepository = mock(FestivalRepository.class);
+        FestivalToolService service = new FestivalToolService(mock(RestTemplate.class), festivalRepository);
+        when(festivalRepository.searchChatbotCandidates(anyString(), any(), eq(""), any(Pageable.class)))
+                .thenReturn(List.of(
+                        festival("far", "멀리 있는 장미축제", "20991201", "20991210", "부산", "", 129.0756, 35.1796),
+                        festival("near", "가까운 장미축제", "20991201", "20991210", "서울", "", 126.9780, 37.5665)
+                ));
+        com.flower.backend.chatbot.dto.ChatMessageRequest.LocationContext location =
+                new com.flower.backend.chatbot.dto.ChatMessageRequest.LocationContext(37.5665, 126.9780);
+
+        ToolResult result = service.searchFlowerFestivalsResult("꽃", location, true, "upcoming");
+
+        assertThat(items(result.getData())).extracting(item -> item.get("contentId"))
+                .containsExactly("near", "far");
+    }
+
+    @Test
     void searchFestival2ResultSkipsKeywordFallback() {
         RestTemplate restTemplate = mock(RestTemplate.class);
         FestivalToolService service = service(restTemplate);
@@ -345,13 +421,26 @@ class FestivalToolServiceTest {
             String addr1,
             String addr2
     ) {
+        return festival(id, title, startDate, endDate, addr1, addr2, 126.9780, 37.5665);
+    }
+
+    private Festival festival(
+            String id,
+            String title,
+            String startDate,
+            String endDate,
+            String addr1,
+            String addr2,
+            double mapX,
+            double mapY
+    ) {
         return Festival.builder()
                 .contentId(id)
                 .title(title)
                 .addr1(addr1)
                 .addr2(addr2)
-                .mapX(126.9780)
-                .mapY(37.5665)
+                .mapX(mapX)
+                .mapY(mapY)
                 .firstImage("http://example.com/a.jpg")
                 .firstImage2("")
                 .tel("02-0000-0000")
