@@ -34,6 +34,28 @@ class AuthApiService {
     return (response.data as Map).cast<String, dynamic>();
   }
 
+  /// 카카오 SDK가 발급받은 access token으로 백엔드 로그인.
+  /// code flow보다 카카오톡 SSO에 안정적.
+  static Future<Map<String, dynamic>> sendKakaoAccessToken(
+    String accessToken,
+  ) async {
+    final Response<dynamic> response = await ApiClient.dio.post(
+      '$_basePath/oauth/kakao/token',
+      data: <String, dynamic>{'accessToken': accessToken},
+    );
+    return (response.data as Map).cast<String, dynamic>();
+  }
+
+  /// 개발자 즉시 로그인. 폰별 영구 UUID로 자동 사용자 식별.
+  /// 운영에서는 백엔드의 DEV_LOGIN_ENABLED 미설정으로 403.
+  static Future<Map<String, dynamic>> devLogin(String devId) async {
+    final Response<dynamic> response = await ApiClient.dio.post(
+      '$_basePath/dev-login',
+      data: <String, dynamic>{'devId': devId},
+    );
+    return (response.data as Map).cast<String, dynamic>();
+  }
+
   // ─── FCM 토큰 저장 ────────────────────────────────────────
   static Future<void> saveFcmToken({
     required String accessToken,

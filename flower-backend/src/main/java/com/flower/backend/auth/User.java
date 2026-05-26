@@ -81,7 +81,9 @@ public class User {
     }
 
     public enum Provider {
-        KAKAO
+        KAKAO,
+        /** 개발자 로그인 (운영 환경에선 dev-login 엔드포인트가 비활성) */
+        DEV
     }
 
     public enum Role {

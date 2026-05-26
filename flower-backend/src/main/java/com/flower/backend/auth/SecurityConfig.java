@@ -54,6 +54,7 @@ public class SecurityConfig {
                     "/api/v1/auth/refresh",
                     "/api/v1/auth/oauth/**",
                     "/api/v1/auth/profile-setup",
+                    "/api/v1/auth/dev-login",
                     "/oauth/callback",
                     "/uploads/**",
                     "/chatbot/**",

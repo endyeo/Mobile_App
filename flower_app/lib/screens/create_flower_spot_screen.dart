@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -6,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../theme/season_theme.dart';
 import '../services/flower_spot_api_service.dart';
 import '../utils/location_permission_helper.dart';
+import '../widgets/chat_floating_button.dart';
 
 class CreateFlowerSpotScreen extends StatefulWidget {
   const CreateFlowerSpotScreen({super.key});
@@ -86,6 +88,10 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
       _plantName = null;
       _plantConfidence = null;
     });
+    // 토글 ON 상태에서 2회 다 outlier로 실패한 경우 토글 자동 OFF + 안내
+    if (capturedPos == null) {
+      _handleLocationCaptureFailureIfSharing();
+    }
     await _identifyPlant(file);
   }
 
@@ -111,17 +117,68 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
     await _identifyPlant(file);
   }
 
-  Future<Position?> _captureCurrentPosition() async {
-    try {
-      return await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.best,
-        ),
-      ).timeout(const Duration(seconds: 8));
-    } catch (e) {
-      debugPrint('[FlowerSpot] 사진 시점 GPS 캡처 실패: $e');
-      return null;
+  /// stream 1~2초 안정화 + outlier 거부.
+  /// accuracy ≤ 15m 들어오면 즉시 완료, 8초까지 못 받으면 가장 좋은 거 채택.
+  /// 가장 좋은 fix도 accuracy > 200m이면 outlier로 판단해 null 반환.
+  Future<Position?> _captureBestPosition({
+    Duration timeout = const Duration(seconds: 8),
+    double goodEnoughAccuracy = 15.0,
+    double maxAcceptableAccuracy = 200.0,
+  }) async {
+    Position? best;
+    final completer = Completer<Position?>();
+    StreamSubscription<Position>? sub;
+    Timer? timer;
+
+    void finish() {
+      sub?.cancel();
+      timer?.cancel();
+      if (completer.isCompleted) return;
+      if (best == null || best!.accuracy > maxAcceptableAccuracy) {
+        completer.complete(null);
+      } else {
+        completer.complete(best);
+      }
     }
+
+    timer = Timer(timeout, finish);
+
+    try {
+      sub =
+          Geolocator.getPositionStream(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.bestForNavigation,
+              distanceFilter: 0,
+            ),
+          ).listen(
+            (pos) {
+              if (best == null || pos.accuracy < best!.accuracy) {
+                best = pos;
+              }
+              if (pos.accuracy <= goodEnoughAccuracy) {
+                finish();
+              }
+            },
+            onError: (e) {
+              debugPrint('[FlowerSpot] GPS stream 오류: $e');
+              finish();
+            },
+          );
+    } catch (e) {
+      debugPrint('[FlowerSpot] GPS stream 시작 실패: $e');
+      finish();
+    }
+
+    return completer.future;
+  }
+
+  /// 자동 1회 재시도. 둘 다 실패 시 null.
+  Future<Position?> _captureWithRetry() async {
+    Position? pos = await _captureBestPosition();
+    if (pos != null) return pos;
+    debugPrint('[FlowerSpot] GPS 첫 시도 outlier — 재시도');
+    await Future.delayed(const Duration(seconds: 1));
+    return await _captureBestPosition();
   }
 
   /// 권한이 이미 허용된 경우에만 GPS를 잡는다.
@@ -134,10 +191,22 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
           permission == LocationPermission.deniedForever) {
         return null;
       }
-      return await _captureCurrentPosition();
+      return await _captureWithRetry();
     } catch (_) {
       return null;
     }
+  }
+
+  /// 위치 공유 ON 상태에서 GPS 2회 모두 outlier면 토글 OFF + 안내.
+  void _handleLocationCaptureFailureIfSharing() {
+    if (!mounted || !_shareLocation) return;
+    setState(() => _shareLocation = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('GPS 정확도가 낮아 위치 공유를 해제했어요. 잠시 후 다시 시도해주세요.'),
+        duration: Duration(seconds: 3),
+      ),
+    );
   }
 
   Future<void> _identifyPlant(File file) async {
@@ -225,7 +294,8 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
   }
 
   Future<bool> _confirmIfMovedFar(Position captured) async {
-    final Position? now = await _captureCurrentPosition();
+    // 게시 직전 anti-cheating용 — 안정화된 fix 1회만 (재시도 없이)
+    final Position? now = await _captureBestPosition();
     if (now == null) return true; // 현재 위치 못 잡았으면 검증 생략(촬영 위치 신뢰)
     final double meters = Geolocator.distanceBetween(
       captured.latitude,
@@ -325,6 +395,8 @@ class _CreateFlowerSpotScreenState extends State<CreateFlowerSpotScreen> {
     final colors = SeasonTheme.getColors();
     return Scaffold(
       backgroundColor: colors.background,
+      floatingActionButton: const ChatFloatingButton(),
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,

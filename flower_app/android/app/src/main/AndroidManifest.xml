@@ -39,7 +39,7 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- flutter_web_auth_2 콜백 액티비티 -->
+        <!-- flutter_web_auth_2 콜백 액티비티 (호환용 — 제거 예정) -->
         <activity
             android:name="com.linusu.flutter_web_auth_2.CallbackActivity"
             android:exported="true">
@@ -48,6 +48,18 @@
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
                 <data android:scheme="ourt"/>
+            </intent-filter>
+        </activity>
+
+        <!-- 카카오 SDK 콜백 액티비티 — kakao{NATIVE_APP_KEY}://oauth -->
+        <activity
+            android:name="com.kakao.sdk.flutter.AuthCodeCustomTabsActivity"
+            android:exported="true">
+            <intent-filter android:label="kakao_flutter_sdk">
+                <action android:name="android.intent.action.VIEW"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+                <data android:scheme="kakao7d516ae0aff8911f39d8e3c8a147aaae" android:host="oauth"/>
             </intent-filter>
         </activity>
 
@@ -70,5 +82,7 @@
         <intent>
             <action android:name="android.speech.RecognitionService"/>
         </intent>
+        <!-- 카카오톡 SDK: 카카오톡 앱으로 로그인 시도 -->
+        <package android:name="com.kakao.talk" />
     </queries>
 </manifest>

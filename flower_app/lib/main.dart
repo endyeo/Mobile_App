@@ -6,6 +6,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/profile_setup_screen.dart';
@@ -21,6 +22,18 @@ Future<void> main() async {
 
   // UI 분기 결정에 필요한 최소 작업만 동기로 (.env + 토큰 체크)
   await dotenv.load(fileName: ".env");
+
+  // 카카오 SDK 초기화 (네이티브 + JS 키, .env에서 로드)
+  KakaoSdk.init(
+    nativeAppKey: dotenv.env['KAKAO_NATIVE_APP_KEY'] ?? '',
+    javaScriptAppKey: dotenv.env['KAKAO_JAVASCRIPT_APP_KEY'] ?? '',
+  );
+
+  // 디버그용: 실제 키 해시 출력 → 카카오 콘솔에 이 값 등록 필요
+  // (콘솔의 키 해시랑 안 맞으면 KakaoAuthException keyHash validation failed)
+  // ignore: avoid_print
+  print('[Kakao] keyHash to register in console: ${await KakaoSdk.origin}');
+
   final prefs = await SharedPreferences.getInstance();
   final String? token = prefs.getString('accessToken');
 

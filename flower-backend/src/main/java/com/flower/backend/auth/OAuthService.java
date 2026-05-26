@@ -35,7 +35,24 @@ public class OAuthService {
         String kakaoAccessToken = getKakaoAccessToken(authCode, redirectUri);
         KakaoUserInfo userInfo = getKakaoUserInfo(kakaoAccessToken);
 
-        log.info("[OAuth] 카카오 로그인 시도 - providerId: {}", userInfo.getId());
+        log.info("[OAuth] 카카오 로그인 시도 (code flow) - providerId: {}", userInfo.getId());
+
+        String nickname = (userInfo.getProperties() != null) ? userInfo.getProperties().getNickname() : "사용자";
+        return authService.processOAuth(
+            nickname,
+            User.Provider.KAKAO,
+            String.valueOf(userInfo.getId())
+        );
+    }
+
+    /**
+     * 카카오 SDK가 직접 받은 access token으로 사용자 식별 + JWT 발급.
+     * code flow보다 더 안정적 (카카오톡 SSO 흐름 SDK가 처리).
+     */
+    public Object processKakaoAccessToken(String kakaoAccessToken) {
+        KakaoUserInfo userInfo = getKakaoUserInfo(kakaoAccessToken);
+
+        log.info("[OAuth] 카카오 로그인 시도 (SDK token) - providerId: {}", userInfo.getId());
 
         String nickname = (userInfo.getProperties() != null) ? userInfo.getProperties().getNickname() : "사용자";
         return authService.processOAuth(
