@@ -20,7 +20,7 @@ void main() {
 
     expect(controller.isSending, isTrue);
     expect(controller.showHistory, isTrue);
-    expect(controller.messages.last.text, 'AI가 요청을 확인하고 있어요.');
+    expect(controller.messages.last.currentStatus, '질문을 이해하는 중...');
 
     controller.closeOverlay();
 
@@ -99,7 +99,7 @@ data: {"actions":[{"type":"NAVIGATE","target":"COMMUNITY"}]}
     await pumpEventQueue();
 
     expect(dispatchedActions, isEmpty);
-    expect(controller.messages.last.text, '커뮤니티 화면 이동을 준비하고 있어요.');
+    expect(controller.messages.last.currentStatus, '커뮤니티 화면 이동을 준비하고 있어요.');
 
     streamController.add(
       Uint8List.fromList(

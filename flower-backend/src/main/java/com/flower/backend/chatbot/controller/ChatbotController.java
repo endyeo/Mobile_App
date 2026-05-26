@@ -14,6 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -63,6 +65,7 @@ public class ChatbotController {
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         AtomicBoolean closed = new AtomicBoolean(false);
         String requestId = request.getRequestId() == null ? "" : request.getRequestId();
+        RequestAttributes requestAttributes = RequestContextHolder.currentRequestAttributes();
 
         emitter.onTimeout(() -> {
             log.warn("SSE 챗봇 스트림 타임아웃: requestId={}", requestId);
@@ -84,6 +87,7 @@ public class ChatbotController {
 
         try {
             CompletableFuture.runAsync(() -> {
+                RequestContextHolder.setRequestAttributes(requestAttributes);
                 try {
                     chatbotService.chatStream(request, (eventName, data) ->
                             sendEvent(emitter, closed, eventName, data));
@@ -97,6 +101,8 @@ public class ChatbotController {
                             "챗봇 처리 중 오류가 발생했습니다.",
                             "error"
                     );
+                } finally {
+                    RequestContextHolder.resetRequestAttributes();
                 }
             }, chatbotSseExecutor);
         } catch (RejectedExecutionException e) {

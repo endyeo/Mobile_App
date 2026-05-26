@@ -59,6 +59,7 @@ public class FlowerService {
                 .build();
     }
 
+    @Transactional
     public FlowerDto.MatchResult matchByScientificName(String scientificName, double confidence) {
         // 1) 도감에 학명 정확히 일치하는 꽃이 있으면 그대로 반환
         Optional<FlowerBook> exactFlower = flowerRepository.findByScientificNameIgnoreCase(scientificName);
@@ -98,10 +99,12 @@ public class FlowerService {
     }
 
     // 위키피디아 한국어 API로 꽃 정보를 받아와 flower_book에 자동 저장
+    // ko.wikipedia 학명 직접 검색 후 실패하면 en.wikipedia ko interwiki 한글명으로 재검색
     // 트랜잭션은 read-only이므로 쓰기 작업은 propagation REQUIRES_NEW로 분리
     @Transactional(propagation = org.springframework.transaction.annotation.Propagation.REQUIRES_NEW)
     public FlowerBook createFromWikipediaIfMissing(String scientificName, FlowerCategory category) {
-        Optional<WikiSummaryService.WikiSummary> summary = wikiSummaryService.fetch(scientificName);
+        Optional<WikiSummaryService.WikiSummary> summary =
+                wikiSummaryService.fetchByScientificName(scientificName);
         if (summary.isEmpty()) return null;
 
         FlowerCategory finalCategory = category != null

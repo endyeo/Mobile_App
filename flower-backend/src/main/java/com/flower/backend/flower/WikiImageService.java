@@ -77,8 +77,10 @@ public class WikiImageService {
     }
 
     private String fetchWikiThumbnail(HttpClient client, String flowerName) throws Exception {
+        // URLEncoder는 공백을 "+"로 인코딩하지만, 위키 REST API path는 %20만 인식한다.
+        String encoded = java.net.URLEncoder.encode(flowerName, "UTF-8").replace("+", "%20");
         HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(WIKI_API + java.net.URLEncoder.encode(flowerName, "UTF-8")))
+                .uri(URI.create(WIKI_API + encoded))
                 .header("User-Agent", USER_AGENT)
                 .GET()
                 .build();

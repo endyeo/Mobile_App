@@ -27,7 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @RequiredArgsConstructor
 public class PlantIdService {
 
-    private static final double CONFIDENCE_THRESHOLD = 0.30;
+    private static final double CONFIDENCE_THRESHOLD = 0.40;
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String WIKI_USER_AGENT = "OurT-FlowerApp/1.0 (https://ourt.kro.kr; gkak1211@gmail.com)";
 
