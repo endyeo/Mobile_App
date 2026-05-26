@@ -980,8 +980,8 @@ public class ChatbotService {
 
     private boolean wantsPopularCommunityPosts(String message) {
         String lower = message == null ? "" : message.toLowerCase(Locale.ROOT);
-        return containsAny(lower, "popular", "most liked", "most commented",
-                "인기글", "인기 글", "좋아요 많은", "댓글 많은", "반응 좋은", "많이 본");
+        return containsAny(lower, "popular", "most liked",
+                "인기글", "인기 글", "좋아요 많은", "반응 좋은", "많이 본");
     }
 
     private boolean wantsWalk(String message) {
@@ -1196,7 +1196,7 @@ public class ChatbotService {
                 - Community mutation requests such as like, comment, delete, edit, auto-save, or publish-for-me are unsupported/community_mutation.
                 - "커뮤니티 열어줘" is community/open_community and must not search posts.
                 - Community latest requests such as "최신 글", "최근 글", "새 글", or "새로 올라온 글" are community/latest_posts and must not use search_posts.
-                - Community popular requests such as "인기글", "좋아요 많은 글", "댓글 많은 글", "반응 좋은 글", or "많이 본 글" are community/popular_posts.
+                - Community popular requests such as "인기글", "좋아요 많은 글", "반응 좋은 글", or "많이 본 글" are community/popular_posts.
                 - For community/latest_posts and community/popular_posts, keyword is optional. Use keyword only when the user names a concrete topic like 장미, 수국, 벚꽃, or 라벤더. Whole-feed latest/popular requests and period-only requests must use keyword="".
                 - Community latest/popular does not support period filtering. If the user says "오늘", "이번 주", "이번 달", or "3월" for community posts, still set date_filter="none", month=0, and year=0.
                 - If festival, event, or 행사 is the main topic, choose festival_info instead of flower_info.
@@ -1239,8 +1239,6 @@ public class ChatbotService {
                 JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","needs_screen":true,"confidence":"high","reason":"인기 커뮤니티 글 조회"}
                 User: 좋아요 많은 글 뭐 있어?
                 JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"좋아요 기준 인기글 조회"}
-                User: 댓글 많은 글 알려줘
-                JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","needs_screen":false,"confidence":"high","reason":"댓글 기준 인기글 조회"}
                 User: 3월 인기글 보여줘
                 JSON: {"domain":"community","task":"popular_posts","keyword":"","date_filter":"none","month":0,"year":0,"needs_screen":true,"confidence":"high","reason":"인기 커뮤니티 글 조회"}
                 User: 커뮤니티 열어줘
@@ -2545,13 +2543,12 @@ public class ChatbotService {
 
     private String humanizeCommunityFailureReason(ToolResult result) {
         Map<String, Object> data = result == null ? null : result.getData();
-        boolean fallbackAttempted = data != null && Boolean.TRUE.equals(data.get("queryFailed"));
-        boolean periodFallbackUsed = data != null && Boolean.TRUE.equals(data.get("periodFallbackUsed"));
-        if (fallbackAttempted && periodFallbackUsed) {
-            return "기간 조건을 바꿔 다시 확인했지만 지금은 게시글 데이터를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.";
+        Object failureStage = data == null ? null : data.get("failureStage");
+        if ("to_items".equals(failureStage)) {
+            return "조회 결과를 답변용으로 정리하는 중 문제가 생겨 잠시 후 다시 시도해 주세요.";
         }
-        if (fallbackAttempted) {
-            return "안정 경로로 다시 확인했지만 지금은 게시글 데이터를 읽지 못했습니다. 잠시 후 다시 시도해 주세요.";
+        if ("latest_query".equals(failureStage) || "popular_query".equals(failureStage)) {
+            return "게시글 목록을 조회하는 중 문제가 생겨 잠시 후 다시 시도해 주세요.";
         }
         return "게시글 정보를 확인하는 중 문제가 생겨 잠시 후 다시 시도해 주세요.";
     }
@@ -2592,7 +2589,7 @@ public class ChatbotService {
                 커뮤니티 최신글/인기글은 community.getLatestPosts 또는 community.getPopularPosts 결과만 근거로 요약하세요.
                 커뮤니티 최신글/인기글에는 기간 필터를 적용하지 않으므로 오늘 기준, 이번 주 기준, 특정 월 기준이라고 말하지 마세요.
                 사용자가 기간을 말했더라도 전체 커뮤니티 기준 최신글 또는 인기글로 확인했다고만 짧게 안내하세요.
-                "많이 본 글"처럼 조회수 기준을 묻더라도 조회수 필드가 없으므로 좋아요와 댓글 기준 인기글이라고 말하세요.
+                "많이 본 글"처럼 조회수 기준을 묻더라도 조회수 필드가 없으므로 좋아요 기준 인기글이라고 말하세요.
                 커뮤니티 게시글에는 제목 필드가 없습니다. 제목을 지어내거나 제목 기준으로 요약하지 말고 본문, 꽃 이름, 식물명, 주소, 작성일, 좋아요, 댓글만 근거로 사용하세요.
                 장소/지도 데이터는 꽃 정보보다 뒤에 보조로만 설명하세요. 장소 결과가 없더라도 꽃 정보가 있으면 정보부터 답하세요.
                 flower.searchFlowerSpots 결과가 비어 있으면 일반 지식으로 장소, 지역, 계절 정보를 만들어 말하지 말고 등록된 장소 데이터가 없다고만 말하세요.
@@ -2654,7 +2651,7 @@ public class ChatbotService {
                     조회 결과가 없으면 최근 활동 상태를 추정하지 말고 현재 확인된 최신 글이 없다고만 답하세요.
                     """;
             case "popular_posts" -> """
-                    인기글은 좋아요와 댓글 기준으로 반응이 좋은 글처럼 설명하세요.
+                    인기글은 좋아요 기준으로 반응이 좋은 글처럼 설명하세요.
                     조회수 정보는 없으므로 조회수 기준이라고 말하지 마세요.
                     조회 결과가 없으면 반응이 적었다거나 잠잠하다는 해석을 붙이지 말고 현재 확인된 인기글이 없다고만 답하세요.
                     """;

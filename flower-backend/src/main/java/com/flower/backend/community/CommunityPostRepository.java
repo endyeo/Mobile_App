@@ -90,27 +90,31 @@ public interface CommunityPostRepository extends JpaRepository<CommunityPost, Lo
     """)
     List<CommunityPost> searchByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
-    @Query("""
-        SELECT p FROM CommunityPost p
-        WHERE :keyword = ''
-            OR LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-            OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-            OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-            OR LOWER(COALESCE(p.address, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-        ORDER BY p.createdAt DESC
-    """)
-    List<CommunityPost> findLatestPosts(@Param("keyword") String keyword, Pageable pageable);
+    @Query("SELECT p FROM CommunityPost p ORDER BY p.createdAt DESC")
+    List<CommunityPost> findLatestPosts(Pageable pageable);
 
     @Query("""
         SELECT p FROM CommunityPost p
-        WHERE :keyword = ''
-            OR LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-            OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-            OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-            OR LOWER(COALESCE(p.address, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
-        ORDER BY p.likeCount DESC, p.commentCount DESC, p.createdAt DESC
+        WHERE LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+           OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+           OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+           OR LOWER(COALESCE(p.address, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+        ORDER BY p.createdAt DESC
     """)
-    List<CommunityPost> findPopularPosts(@Param("keyword") String keyword, Pageable pageable);
+    List<CommunityPost> findLatestPostsByKeyword(@Param("keyword") String keyword, Pageable pageable);
+
+    @Query("SELECT p FROM CommunityPost p ORDER BY p.likeCount DESC, p.id DESC")
+    List<CommunityPost> findPopularPosts(Pageable pageable);
+
+    @Query("""
+        SELECT p FROM CommunityPost p
+        WHERE LOWER(COALESCE(p.content, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+           OR LOWER(COALESCE(p.flowerSpecies, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+           OR LOWER(COALESCE(p.plantName, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+           OR LOWER(COALESCE(p.address, '')) LIKE LOWER(CONCAT('%', :keyword, '%'))
+        ORDER BY p.likeCount DESC, p.id DESC
+    """)
+    List<CommunityPost> findPopularPostsByKeyword(@Param("keyword") String keyword, Pageable pageable);
 
     /**
      * UI 검색 화면용 — 날짜 필터 없는 단순 키워드 매칭 + 최신순 정렬.
