@@ -5,10 +5,8 @@ import com.flower.backend.chatbot.dto.ToolResult;
 import com.flower.backend.chatbot.tool.ChatbotActionContext;
 import com.flower.backend.community.CommunityPost;
 import com.flower.backend.community.CommunityPostRepository;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -23,15 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class CommunityTools {
 
-    private static final int FALLBACK_SCAN_LIMIT = 500;
     private static final int RESULT_LIMIT = 5;
-    private static final Comparator<CommunityPost> LATEST_ORDER =
-            Comparator.comparing(CommunityPost::getCreatedAt,
-                    Comparator.nullsLast(Comparator.reverseOrder()));
-    private static final Comparator<CommunityPost> POPULAR_ORDER =
-            Comparator.comparingInt(CommunityPost::getLikeCount).reversed()
-                    .thenComparing(Comparator.comparingInt(CommunityPost::getCommentCount).reversed())
-                    .thenComparing(LATEST_ORDER);
 
     private final CommunityPostRepository postRepository;
     private final ChatbotActionContext actionContext;
@@ -89,7 +79,7 @@ public class CommunityTools {
     }
 
     // KO: 검색어 조건에 맞는 인기 커뮤니티 게시글을 전체 기간 기준으로 조회합니다.
-    @Tool(description = "Get popular FLOWER community posts by likes, comments, and recency.")
+    @Tool(description = "Get popular FLOWER community posts by likes.")
     @Transactional(readOnly = true)
     public ToolResult getPopularPosts(
             // KO: 선택 검색어입니다. 전체 인기글 조회는 빈 문자열을 전달합니다.
@@ -174,91 +164,82 @@ public class CommunityTools {
         String sanitized = sanitizeKeyword(query, 100);
 
         try {
-            List<CommunityPost> results = "community.getPopularPosts".equals(toolName)
-                    ? postRepository.findPopularPosts(sanitized, PageRequest.of(0, RESULT_LIMIT))
-                    : postRepository.findLatestPosts(sanitized, PageRequest.of(0, RESULT_LIMIT));
-
-            return successResult(toolName, label, sanitized, results, false);
-        } catch (Exception primaryFailure) {
-            log.warn("[Tool:{}] 전용 조회 실패. 안정 경로로 재시도합니다.", toolName, primaryFailure);
-            boolean queryFailed = true;
-            try {
-                List<CommunityPost> fallbackSource = postRepository.findFeed(PageRequest.of(0, FALLBACK_SCAN_LIMIT));
-                List<CommunityPost> fallbackResults = fallbackSource.stream()
-                        .filter(post -> matchesKeyword(post, sanitized))
-                        .sorted(sortOrder(toolName))
-                        .limit(RESULT_LIMIT)
-                        .toList();
-
-                return successResult(toolName, label, sanitized, fallbackResults, queryFailed);
-            } catch (Exception fallbackFailure) {
-                log.error("[Tool:{}] 커뮤니티 {}글 조회 실패", toolName, label, fallbackFailure);
-                Map<String, Object> data = diagnosticData(
-                        toolName,
-                        sanitized,
-                        queryFailed,
-                        List.of());
-                data.put("failureStage", "fallback_feed");
-                data.put("failureReason", fallbackFailure.getClass().getSimpleName());
-                return ToolResult.builder()
-                        .tool(toolName)
-                        .status("ERROR")
-                        .summary("커뮤니티 " + label + "글 조회에 실패했습니다.")
-                        .data(data)
-                        .error(label + "글 조회 중 오류가 발생했습니다.")
-                        .build();
-            }
+            List<CommunityPost> results = queryPosts(toolName, sanitized);
+            return successResult(toolName, label, sanitized, results);
+        } catch (Exception queryFailure) {
+            String failureStage = "community.getPopularPosts".equals(toolName)
+                    ? "popular_query"
+                    : "latest_query";
+            log.error("[Tool:{}] 커뮤니티 {}글 조회 실패", toolName, label, queryFailure);
+            return errorResult(toolName, label, sanitized, failureStage, queryFailure);
         }
+    }
+
+    private List<CommunityPost> queryPosts(String toolName, String sanitized) {
+        boolean popular = "community.getPopularPosts".equals(toolName);
+        PageRequest page = PageRequest.of(0, RESULT_LIMIT);
+        if (popular) {
+            return sanitized.isBlank()
+                    ? postRepository.findPopularPosts(page)
+                    : postRepository.findPopularPostsByKeyword(sanitized, page);
+        }
+        return sanitized.isBlank()
+                ? postRepository.findLatestPosts(page)
+                : postRepository.findLatestPostsByKeyword(sanitized, page);
     }
 
     private ToolResult successResult(
             String toolName,
             String label,
             String sanitized,
-            List<CommunityPost> results,
-            boolean queryFailed
+            List<CommunityPost> results
     ) {
-        return ToolResult.builder()
-                .tool(toolName)
-                .status("SUCCESS")
-                .summary("'" + displayKeyword(sanitized) + "' 전체 기간 " + label
-                        + " 커뮤니티 글 " + results.size() + "건을 찾았습니다.")
-                .data(diagnosticData(toolName, sanitized, queryFailed, results))
-                .build();
+        try {
+            List<Map<String, Object>> items = toItems(results);
+            return ToolResult.builder()
+                    .tool(toolName)
+                    .status("SUCCESS")
+                    .summary("'" + displayKeyword(sanitized) + "' 전체 기간 " + label
+                            + " 커뮤니티 글 " + items.size() + "건을 찾았습니다.")
+                    .data(diagnosticData(toolName, sanitized, items))
+                    .build();
+        } catch (Exception itemFailure) {
+            log.error("[Tool:{}] 커뮤니티 {}글 결과 변환 실패", toolName, label, itemFailure);
+            return errorResult(toolName, label, sanitized, "to_items", itemFailure);
+        }
     }
 
     private Map<String, Object> diagnosticData(
             String toolName,
             String sanitized,
-            boolean queryFailed,
-            List<CommunityPost> results
+            List<Map<String, Object>> items
     ) {
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("items", toItems(results));
+        data.put("items", items);
         data.put("keyword", sanitized);
-        data.put("queryFailed", queryFailed);
         data.put("rankingBasis", "community.getPopularPosts".equals(toolName)
-                ? "likeCount DESC, commentCount DESC, createdAt DESC"
+                ? "likeCount DESC, id DESC"
                 : "createdAt DESC");
         return data;
     }
 
-    private Comparator<CommunityPost> sortOrder(String toolName) {
-        return "community.getPopularPosts".equals(toolName) ? POPULAR_ORDER : LATEST_ORDER;
-    }
-
-    private boolean matchesKeyword(CommunityPost post, String keyword) {
-        if (keyword == null || keyword.isBlank()) {
-            return true;
-        }
-        return containsIgnoreCase(post.getContent(), keyword)
-                || containsIgnoreCase(post.getFlowerSpecies(), keyword)
-                || containsIgnoreCase(post.getPlantName(), keyword)
-                || containsIgnoreCase(post.getAddress(), keyword);
-    }
-
-    private boolean containsIgnoreCase(String value, String keyword) {
-        return value != null && value.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT));
+    private ToolResult errorResult(
+            String toolName,
+            String label,
+            String sanitized,
+            String failureStage,
+            Exception failure
+    ) {
+        Map<String, Object> data = diagnosticData(toolName, sanitized, List.of());
+        data.put("failureStage", failureStage);
+        data.put("failureReason", failure.getClass().getSimpleName());
+        return ToolResult.builder()
+                .tool(toolName)
+                .status("ERROR")
+                .summary("커뮤니티 " + label + "글 조회에 실패했습니다.")
+                .data(data)
+                .error(label + "글 조회 중 오류가 발생했습니다.")
+                .build();
     }
 
     private String sanitizeKeyword(String keyword, int maxLength) {

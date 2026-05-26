@@ -365,7 +365,7 @@ class ChatbotServiceTest {
 
         assertThat(prompt).contains("커뮤니티 도메인 답변 규칙:");
         assertThat(prompt).contains("게시글 요약 브리핑");
-        assertThat(prompt).contains("좋아요와 댓글 기준으로 반응이 좋은 글처럼 설명하세요.");
+        assertThat(prompt).contains("좋아요 기준으로 반응이 좋은 글처럼 설명하세요.");
         assertThat(prompt).contains("조회수 정보는 없으므로 조회수 기준이라고 말하지 마세요.");
         assertThat(prompt).contains("커뮤니티 게시글에는 제목 필드가 없습니다.");
         assertThat(prompt).contains("게시글에는 제목이 없으므로 제목처럼 보이는 문구를 새로 만들지 마세요.");
